@@ -20,7 +20,7 @@ ENV=dev
 SUBNET=$(aws ec2 describe-subnets --filters Name=tag:app,Values=hearth Name=tag:env,Values=$ENV \
   --query 'Subnets[0].SubnetId' --output text)
 ID=$(aws ec2 run-instances \
-  --launch-template LaunchTemplateName=hearth-$ENV-minecraft-java \
+  --launch-template "LaunchTemplateName=hearth-$ENV-minecraft-java,Version=\$Latest" \
   --subnet-id $SUBNET \
   --query 'Instances[0].InstanceId' --output text)
 echo $ID

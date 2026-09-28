@@ -58,7 +58,7 @@ now_iso() { date -u +%Y-%m-%dT%H:%M:%S.000Z; } # same format the API writes, so 
 # wait_for_agent <serverId> <state> <since>: follows the agent's reports made after <since>
 # (ignoring older ones, e.g. the "stopped" from the last shutdown) until <state> or an error.
 wait_for_agent() {
-  local id=$1 want=$2 since=$3 last="" state at deadline=$((SECONDS + 900))
+  local id=$1 want=$2 since=$3 last="-" state at deadline=$((SECONDS + 900))
   while [ $SECONDS -lt $deadline ]; do
     at=$(field "$id" agentReportedAt)
     state=""
@@ -88,7 +88,8 @@ cmd_create() {
 
   subnet=$(aws ec2 describe-subnets --filters Name=tag:app,Values=hearth "Name=tag:env,Values=$ENV" \
     --query 'Subnets[0].SubnetId' --output text)
-  instance=$(aws ec2 run-instances --launch-template "LaunchTemplateName=hearth-$ENV-$GAME" \
+  # $Latest: CloudFormation adds a template version on every deploy but never moves the default.
+  instance=$(aws ec2 run-instances --launch-template "LaunchTemplateName=hearth-$ENV-$GAME,Version=\$Latest" \
     --subnet-id "$subnet" --query 'Instances[0].InstanceId' --output text)
   log "launched $instance"
   aws ec2 create-tags --resources "$instance" --tags "Key=serverId,Value=$id" "Key=Name,Value=hearth-$ENV-$id"
