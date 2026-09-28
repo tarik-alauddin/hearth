@@ -14,7 +14,7 @@ export abstract class HearthStack extends Stack {
 
   protected constructor(scope: Construct, stack: string, props: HearthStackProps) {
     const region = props.region ?? props.config.homeRegion;
-    const name = stackName(props.config.name, stack, props.region);
+    const name = stackName(props.config.env, stack, props.region);
     super(scope, name, {
       ...props,
       stackName: name,
@@ -23,6 +23,6 @@ export abstract class HearthStack extends Stack {
     });
     this.config = props.config;
     Tags.of(this).add('app', 'hearth');
-    Tags.of(this).add('env', props.config.name);
+    Tags.of(this).add('env', props.config.env);
   }
 }

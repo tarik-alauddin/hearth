@@ -11,9 +11,9 @@ if (only !== undefined && !isEnvName(only)) {
   throw new Error(`Unknown env "${String(only)}"; expected one of ${ENVIRONMENTS.join(', ')}`);
 }
 
-for (const name of ENVIRONMENTS) {
-  if (only === undefined || only === name) {
-    addEnvironment(app, envConfig(name));
+for (const env of ENVIRONMENTS) {
+  if (only === undefined || only === env) {
+    addEnvironment(app, envConfig(env));
   }
 }
 addChecks(app);

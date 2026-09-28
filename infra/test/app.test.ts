@@ -7,7 +7,7 @@ import { addChecks, addEnvironment } from '../lib/hearth-app.js';
 
 function synthAll() {
   const app = new App();
-  for (const name of ENVIRONMENTS) addEnvironment(app, envConfig(name));
+  for (const env of ENVIRONMENTS) addEnvironment(app, envConfig(env));
   addChecks(app);
   return app.synth();
 }
@@ -17,9 +17,9 @@ describe('environment stacks', () => {
 
   it('prefixes every stack name with its environment', () => {
     const names = assembly.stacks.map((s) => s.stackName);
-    for (const name of ENVIRONMENTS) {
-      expect(names).toContain(`hearth-${name}-Data`);
-      expect(names).toContain(`hearth-${name}-GameInfra-us-west-2`);
+    for (const env of ENVIRONMENTS) {
+      expect(names).toContain(`hearth-${env}-Data`);
+      expect(names).toContain(`hearth-${env}-GameInfra-us-west-2`);
     }
     expect(names.every((n) => /^hearth-(dev|stage|prod)-/.test(n))).toBe(true);
   });

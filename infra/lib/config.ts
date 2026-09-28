@@ -4,7 +4,7 @@ export const AWS_ACCOUNT = '138300868928';
 export const HOME_REGION = 'us-west-2';
 
 export interface EnvConfig {
-  readonly name: EnvName;
+  readonly env: EnvName;
   readonly account: string;
   /** Region for the control plane: API, DynamoDB, Cognito, UI, workflows, event bus. */
   readonly homeRegion: string;
@@ -22,14 +22,14 @@ const QUALIFIERS: Record<EnvName, string> = {
   prod: 'hearthprd',
 };
 
-export function envConfig(name: EnvName): EnvConfig {
+export function envConfig(env: EnvName): EnvConfig {
   return {
-    name,
+    env,
     account: AWS_ACCOUNT,
     homeRegion: HOME_REGION,
     gameRegions: [HOME_REGION],
-    qualifier: QUALIFIERS[name],
-    isProd: name === 'prod',
+    qualifier: QUALIFIERS[env],
+    isProd: env === 'prod',
   };
 }
 
