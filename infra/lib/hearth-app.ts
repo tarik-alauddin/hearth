@@ -11,12 +11,15 @@ import { OrchestrationStack } from './stacks/orchestration.js';
 
 /** Adds every stack for one environment. */
 export function addEnvironment(app: App, config: EnvConfig): void {
-  new DataStack(app, { config });
-  for (const region of config.gameRegions) {
-    new GameInfraStack(app, { config, region });
-  }
+  const data = new DataStack(app, { config });
+  // Game regions other than the home region will need cross-region references for the instance roles.
+  const gameInfra = config.gameRegions.map((region) => new GameInfraStack(app, { config, region }));
   new OrchestrationStack(app, { config });
-  new ApiStack(app, { config });
+  new ApiStack(app, {
+    config,
+    serversTable: data.serversTable,
+    instanceRoles: gameInfra.map((stack) => stack.instanceRole),
+  });
   new IntegrationsStack(app, { config });
   new AuthStack(app, { config });
   new FrontendStack(app, { config });

@@ -1,3 +1,4 @@
+import type { AgentState } from './agent-api.js';
 import type { GameId } from './games.js';
 
 export const SERVER_STATUSES = [
@@ -29,4 +30,9 @@ export interface ServerRecord {
   autoUpdate: boolean;
   instanceId?: string;
   volumeId?: string;
+  // Last report from the agent. `status` is owned by the lifecycle workflows; these are the agent's view.
+  agentState?: AgentState;
+  agentVersion?: string;
+  agentReportedAt?: string; // ISO 8601 UTC
+  agentMessage?: string;
 }
