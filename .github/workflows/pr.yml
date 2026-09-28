@@ -45,7 +45,7 @@ jobs:
       - uses: actions/setup-go@v7
         with:
           go-version-file: agent/go.mod
-          cache: false
+          cache-dependency-path: agent/go.sum
       - name: gofmt
         run: test -z "$(gofmt -l . | tee /dev/stderr)"
       - run: go vet ./...

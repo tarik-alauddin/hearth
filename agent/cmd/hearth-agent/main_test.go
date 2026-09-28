@@ -32,3 +32,15 @@ func TestUnknownFlag(t *testing.T) {
 		t.Errorf("exit code %d, want 2", code)
 	}
 }
+
+func TestRequiresEnvOrAPIURL(t *testing.T) {
+	t.Setenv("HEARTH_ENV", "")
+	t.Setenv("HEARTH_API_URL", "")
+	var stdout, stderr bytes.Buffer
+	if code := run(nil, &stdout, &stderr); code != 2 {
+		t.Errorf("exit code %d, want 2", code)
+	}
+	if !strings.Contains(stderr.String(), "-env or -api-url") {
+		t.Errorf("stderr: %s", stderr.String())
+	}
+}
