@@ -1,6 +1,4 @@
-export const GAMES = ['minecraft-java'] as const;
-
-export type GameId = (typeof GAMES)[number];
+import type { GameId } from './games.js';
 
 export const SERVER_STATUSES = [
   'PROVISIONING',

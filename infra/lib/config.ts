@@ -33,6 +33,17 @@ export function envConfig(env: EnvName): EnvConfig {
   };
 }
 
+// Listed rather than looked up, so synth needs no AWS credentials.
+const AVAILABILITY_ZONES: Record<string, readonly string[]> = {
+  'us-west-2': ['us-west-2a', 'us-west-2b', 'us-west-2c'],
+};
+
+export function availabilityZones(region: string): string[] {
+  const zones = AVAILABILITY_ZONES[region];
+  if (!zones) throw new Error(`No availability zones configured for ${region}`);
+  return [...zones];
+}
+
 export function stackName(env: EnvName, stack: string, region?: string): string {
   return ['hearth', env, stack, region].filter(Boolean).join('-');
 }
