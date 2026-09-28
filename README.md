@@ -22,7 +22,7 @@ Requires Node 24 and pnpm 10; Go 1.25+ for the agent.
 ```sh
 pnpm install
 pnpm lint && pnpm typecheck && pnpm test
-pnpm synth                      # every environment; cdk-nag violations fail synth
+pnpm synth                      # every environment; cdk-nag violations fail synth; builds the agent (needs Go, or Docker)
 cd infra && pnpm exec cdk synth -c env=dev
 ```
 

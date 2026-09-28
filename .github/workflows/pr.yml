@@ -13,6 +13,8 @@ concurrency:
 env:
   AWS_REGION: us-west-2
   AWS_ACCOUNT: "138300868928"
+  # Version stamped into the agent binary that synth builds.
+  HEARTH_AGENT_VERSION: ${{ github.sha }}
 
 jobs:
   checks:

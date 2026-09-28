@@ -1,5 +1,5 @@
 name: Setup
-description: Install Node, pnpm and workspace dependencies
+description: Install Node, pnpm, Go and workspace dependencies
 runs:
   using: composite
   steps:
@@ -8,5 +8,10 @@ runs:
       with:
         node-version-file: .nvmrc
         cache: pnpm
+    # Synth builds the game agent (infra/lib/agent-asset.ts).
+    - uses: actions/setup-go@v7
+      with:
+        go-version-file: agent/go.mod
+        cache-dependency-path: agent/go.sum
     - run: pnpm install --frozen-lockfile
       shell: bash

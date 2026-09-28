@@ -1,11 +1,12 @@
-import { App, type Stack } from 'aws-cdk-lib';
+import type { Stack } from 'aws-cdk-lib';
 import { Match, Template } from 'aws-cdk-lib/assertions';
+import { testApp } from './test-app.js';
 import { describe, expect, it } from 'vitest';
 import { envConfig } from '../lib/config.js';
 import { addChecks, addEnvironment } from '../lib/hearth-app.js';
 
 // Synthesized through the whole environment, since ApiStack takes the table and instance roles from other stacks.
-const app = new App();
+const app = testApp();
 addEnvironment(app, envConfig('dev'));
 addChecks(app);
 app.synth();

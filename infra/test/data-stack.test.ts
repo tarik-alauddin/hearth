@@ -1,5 +1,5 @@
-import { App } from 'aws-cdk-lib';
 import { Match, Template } from 'aws-cdk-lib/assertions';
+import { testApp } from './test-app.js';
 import { describe, expect, it } from 'vitest';
 import type { EnvName } from '@hearth/shared';
 import { envConfig } from '../lib/config.js';
@@ -7,7 +7,7 @@ import { addChecks } from '../lib/hearth-app.js';
 import { DataStack } from '../lib/stacks/data.js';
 
 function synth(env: EnvName) {
-  const app = new App();
+  const app = testApp();
   const stack = new DataStack(app, { config: envConfig(env) });
   addChecks(app);
   app.synth();
