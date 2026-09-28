@@ -22,7 +22,7 @@ Requires Node 24 and pnpm 10; Go 1.25+ for the agent.
 ```sh
 pnpm install
 pnpm lint && pnpm typecheck && pnpm test
-pnpm synth                      # every environment; cdk-nag violations fail synth
+pnpm synth                      # every environment; cdk-nag violations fail synth; builds the agent (needs Go, or Docker)
 cd infra && pnpm exec cdk synth -c env=dev
 ```
 
@@ -32,8 +32,20 @@ The game instance startup script has its own test, which needs Docker (it runs i
 bash infra/test/user-data/run.sh
 ```
 
+The agent (Go 1.27+):
+
+```sh
+cd agent
+go vet ./... && go test ./...
+go test -tags harness -timeout 30m ./harness/   # real agent + Minecraft container (Docker)
+./build.sh            # linux/arm64 binary at agent/bin/hearth-agent
+```
+
 To check a real instance launched from the launch template, follow
 [docs/testing/game-instance.md](docs/testing/game-instance.md) (runs in AWS CloudShell).
+
+To create a playable server in an environment and join it, follow
+[docs/testing/game-server.md](docs/testing/game-server.md), which uses `scripts/dev-server.sh`.
 
 ## One-time AWS setup
 

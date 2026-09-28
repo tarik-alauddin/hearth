@@ -13,6 +13,8 @@ concurrency:
 env:
   AWS_REGION: us-west-2
   AWS_ACCOUNT: "138300868928"
+  # Version stamped into the agent binary that synth builds.
+  HEARTH_AGENT_VERSION: ${{ github.sha }}
 
 jobs:
   checks:
@@ -22,7 +24,7 @@ jobs:
       - uses: ./.github/actions/setup
       - run: pnpm lint
       - name: shellcheck
-        run: shellcheck infra/lib/user-data/*.sh infra/test/user-data/*.sh
+        run: shellcheck infra/lib/user-data/*.sh infra/test/user-data/*.sh agent/*.sh scripts/*.sh
       - run: pnpm typecheck
       # Unit tests and CDK assertions; cdk-nag runs inside every synth.
       - run: pnpm test
@@ -35,6 +37,21 @@ jobs:
       # Runs the instance startup script against a loop device in a privileged container.
       - run: bash infra/test/user-data/run.sh
 
+  # The real agent, a real Minecraft server and a mock API (see agent/harness).
+  agent-harness:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: agent
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: agent/go.mod
+          cache-dependency-path: agent/go.sum
+      - run: go test -tags harness -timeout 25m -v ./harness/
+
   agent:
     runs-on: ubuntu-latest
     defaults:
@@ -45,10 +62,13 @@ jobs:
       - uses: actions/setup-go@v7
         with:
           go-version-file: agent/go.mod
-          cache: false
-      - run: go vet ./...
-      - run: go test ./...
-      - run: go build ./...
+          cache-dependency-path: agent/go.sum
+      - name: gofmt
+        run: test -z "$(gofmt -l . | tee /dev/stderr)"
+      - run: go vet -tags harness ./...
+      - run: go test -race ./...
+      - name: Build for game instances (linux/arm64)
+        run: ./build.sh "${GITHUB_SHA::7}"
 
   diff:
     needs: checks

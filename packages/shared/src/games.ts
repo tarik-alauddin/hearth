@@ -6,6 +6,8 @@ export type GameId = (typeof GAMES)[number];
 export interface GameDefinition {
   readonly id: GameId;
   readonly displayName: string;
+  /** Container image the agent runs. */
+  readonly image: string;
   /** Port players connect to. */
   readonly port: number;
   readonly protocol: 'tcp' | 'udp';
@@ -19,6 +21,7 @@ export const GAME_DEFINITIONS: Record<GameId, GameDefinition> = {
   'minecraft-java': {
     id: 'minecraft-java',
     displayName: 'Minecraft: Java Edition',
+    image: 'docker.io/itzg/minecraft-server',
     port: 25565,
     protocol: 'tcp',
     defaultInstanceType: 't4g.medium',

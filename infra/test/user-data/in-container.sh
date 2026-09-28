@@ -6,7 +6,8 @@ SCRIPT=/work/game-instance.sh
 MOUNT=/srv/hearth
 LOOP=
 
-dnf install -y -q xfsprogs e2fsprogs util-linux grep >/dev/null
+dnf install -y -q xfsprogs e2fsprogs util-linux grep systemd >/dev/null
+mkdir -p /etc/systemd/system # exists on a real instance
 
 # dnf and systemctl need a real instance; stub them and record their calls.
 mkdir -p /stubs
@@ -15,6 +16,10 @@ for cmd in dnf systemctl; do
   chmod +x "/stubs/$cmd"
 done
 export PATH="/stubs:$PATH"
+
+# GameInfraStack prepends these to the script in the launch template's user data.
+export HEARTH_ENV=dev HEARTH_HOME_REGION=us-west-2 HEARTH_AGENT_REGION=us-west-2
+export HEARTH_AGENT_URL=s3://cdk-hearthdev-assets-123456789012-us-west-2/abc_noext
 
 cleanup() {
   umount "$MOUNT" 2>/dev/null || true
@@ -59,6 +64,28 @@ grep -q "^dnf install -y docker$" /tmp/calls || fail "did not install docker"
 grep -q "^systemctl enable --now docker$" /tmp/calls || fail "did not enable docker"
 ok "formats, labels and mounts a blank volume, and installs docker"
 
+echo "# agent service"
+grep -q "^HEARTH_ENV=dev$" /etc/hearth/agent.env || fail "agent.env missing HEARTH_ENV"
+grep -q "^HEARTH_AGENT_URL=s3://cdk-hearthdev-assets-123456789012-us-west-2/abc_noext$" /etc/hearth/agent.env   || fail "agent.env missing HEARTH_AGENT_URL"
+grep -q "^HEARTH_DATA_DIR=/srv/hearth$" /etc/hearth/agent.env || fail "agent.env missing HEARTH_DATA_DIR"
+[ -x /usr/local/bin/hearth-bootstrap ] || fail "bootstrap not executable"
+bash -n /usr/local/bin/hearth-bootstrap || fail "bootstrap has a syntax error"
+grep -q 'exec /opt/hearth/bin/hearth-agent' /usr/local/bin/hearth-bootstrap || fail "bootstrap doesn't exec the agent"
+unit=/etc/systemd/system/hearth-agent.service
+grep -q "^RequiresMountsFor=/srv/hearth$" "$unit" || fail "unit not tied to the data volume"
+grep -q "^After=docker.service" "$unit" || fail "unit not ordered after docker"
+grep -q "^EnvironmentFile=/etc/hearth/agent.env$" "$unit" || fail "unit doesn't load agent.env"
+grep -q "^systemctl enable --now --no-block hearth-agent.service$" /tmp/calls || fail "agent service not enabled"
+# systemd must accept the unit (docker.service is a stand-in; the real one comes with the docker package).
+printf '[Service]
+ExecStart=/bin/true
+' > /etc/systemd/system/docker.service
+if ! verify=$(SYSTEMD_LOG_LEVEL=warning systemd-analyze verify "$unit" 2>&1) || [ -n "$verify" ]; then
+  echo "$verify"
+  fail "systemd-analyze rejected the unit"
+fi
+ok "writes agent.env, the bootstrap and the systemd unit, and enables the service"
+
 echo "# run again with the world mounted"
 echo "world" > "$MOUNT/level.dat"
 run_script
@@ -95,5 +122,12 @@ run_script
 [ "$(cat "$MOUNT/level.dat")" = imported ] || fail "imported world lost"
 grep -q "[[:space:]]${MOUNT}[[:space:]]ext4[[:space:]]" /etc/fstab || fail "fstab should record ext4"
 ok "keeps a non-xfs filesystem and records its type"
+
+echo "# missing variables"
+if HEARTH_AGENT_URL='' bash "$SCRIPT" > /tmp/out 2>&1; then
+  fail "script ran without HEARTH_AGENT_URL"
+fi
+grep -q "HEARTH_AGENT_URL" /tmp/out || fail "error should name the missing variable"
+ok "refuses to run without its variables"
 
 echo "all user data tests passed"

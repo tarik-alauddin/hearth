@@ -22,12 +22,20 @@ import {
 } from 'aws-cdk-lib/aws-ec2';
 import { ManagedPolicy, PolicyStatement, Role, ServicePrincipal } from 'aws-cdk-lib/aws-iam';
 import { LogGroup, RetentionDays } from 'aws-cdk-lib/aws-logs';
+import type { Asset } from 'aws-cdk-lib/aws-s3-assets';
 import type { Construct } from 'constructs';
 import { GAME_DEFINITIONS, type GameDefinition, type GameId } from '@hearth/shared';
+import { agentAsset } from '../agent-asset.js';
 import { availabilityZones } from '../config.js';
 import { HearthStack, type HearthStackProps } from '../hearth-stack.js';
 
 const USER_DATA = readFileSync(new URL('../user-data/game-instance.sh', import.meta.url), 'utf8');
+
+/** The startup script with its variables (see the script's header) assigned at the top. */
+function userDataScript(vars: Record<string, string>): string {
+  const assignments = Object.entries(vars).map(([name, value]) => `${name}='${value}'`);
+  return ['#!/bin/bash', ...assignments, USER_DATA.replace(/^#!.*\n/, '')].join('\n');
+}
 
 /** Device name the startup script looks for; see user-data/game-instance.sh. */
 export const DATA_DEVICE_NAME = '/dev/sdf';
@@ -43,6 +51,7 @@ export class GameInfraStack extends HearthStack {
   readonly instanceRole: Role;
   readonly securityGroups: Record<GameId, SecurityGroup>;
   readonly launchTemplates: Record<GameId, LaunchTemplate>;
+  readonly agent: Asset;
 
   constructor(scope: Construct, props: GameInfraStackProps) {
     super(scope, 'GameInfra', props);
@@ -91,12 +100,29 @@ export class GameInfraStack extends HearthStack {
       reason: 'PutMetricData has no resource ARNs; it is limited by the cloudwatch:namespace condition.',
     });
 
+    // Instances download the agent at every start; they can read exactly this object.
+    this.agent = agentAsset(this, 'Agent');
+    this.instanceRole.addToPolicy(
+      new PolicyStatement({
+        actions: ['s3:GetObject'],
+        resources: [this.agent.bucket.arnForObjects(this.agent.s3ObjectKey)],
+      }),
+    );
+    const userData = UserData.custom(
+      userDataScript({
+        HEARTH_ENV: env,
+        HEARTH_HOME_REGION: props.config.homeRegion,
+        HEARTH_AGENT_URL: this.agent.s3ObjectUrl,
+        HEARTH_AGENT_REGION: this.region,
+      }),
+    );
+
     const securityGroups: Partial<Record<GameId, SecurityGroup>> = {};
     const launchTemplates: Partial<Record<GameId, LaunchTemplate>> = {};
     for (const game of Object.values(GAME_DEFINITIONS)) {
       const securityGroup = this.securityGroup(env, game);
       securityGroups[game.id] = securityGroup;
-      launchTemplates[game.id] = this.launchTemplate(env, game, securityGroup);
+      launchTemplates[game.id] = this.launchTemplate(env, game, securityGroup, userData);
     }
     this.securityGroups = securityGroups as Record<GameId, SecurityGroup>;
     this.launchTemplates = launchTemplates as Record<GameId, LaunchTemplate>;
@@ -118,7 +144,12 @@ export class GameInfraStack extends HearthStack {
     return sg;
   }
 
-  private launchTemplate(env: string, game: GameDefinition, securityGroup: SecurityGroup): LaunchTemplate {
+  private launchTemplate(
+    env: string,
+    game: GameDefinition,
+    securityGroup: SecurityGroup,
+    userData: UserData,
+  ): LaunchTemplate {
     const template = new LaunchTemplate(this, `${game.id}-LaunchTemplate`, {
       launchTemplateName: `hearth-${env}-${game.id}`,
       machineImage: MachineImage.latestAmazonLinux2023({ cpuType: AmazonLinuxCpuType.ARM_64 }),
@@ -126,7 +157,7 @@ export class GameInfraStack extends HearthStack {
       cpuCredits: CpuCredits.UNLIMITED,
       role: this.instanceRole,
       securityGroup,
-      userData: UserData.custom(USER_DATA),
+      userData,
       requireImdsv2: true,
       // Hop limit 1 keeps containers from reaching instance metadata and the role's credentials.
       httpPutResponseHopLimit: 1,

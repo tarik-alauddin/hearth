@@ -1,12 +1,13 @@
-import { App, Stack } from 'aws-cdk-lib';
+import { Stack } from 'aws-cdk-lib';
 import { Bucket } from 'aws-cdk-lib/aws-s3';
+import { testApp } from './test-app.js';
 import { describe, expect, it } from 'vitest';
 import { ENVIRONMENTS } from '@hearth/shared';
 import { envConfig } from '../lib/config.js';
 import { addChecks, addEnvironment } from '../lib/hearth-app.js';
 
 function synthAll() {
-  const app = new App();
+  const app = testApp();
   for (const env of ENVIRONMENTS) addEnvironment(app, envConfig(env));
   addChecks(app);
   return app.synth();
@@ -43,7 +44,7 @@ describe('environment stacks', () => {
 
 describe('cdk-nag', () => {
   it('fails synth on an unacknowledged violation', () => {
-    const app = new App();
+    const app = testApp();
     new Bucket(new Stack(app, 'Probe'), 'NoLogsNoSsl');
     addChecks(app);
     expect(() => app.synth()).toThrow();
