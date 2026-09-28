@@ -29,8 +29,9 @@ cd infra && pnpm exec cdk synth -c env=dev
 ## One-time AWS setup
 
 GitHub Actions deploys with the account's existing `github-deploy` role through GitHub OIDC; no AWS keys
-are stored. Its trust policy must allow this repo, e.g. add `repo:tarik-alauddin/hearth:*` to the
-`token.actions.githubusercontent.com:sub` condition.
+are stored. Its trust policy must allow this repo in the `token.actions.githubusercontent.com:sub`
+condition. The repo was created after GitHub switched new repos to ID-based subjects, so the entry is
+`repo:tarik-alauddin@92332908/hearth@1391534026:*`. Renaming the repo or account changes the subject.
 
 1. CDK bootstrap, once per environment, each with its own qualifier. Run from `infra/` with admin
    credentials for account 138300868928:
