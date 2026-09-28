@@ -32,6 +32,9 @@ The game instance startup script has its own test, which needs Docker (it runs i
 bash infra/test/user-data/run.sh
 ```
 
+To check a real instance launched from the launch template, follow
+[docs/testing/game-instance.md](docs/testing/game-instance.md) (runs in AWS CloudShell).
+
 ## One-time AWS setup
 
 GitHub Actions deploys with the account's existing `github-deploy` role through GitHub OIDC; no AWS keys
