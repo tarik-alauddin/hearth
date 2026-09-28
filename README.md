@@ -32,6 +32,14 @@ The game instance startup script has its own test, which needs Docker (it runs i
 bash infra/test/user-data/run.sh
 ```
 
+The agent (Go 1.27+):
+
+```sh
+cd agent
+go vet ./... && go test ./...
+./build.sh            # linux/arm64 binary at agent/bin/hearth-agent
+```
+
 To check a real instance launched from the launch template, follow
 [docs/testing/game-instance.md](docs/testing/game-instance.md) (runs in AWS CloudShell).
 

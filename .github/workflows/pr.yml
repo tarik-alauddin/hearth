@@ -22,7 +22,7 @@ jobs:
       - uses: ./.github/actions/setup
       - run: pnpm lint
       - name: shellcheck
-        run: shellcheck infra/lib/user-data/*.sh infra/test/user-data/*.sh
+        run: shellcheck infra/lib/user-data/*.sh infra/test/user-data/*.sh agent/*.sh
       - run: pnpm typecheck
       # Unit tests and CDK assertions; cdk-nag runs inside every synth.
       - run: pnpm test
@@ -46,9 +46,12 @@ jobs:
         with:
           go-version-file: agent/go.mod
           cache: false
+      - name: gofmt
+        run: test -z "$(gofmt -l . | tee /dev/stderr)"
       - run: go vet ./...
-      - run: go test ./...
-      - run: go build ./...
+      - run: go test -race ./...
+      - name: Build for game instances (linux/arm64)
+        run: ./build.sh "${GITHUB_SHA::7}"
 
   diff:
     needs: checks
