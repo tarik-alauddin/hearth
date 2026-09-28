@@ -1,0 +1,25 @@
+{
+  "name": "@hearth/infra",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "synth": "cdk synth --quiet",
+    "cdk": "cdk"
+  },
+  "dependencies": {
+    "@hearth/shared": "workspace:*",
+    "aws-cdk-lib": "^2.271.0",
+    "cdk-nag": "^3.0.2",
+    "constructs": "^10.8.1"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.3",
+    "aws-cdk": "^2.1143.0",
+    "tsx": "^4.23.15",
+    "typescript": "^6.0.3",
+    "vitest": "^5.0.2"
+  }
+}

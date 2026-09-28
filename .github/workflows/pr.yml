@@ -1,0 +1,74 @@
+name: PR checks
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+env:
+  AWS_REGION: us-west-2
+  AWS_ACCOUNT: "138300868928"
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup
+      - run: pnpm lint
+      - run: pnpm typecheck
+      # Unit tests and CDK assertions; cdk-nag runs inside every synth.
+      - run: pnpm test
+      - run: pnpm synth
+
+  agent:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: agent
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: agent/go.mod
+          cache: false
+      - run: go vet ./...
+      - run: go test ./...
+      - run: go build ./...
+
+  diff:
+    needs: checks
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup
+      - uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: arn:aws:iam::${{ env.AWS_ACCOUNT }}:role/github-deploy
+          aws-region: ${{ env.AWS_REGION }}
+      - name: cdk diff against dev
+        working-directory: infra
+        run: |
+          pnpm exec cdk diff 'hearth-dev-*' -c env=dev --no-color 2>&1 | tee ../diff.txt
+          exit "${PIPESTATUS[0]}"
+      - name: Post diff to the PR
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          {
+            echo '### `cdk diff` (dev)'
+            echo '```'
+            head -c 60000 diff.txt
+            echo '```'
+          } > comment.md
+          gh pr comment ${{ github.event.pull_request.number }} --edit-last --create-if-none --body-file comment.md
