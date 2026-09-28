@@ -37,11 +37,15 @@ The agent (Go 1.27+):
 ```sh
 cd agent
 go vet ./... && go test ./...
+go test -tags harness -timeout 30m ./harness/   # real agent + Minecraft container (Docker)
 ./build.sh            # linux/arm64 binary at agent/bin/hearth-agent
 ```
 
 To check a real instance launched from the launch template, follow
 [docs/testing/game-instance.md](docs/testing/game-instance.md) (runs in AWS CloudShell).
+
+To create a playable server in an environment and join it, follow
+[docs/testing/game-server.md](docs/testing/game-server.md), which uses `scripts/dev-server.sh`.
 
 ## One-time AWS setup
 
