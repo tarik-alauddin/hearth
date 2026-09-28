@@ -26,6 +26,15 @@ pnpm synth                      # every environment; cdk-nag violations fail syn
 cd infra && pnpm exec cdk synth -c env=dev
 ```
 
+The game instance startup script has its own test, which needs Docker (it runs in CI too):
+
+```sh
+bash infra/test/user-data/run.sh
+```
+
+To check a real instance launched from the launch template, follow
+[docs/testing/game-instance.md](docs/testing/game-instance.md) (runs in AWS CloudShell).
+
 ## One-time AWS setup
 
 GitHub Actions deploys with the account's existing `github-deploy` role through GitHub OIDC; no AWS keys
