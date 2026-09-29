@@ -84,7 +84,7 @@ describe('OrchestrationStack', () => {
 
     it('bounds the agent wait at 15 minutes', () => {
       expect(definition('hearth-dev-start-server')).toContain(
-        '\\"ErrorEquals\\":[\\"NotReady\\"],\\"IntervalSeconds\\":10,\\"MaxAttempts\\":90',
+        '\\"ErrorEquals\\":[\\"NotReady\\"],\\"IntervalSeconds\\":15,\\"MaxAttempts\\":60',
       );
     });
 

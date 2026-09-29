@@ -136,9 +136,10 @@ func docker(t *testing.T, args ...string) string {
 	return strings.TrimSpace(string(out))
 }
 
-// dataDir is a fresh world volume stand-in. The game writes files as its own user, so it's
-// removed through a container rather than by the test process.
-func dataDir(t *testing.T) string {
+// dataDir is a fresh world volume stand-in. A game may write files as its own user, which the
+// test process can't delete; cleanupImage (an image already pulled for the test, with a shell)
+// removes them. Empty means the game writes nothing that needs it.
+func dataDir(t *testing.T, cleanupImage string) string {
 	t.Helper()
 	dir, err := os.MkdirTemp("", "hearth-harness-")
 	if err != nil {
@@ -146,7 +147,9 @@ func dataDir(t *testing.T) string {
 	}
 	t.Cleanup(func() {
 		_ = exec.Command("docker", "rm", "--force", agent.ContainerName).Run()
-		_ = exec.Command("docker", "run", "--rm", "-v", dir+":/d", "public.ecr.aws/docker/library/alpine:3", "sh", "-c", "rm -rf /d/*").Run()
+		if cleanupImage != "" {
+			_ = exec.Command("docker", "run", "--rm", "--entrypoint", "sh", "-v", dir+":/d", cleanupImage, "-c", "rm -rf /d/*").Run()
+		}
 		_ = os.RemoveAll(dir)
 	})
 	return dir
@@ -155,12 +158,13 @@ func dataDir(t *testing.T) string {
 // TestMinecraft covers a whole server life: first start with world generation, a graceful stop
 // that saves, and a restart on the same data that keeps the world.
 func TestMinecraft(t *testing.T) {
-	data := dataDir(t)
+	const image = "docker.io/itzg/minecraft-server"
+	data := dataDir(t, image)
 	cfg := game.Config{
 		ServerID: "01HARNESS",
 		Game:     "minecraft-java",
 		Version:  "1.21.4",
-		Image:    "docker.io/itzg/minecraft-server",
+		Image:    image,
 		Port:     25565,
 	}
 
@@ -249,10 +253,52 @@ func (g *fakeGame) Save(context.Context) error { return nil }
 
 func TestAnyGame(t *testing.T) {
 	registry := map[string]game.Factory{"fake": func() game.Adapter { return &fakeGame{} }}
-	r := startAgent(t, game.Config{ServerID: "01FAKE", Game: "fake", Image: "public.ecr.aws/nginx/nginx:alpine", Port: 18080}, registry, dataDir(t))
+	image := buildFakeGameImage(t)
+	r := startAgent(t, game.Config{ServerID: "01FAKE", Game: "fake", Image: image, Port: 18080}, registry, dataDir(t, ""))
 	r.waitFor(t, "ready", 3*time.Minute)
 	r.stop(t)
 	if got, want := r.api.reported(), []string{"starting", "ready", "stopping", "stopped"}; !slices.Equal(got, want) {
 		t.Errorf("reported %v, want %v", got, want)
 	}
+}
+
+// fakeGameServer is the whole "game" for TestAnyGame: it answers HTTP on port 80.
+const fakeGameServer = `package main
+
+import "net/http"
+
+func main() {
+	http.ListenAndServe(":80", http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Write([]byte("ok"))
+	}))
+}
+`
+
+// buildFakeGameImage compiles fakeGameServer and packages it FROM scratch, so the test pulls
+// nothing from a registry (shared CI runners hit anonymous pull limits).
+func buildFakeGameImage(t *testing.T) string {
+	t.Helper()
+	const image = "hearth-harness-fake-game:local"
+	dir := t.TempDir()
+	files := map[string]string{
+		"go.mod":     "module fakegame\n\ngo 1.27\n",
+		"main.go":    fakeGameServer,
+		"Dockerfile": "FROM scratch\nCOPY server /server\nENTRYPOINT [\"/server\"]\n",
+	}
+	for name, content := range files {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Build for the Docker daemon's architecture, which may differ from the test's host.
+	arch := docker(t, "version", "--format", "{{.Server.Arch}}")
+	build := exec.Command("go", "build", "-o", "server", ".")
+	build.Dir = dir
+	build.Env = append(os.Environ(), "CGO_ENABLED=0", "GOOS=linux", "GOARCH="+arch)
+	if out, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build fake game: %v\n%s", err, out)
+	}
+	docker(t, "build", "--quiet", "--tag", image, dir)
+	t.Cleanup(func() { _ = exec.Command("docker", "rmi", "--force", image).Run() })
+	return image
 }
