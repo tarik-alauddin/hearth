@@ -1,19 +1,15 @@
-import { fileURLToPath } from 'node:url';
-import { Duration, RemovalPolicy, Validations } from 'aws-cdk-lib';
+import { RemovalPolicy } from 'aws-cdk-lib';
 import { HttpApi, HttpMethod, HttpStage, LogGroupLogDestination } from 'aws-cdk-lib/aws-apigatewayv2';
 import { HttpIamAuthorizer } from 'aws-cdk-lib/aws-apigatewayv2-authorizers';
 import { HttpLambdaIntegration } from 'aws-cdk-lib/aws-apigatewayv2-integrations';
 import type { ITableV2 } from 'aws-cdk-lib/aws-dynamodb';
 import { Policy, PolicyStatement, type IRole } from 'aws-cdk-lib/aws-iam';
-import { Architecture, Runtime } from 'aws-cdk-lib/aws-lambda';
-import { NodejsFunction, OutputFormat } from 'aws-cdk-lib/aws-lambda-nodejs';
 import { LogGroup, RetentionDays } from 'aws-cdk-lib/aws-logs';
 import { StringParameter } from 'aws-cdk-lib/aws-ssm';
 import type { Construct } from 'constructs';
 import { SERVERS_BY_INSTANCE_INDEX } from '@hearth/shared';
+import { hearthFunction } from '../hearth-function.js';
 import { HearthStack, type HearthStackProps } from '../hearth-stack.js';
-
-const AGENT_LAMBDA_ENTRY = fileURLToPath(new URL('../../../services/api/src/agent/lambda.ts', import.meta.url));
 
 export interface ApiStackProps extends HearthStackProps {
   readonly serversTable: ITableV2;
@@ -46,28 +42,16 @@ export class ApiStack extends HearthStack {
     });
 
     // Agent routes: callers sign with their instance role; the handlers map the role session to an instance.
-    const agentFunction = (id: string, handler: string) => {
-      const fn = new NodejsFunction(this, id, {
-        entry: AGENT_LAMBDA_ENTRY,
+    const agentFunction = (id: string, handler: string) =>
+      hearthFunction(this, id, {
+        config: props.config,
+        entry: 'api/src/agent/lambda.ts',
         handler,
-        runtime: Runtime.NODEJS_24_X,
-        architecture: Architecture.ARM_64,
-        memorySize: 256,
-        timeout: Duration.seconds(10),
-        logGroup: new LogGroup(this, `${id}Logs`, { retention: RetentionDays.ONE_MONTH, removalPolicy }),
         environment: {
           SERVERS_TABLE: props.serversTable.tableName,
           INSTANCE_ROLE_NAMES: props.instanceRoles.map((role) => role.roleName).join(','),
-          NODE_OPTIONS: '--enable-source-maps',
         },
-        bundling: { format: OutputFormat.ESM, target: 'node24', sourceMap: true },
       });
-      Validations.of(fn).acknowledge({
-        id: 'AwsSolutions-IAM4[Policy::arn:<AWS::Partition>:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole]',
-        reason: 'AWS-maintained policy that only allows writing to CloudWatch Logs.',
-      });
-      return fn;
-    };
 
     const byInstanceIndexArn = `${props.serversTable.tableArn}/index/${SERVERS_BY_INSTANCE_INDEX}`;
     const configFunction = agentFunction('AgentConfig', 'configHandler');

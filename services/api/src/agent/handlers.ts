@@ -9,7 +9,7 @@ import {
   type AgentStatusReport,
   type ServerRecord,
 } from '@hearth/shared';
-import type { ServersStore } from '../servers.js';
+import type { ServersStore } from '@hearth/core';
 import { callerInstanceId } from './caller.js';
 
 type Event = APIGatewayProxyEventV2WithIAMAuthorizer;
@@ -21,7 +21,7 @@ interface Caller {
 }
 
 export interface AgentHandlerDeps {
-  store: ServersStore;
+  store: Pick<ServersStore, 'findByInstance' | 'recordAgentReport'>;
   /** Names of the game instance roles allowed to call agent routes. */
   instanceRoleNames: readonly string[];
   now?: () => Date;

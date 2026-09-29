@@ -1,18 +1,21 @@
 {
-  "name": "@hearth/api",
+  "name": "@hearth/core",
   "version": "0.0.0",
   "private": true,
   "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "vitest run"
   },
   "dependencies": {
-    "@hearth/core": "workspace:*",
+    "@aws-sdk/client-dynamodb": "^3.1142.0",
+    "@aws-sdk/lib-dynamodb": "^3.1142.0",
     "@hearth/shared": "workspace:*"
   },
   "devDependencies": {
-    "@types/aws-lambda": "^8.10.163",
     "@types/node": "^26.6.3",
     "typescript": "~6.0.3",
     "vitest": "^5.0.2"

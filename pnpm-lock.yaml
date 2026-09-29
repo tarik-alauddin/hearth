@@ -63,12 +63,56 @@ importers:
 
   services/api:
     dependencies:
+      '@hearth/core':
+        specifier: workspace:*
+        version: link:../core
+      '@hearth/shared':
+        specifier: workspace:*
+        version: link:../../packages/shared
+    devDependencies:
+      '@types/aws-lambda':
+        specifier: ^8.10.163
+        version: 8.10.163
+      '@types/node':
+        specifier: ^26.6.3
+        version: 26.6.3
+      typescript:
+        specifier: ~6.0.3
+        version: 6.0.3
+      vitest:
+        specifier: ^5.0.2
+        version: 5.0.2(@types/node@26.6.3)(vite@8.3.1(@types/node@26.6.3)(esbuild@0.28.2)(tsx@4.23.15))
+
+  services/core:
+    dependencies:
       '@aws-sdk/client-dynamodb':
         specifier: ^3.1142.0
         version: 3.1142.0
       '@aws-sdk/lib-dynamodb':
         specifier: ^3.1142.0
         version: 3.1142.0(@aws-sdk/client-dynamodb@3.1142.0)
+      '@hearth/shared':
+        specifier: workspace:*
+        version: link:../../packages/shared
+    devDependencies:
+      '@types/node':
+        specifier: ^26.6.3
+        version: 26.6.3
+      typescript:
+        specifier: ~6.0.3
+        version: 6.0.3
+      vitest:
+        specifier: ^5.0.2
+        version: 5.0.2(@types/node@26.6.3)(vite@8.3.1(@types/node@26.6.3)(esbuild@0.28.2)(tsx@4.23.15))
+
+  services/events:
+    dependencies:
+      '@aws-sdk/client-ec2':
+        specifier: ^3.1143.0
+        version: 3.1143.0
+      '@hearth/core':
+        specifier: workspace:*
+        version: link:../core
       '@hearth/shared':
         specifier: workspace:*
         version: link:../../packages/shared
@@ -103,6 +147,10 @@ packages:
 
   '@aws-sdk/client-dynamodb@3.1142.0':
     resolution: {integrity: sha512-/p+qS8o18FMVlGQmA85zeUtG+vw1vN1TjfOoQzvD1VvZXWgicp2D771mlvuMdQ/QBVPcjwHbYD3e2TBefw6FSw==}
+    engines: {node: '>=20.0.0'}
+
+  '@aws-sdk/client-ec2@3.1143.0':
+    resolution: {integrity: sha512-pLtjf3+f/mMUxzYSDtxm/FFHr/KzLU/fTDOlvsA/gA4fbaUx8DvNhpKajQopPEeg88ek/ibHEE3VPNn7peiokA==}
     engines: {node: '>=20.0.0'}
 
   '@aws-sdk/core@3.978.1':
@@ -157,6 +205,10 @@ packages:
 
   '@aws-sdk/middleware-endpoint-discovery@3.972.31':
     resolution: {integrity: sha512-JqOIXupzP6cpAmCCmuEaacbXo/bVCcg1NkglCJC6q4wDAvJO09qIs7POf50JNzmhOhWPtfXvzgWxb5nMQl8QiA==}
+    engines: {node: '>=20.0.0'}
+
+  '@aws-sdk/middleware-sdk-ec2@3.972.60':
+    resolution: {integrity: sha512-d162hehtR9IJuVUfMpAIfeZhjQdYyXRH/QbQWehD5bffJoIQKJ51o/M2YSMubw6X4k5bDtSzVHIYcsna7GBLpw==}
     engines: {node: '>=20.0.0'}
 
   '@aws-sdk/nested-clients@3.997.46':
@@ -1220,6 +1272,18 @@ snapshots:
       '@smithy/types': 4.19.0
       tslib: 2.8.1
 
+  '@aws-sdk/client-ec2@3.1143.0':
+    dependencies:
+      '@aws-sdk/core': 3.978.1
+      '@aws-sdk/credential-provider-node': 3.972.84
+      '@aws-sdk/middleware-sdk-ec2': 3.972.60
+      '@aws-sdk/types': 3.974.6
+      '@smithy/core': 3.35.0
+      '@smithy/fetch-http-handler': 5.8.0
+      '@smithy/node-http-handler': 4.12.1
+      '@smithy/types': 4.19.0
+      tslib: 2.8.1
+
   '@aws-sdk/core@3.978.1':
     dependencies:
       '@aws-sdk/types': 3.974.6
@@ -1341,6 +1405,15 @@ snapshots:
       '@aws-sdk/endpoint-cache': 3.972.11
       '@aws-sdk/types': 3.974.6
       '@smithy/core': 3.35.0
+      '@smithy/types': 4.19.0
+      tslib: 2.8.1
+
+  '@aws-sdk/middleware-sdk-ec2@3.972.60':
+    dependencies:
+      '@aws-sdk/core': 3.978.1
+      '@aws-sdk/types': 3.974.6
+      '@smithy/core': 3.35.0
+      '@smithy/signature-v4': 5.7.4
       '@smithy/types': 4.19.0
       tslib: 2.8.1
 

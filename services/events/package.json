@@ -1,5 +1,5 @@
 {
-  "name": "@hearth/api",
+  "name": "@hearth/events",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -8,6 +8,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@aws-sdk/client-ec2": "^3.1143.0",
     "@hearth/core": "workspace:*",
     "@hearth/shared": "workspace:*"
   },
