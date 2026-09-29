@@ -1,0 +1,25 @@
+{
+  "name": "@hearth/cli",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "bundle": "esbuild src/main.ts --bundle --platform=node --target=node20 --format=cjs --outfile=dist/hearth.cjs"
+  },
+  "dependencies": {
+    "@aws-crypto/sha256-js": "^5.2.0",
+    "@aws-sdk/client-ssm": "^3.1143.0",
+    "@aws-sdk/credential-providers": "^3.1143.0",
+    "@hearth/shared": "workspace:*",
+    "@smithy/signature-v4": "^5.7.4",
+    "@smithy/types": "^4.19.0"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.3",
+    "esbuild": "^0.28.2",
+    "typescript": "~6.0.3",
+    "vitest": "^5.0.2"
+  }
+}

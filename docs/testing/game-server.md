@@ -1,89 +1,72 @@
 # Game server check
 
-End-to-end check that a server created in an environment can be joined from a Minecraft client,
-survives a stop/start with its world intact, and cleans up. First run for M2 ("you join the server
-by IP from your Minecraft client"); rerun after changes to the agent, the API's agent routes, the
-startup script or the launch template.
+End-to-end check that a server can be created, joined from a Minecraft client, stopped and started
+with its world intact, through the real API and lifecycle workflows. Rerun after changes to the
+agent, the API, the workflows, the startup script or the launch template.
 
-Uses `scripts/dev-server.sh`, which stands in for the lifecycle workflows and CLI until M3.
-The agent's own behaviour is also covered in CI by `agent/harness`; this check adds real EC2, IAM,
-the API and your client.
-
-**Where to run:** AWS CloudShell in `us-west-2`. Get the script there with **Actions → Upload file**
-(`scripts/dev-server.sh`), or clone the repo. **Costs:** a few cents per hour while the server runs.
+**Where to run:** locally (`pnpm hearth …`, with AWS credentials for the account) or in AWS CloudShell
+in `us-west-2`. For CloudShell, build the CLI once with `pnpm --filter @hearth/cli bundle`, upload
+`cli/dist/hearth.cjs` (**Actions → Upload file**) and run `node hearth.cjs …`. Commands below use
+`hearth` for either. **Costs:** a few cents per hour while the server runs.
 
 ## 0. Before you start
 
-- The change is deployed to the environment (for dev: merged to `main` and the Deploy workflow is green).
-- Know your Minecraft Java client's version (title screen, bottom left). The server must match it.
+- The change is deployed (for dev: merged to `main`, Deploy workflow green).
+- Your Minecraft Java client's version (title screen, bottom left); the server must match it.
 
-## 1. Create a server
+## 1. Create
 
 ```bash
-bash dev-server.sh create 1.21.4      # use your client's version
+hearth create --version 1.21.4      # your client's version
 ```
 
-The script writes the server record, launches an instance from the launch template, tags it and its
-world volume with the server ID, then follows the agent's reports:
-
-```
-agent: no report yet
-agent: starting
-agent: ready
-ready. Join at 35.x.x.x:25565   (server 01M...)
-```
-
-The first start takes about 3–5 minutes: instance boot, Docker, the agent download, the Minecraft
-image and server download, and world generation. Note the server ID for the next steps.
+Expect `PROVISIONING` → `STARTING · agent starting` → `RUNNING · agent ready`, then
+`Ready. Join at <ip>:25565`. The first start takes about 3–5 minutes.
 
 ## 2. Join and leave a mark
 
-In Minecraft: **Multiplayer → Direct Connection** → the `ip:25565` from step 1. Build something
-recognisable near spawn, then disconnect.
+**Multiplayer → Direct Connection** → the address from step 1. Build something near spawn, disconnect.
 
-## 3. Look around the instance (optional)
-
-Connect with **EC2 → the instance → Connect → Session Manager**:
+## 3. Stop
 
 ```bash
-systemctl status hearth-agent          # active (running)
-journalctl -u hearth-agent -n 50       # the agent's JSON logs
-sudo docker ps                         # hearth-game, 0.0.0.0:25565 and 127.0.0.1:25575 only
-sudo docker logs --tail 20 hearth-game
+hearth stop <serverId>              # ends with "Stopped. World saved."
 ```
 
-## 4. Stop: the agent saves the world during shutdown
+"Not clean" instead means the agent didn't report saving before the instance powered off.
+
+## 4. Start again
 
 ```bash
-bash dev-server.sh stop <serverId>     # ends with "Last agent report: stopped"
+hearth start <serverId>             # prints the new address; the IP changes every start
 ```
 
-`stopped` means the agent saved over RCON and the game exited cleanly before the instance powered off.
+Join again: what you built is still there.
 
-## 5. Start again: same world, new IP
+## 5. Check the rest
 
 ```bash
-bash dev-server.sh start <serverId>    # prints the new join address
+hearth list                         # one line per server
+hearth start <serverId>             # while RUNNING: "Already running.", nothing new starts
 ```
-
-Join at the new address; what you built in step 2 is still there.
 
 ## 6. Clean up
 
+There's no delete in the API until archiving exists (it would lose the world). Use the dev script
+(needs the AWS CLI; CloudShell has it):
+
 ```bash
-bash dev-server.sh destroy <serverId> --yes   # instance, world volume and record
-bash dev-server.sh list                       # the server is gone
+bash scripts/dev-server.sh destroy <serverId> --yes
 ```
 
 ## Troubleshooting
 
-`bash dev-server.sh status <serverId>` shows the agent's last report and message.
+`hearth status <serverId>` shows the status, the agent's last report and any failure reason.
 
 | Symptom | Look at |
 | --- | --- |
-| Stuck on "no report yet" | `journalctl -u hearth-agent`: the bootstrap's S3 download, then "fetching config failed" lines with the API's answer |
-| API answers 403 | The caller isn't the instance role; check `INSTANCE_ROLE_NAMES` on the AgentConfig Lambda |
-| API answers 404 for a while | Normal right after launch: the index catches up with the new `instanceId` within seconds |
-| `agent: error` | The message says what failed; `sudo docker logs hearth-game` for game-side problems |
-| Can't connect from the client | Version mismatch (client and server must match), or the IP changed after a start |
-| Startup script problems | `/var/log/cloud-init-output.log`, lines starting `hearth-user-data:` |
+| `FAILED` with a message | The message; then the workflow's execution in **Step Functions** (`hearth-<env>-<op>-server`) |
+| Stuck at `STARTING`, no agent report | `journalctl -u hearth-agent` on the instance (Session Manager) |
+| `API 403` | Your credentials lack `execute-api:Invoke`, or you're using a game instance's role |
+| `API 409` | The server is mid-operation (e.g. stop while starting); wait and retry |
+| Can't connect from the client | Version mismatch, or an old IP after a start |

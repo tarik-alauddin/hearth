@@ -1,7 +1,7 @@
-node_modules/
-dist/
-cdk.out/
 *.tsbuildinfo
 .env*
-coverage/
 agent/bin/
+cdk.out/
+coverage/
+dist/
+node_modules/

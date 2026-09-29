@@ -10,11 +10,13 @@
     "typecheck": "pnpm -r typecheck",
     "lint": "eslint .",
     "test": "pnpm -r test",
-    "synth": "pnpm --filter @hearth/infra synth"
+    "synth": "pnpm --filter @hearth/infra synth",
+    "hearth": "tsx cli/src/main.ts"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "eslint": "^10.11.0",
+    "tsx": "^4.23.15",
     "typescript": "^6.0.3",
     "typescript-eslint": "^8.70.1"
   }
