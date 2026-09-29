@@ -56,6 +56,8 @@ export interface ServerRecord {
   publicIp?: string; // only while running; changes on every start
   lastStartedAt?: string;
   lastStoppedAt?: string;
+  createdAt?: string; // ISO 8601 UTC
+  lastOperationId?: string; // the latest create/start/stop claim; names its workflow execution
   // Written by the lifecycle workflows.
   statusMessage?: string; // why the server is FAILED
   lastStopClean?: boolean; // the agent reported a clean stop (world saved) during the last stop

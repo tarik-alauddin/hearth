@@ -2,7 +2,9 @@ import { ConditionalCheckFailedException, DynamoDBClient } from '@aws-sdk/client
 import {
   DynamoDBDocumentClient,
   GetCommand,
+  PutCommand,
   QueryCommand,
+  ScanCommand,
   UpdateCommand,
   type UpdateCommandInput,
 } from '@aws-sdk/lib-dynamodb';
@@ -21,6 +23,10 @@ import {
 export interface ServersStore {
   /** Strongly consistent read of one server. */
   getServer(serverId: string): Promise<ServerRecord | undefined>;
+  /** One page of servers (admin use: a scan). Pass the returned cursor to get the next page. */
+  listServers(page: { limit: number; cursor?: string }): Promise<{ servers: ServerRecord[]; cursor?: string }>;
+  /** Writes a new record; fails if the ID is taken. */
+  createServer(server: ServerRecord): Promise<void>;
   findByInstance(instanceId: string): Promise<ServerRecord | undefined>;
   /** Agent routes. Returns false if the server is no longer on this instance. */
   recordAgentReport(serverId: string, instanceId: string, report: AgentStatusReport, at: Date): Promise<boolean>;
@@ -70,6 +76,20 @@ export function dynamoServersStore(client: Pick<DynamoDBDocumentClient, 'send'>,
     async getServer(serverId) {
       const { Item } = await client.send(new GetCommand({ TableName: tableName, Key: { serverId }, ConsistentRead: true }));
       return Item as ServerRecord | undefined;
+    },
+
+    async listServers({ limit, cursor }) {
+      const out = await client.send(
+        new ScanCommand({ TableName: tableName, Limit: limit, ExclusiveStartKey: cursor ? decodeCursor(cursor) : undefined }),
+      );
+      const next = out.LastEvaluatedKey ? encodeCursor(out.LastEvaluatedKey) : undefined;
+      return { servers: (out.Items ?? []) as ServerRecord[], ...(next ? { cursor: next } : {}) };
+    },
+
+    async createServer(server) {
+      await client.send(
+        new PutCommand({ TableName: tableName, Item: server, ConditionExpression: 'attribute_not_exists(serverId)' }),
+      );
     },
 
     async findByInstance(instanceId) {
@@ -162,4 +182,22 @@ export function dynamoServersStore(client: Pick<DynamoDBDocumentClient, 'send'>,
       });
     },
   };
+}
+
+/** Thrown for a cursor that wasn't returned by listServers. */
+export class InvalidCursor extends Error {}
+
+// A cursor is the scan's last key (just the serverId), base64url-encoded so it's opaque to callers.
+function encodeCursor(key: Record<string, unknown>): string {
+  return Buffer.from(JSON.stringify({ serverId: key.serverId })).toString('base64url');
+}
+
+function decodeCursor(cursor: string): Record<string, unknown> {
+  try {
+    const key = JSON.parse(Buffer.from(cursor, 'base64url').toString('utf8')) as { serverId?: unknown };
+    if (typeof key.serverId === 'string' && key.serverId) return { serverId: key.serverId };
+  } catch {
+    // fall through
+  }
+  throw new InvalidCursor('Invalid cursor');
 }

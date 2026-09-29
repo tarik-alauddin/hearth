@@ -6,6 +6,7 @@ import type { ITableV2 } from 'aws-cdk-lib/aws-dynamodb';
 import { Policy, PolicyStatement, type IRole } from 'aws-cdk-lib/aws-iam';
 import { LogGroup, RetentionDays } from 'aws-cdk-lib/aws-logs';
 import { StringParameter } from 'aws-cdk-lib/aws-ssm';
+import type { IStateMachine } from 'aws-cdk-lib/aws-stepfunctions';
 import type { Construct } from 'constructs';
 import { SERVERS_BY_INSTANCE_INDEX } from '@hearth/shared';
 import { hearthFunction } from '../hearth-function.js';
@@ -15,9 +16,12 @@ export interface ApiStackProps extends HearthStackProps {
   readonly serversTable: ITableV2;
   /** Game instance roles, one per game region; they may call the agent routes. */
   readonly instanceRoles: readonly IRole[];
+  /** The lifecycle workflows the server operations start. */
+  readonly workflows: Record<'create' | 'start' | 'stop', IStateMachine>;
+  readonly gameRegions: readonly string[];
 }
 
-/** The HTTP API: agent routes (IAM) now; user routes (Cognito JWT), bot routes and usage routes later. */
+/** The HTTP API: agent and admin routes (IAM) now; user (Cognito), bot and usage routes later. */
 export class ApiStack extends HearthStack {
   readonly api: HttpApi;
   /** SSM parameter agents read at boot to find the API. */
@@ -75,6 +79,44 @@ export class ApiStack extends HearthStack {
       integration: new HttpLambdaIntegration('AgentStatusIntegration', statusFunction),
       authorizer,
     });
+
+    // Admin routes: server operations for the hearth CLI, signed with your own AWS credentials.
+    const admin = hearthFunction(this, 'Admin', {
+      config: props.config,
+      entry: 'api/src/admin/lambda.ts',
+      handler: 'handler',
+      environment: {
+        SERVERS_TABLE: props.serversTable.tableName,
+        INSTANCE_ROLE_NAMES: props.instanceRoles.map((role) => role.roleName).join(','),
+        HOME_REGION: props.config.homeRegion,
+        GAME_REGIONS: props.gameRegions.join(','),
+        CREATE_WORKFLOW_ARN: props.workflows.create.stateMachineArn,
+        START_WORKFLOW_ARN: props.workflows.start.stateMachineArn,
+        STOP_WORKFLOW_ARN: props.workflows.stop.stateMachineArn,
+      },
+    });
+    admin.addToRolePolicy(
+      new PolicyStatement({
+        actions: ['dynamodb:GetItem', 'dynamodb:PutItem', 'dynamodb:UpdateItem', 'dynamodb:Scan'],
+        resources: [props.serversTable.tableArn],
+      }),
+    );
+    admin.addToRolePolicy(
+      new PolicyStatement({
+        actions: ['states:StartExecution'],
+        resources: Object.values(props.workflows).map((machine) => machine.stateMachineArn),
+      }),
+    );
+    const adminIntegration = new HttpLambdaIntegration('AdminIntegration', admin);
+    for (const [path, method] of [
+      ['/admin/servers', HttpMethod.GET],
+      ['/admin/servers', HttpMethod.POST],
+      ['/admin/servers/{id}', HttpMethod.GET],
+      ['/admin/servers/{id}/start', HttpMethod.POST],
+      ['/admin/servers/{id}/stop', HttpMethod.POST],
+    ] as const) {
+      this.api.addRoutes({ path, methods: [method], integration: adminIntegration, authorizer });
+    }
 
     this.apiUrlParameter = new StringParameter(this, 'ApiUrl', {
       parameterName: `/hearth/${env}/api-url`,

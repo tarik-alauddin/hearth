@@ -1,7 +1,7 @@
 import { ConditionalCheckFailedException } from '@aws-sdk/client-dynamodb';
 import { QueryCommand, UpdateCommand } from '@aws-sdk/lib-dynamodb';
 import { describe, expect, it } from 'vitest';
-import { dynamoServersStore } from './servers.js';
+import { InvalidCursor, dynamoServersStore } from './servers.js';
 
 /** A document client whose send() records commands and returns canned responses. */
 function fakeClient(respond: (command: unknown) => unknown = () => ({})) {
@@ -170,5 +170,39 @@ describe('getServer', () => {
     const { client, sent } = fakeClient(() => ({ Item: { serverId: 's1' } }));
     expect((await dynamoServersStore(client, 't').getServer('s1'))?.serverId).toBe('s1');
     expect((sent[0] as { input: unknown }).input).toEqual({ TableName: 't', Key: { serverId: 's1' }, ConsistentRead: true });
+  });
+});
+
+describe('createServer and listServers', () => {
+  it('creates only if the ID is new', async () => {
+    const { client, sent } = fakeClient();
+    await dynamoServersStore(client, 't').createServer({ serverId: 's1' } as never);
+    expect((sent[0] as { input: unknown }).input).toMatchObject({
+      Item: { serverId: 's1' },
+      ConditionExpression: 'attribute_not_exists(serverId)',
+    });
+  });
+
+  it('returns one page and a cursor that continues it', async () => {
+    const { client, sent } = fakeClient(() => ({ Items: [{ serverId: 's1' }], LastEvaluatedKey: { serverId: 's1' } }));
+    const store = dynamoServersStore(client, 't');
+    const first = await store.listServers({ limit: 1 });
+    expect(first.servers.map((s) => s.serverId)).toEqual(['s1']);
+    expect(first.cursor).toBeDefined();
+    await store.listServers({ limit: 1, cursor: first.cursor });
+    expect((sent[0] as { input: { Limit: number } }).input.Limit).toBe(1);
+    expect((sent[1] as { input: { ExclusiveStartKey: unknown } }).input.ExclusiveStartKey).toEqual({ serverId: 's1' });
+  });
+
+  it('has no cursor on the last page', async () => {
+    const { client } = fakeClient(() => ({ Items: [] }));
+    expect(await dynamoServersStore(client, 't').listServers({ limit: 50 })).toEqual({ servers: [] });
+  });
+
+  it('rejects a cursor it did not issue', async () => {
+    const { client } = fakeClient();
+    await expect(dynamoServersStore(client, 't').listServers({ limit: 1, cursor: 'garbage' })).rejects.toBeInstanceOf(
+      InvalidCursor,
+    );
   });
 });
