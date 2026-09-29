@@ -56,4 +56,7 @@ export interface ServerRecord {
   publicIp?: string; // only while running; changes on every start
   lastStartedAt?: string;
   lastStoppedAt?: string;
+  // Written by the lifecycle workflows.
+  statusMessage?: string; // why the server is FAILED
+  lastStopClean?: boolean; // the agent reported a clean stop (world saved) during the last stop
 }

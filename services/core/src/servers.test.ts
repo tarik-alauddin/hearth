@@ -145,3 +145,30 @@ describe('transition', () => {
     await expect(dynamoServersStore(client, 't').transition('s1', { from: [], to: 'STOPPED' })).rejects.toThrow();
   });
 });
+
+describe('transition with fields', () => {
+  it('sets and removes fields in the same conditional write, without placeholder clashes', async () => {
+    const { client, sent } = fakeClient();
+    await dynamoServersStore(client, 't').transition('s1', {
+      from: ['PROVISIONING'],
+      to: 'STARTING',
+      instanceId: 'i-old',
+      set: { instanceId: 'i-new' },
+      remove: ['statusMessage'],
+    });
+    expect((sent[0] as UpdateCommand).input).toMatchObject({
+      UpdateExpression: 'SET #status = :to, #set_instanceId = :set_instanceId REMOVE #rm_statusMessage',
+      ConditionExpression: '#status IN (:from0) AND instanceId = :instanceId',
+      ExpressionAttributeNames: { '#status': 'status', '#set_instanceId': 'instanceId', '#rm_statusMessage': 'statusMessage' },
+      ExpressionAttributeValues: { ':to': 'STARTING', ':from0': 'PROVISIONING', ':instanceId': 'i-old', ':set_instanceId': 'i-new' },
+    });
+  });
+});
+
+describe('getServer', () => {
+  it('reads one server consistently', async () => {
+    const { client, sent } = fakeClient(() => ({ Item: { serverId: 's1' } }));
+    expect((await dynamoServersStore(client, 't').getServer('s1'))?.serverId).toBe('s1');
+    expect((sent[0] as { input: unknown }).input).toEqual({ TableName: 't', Key: { serverId: 's1' }, ConsistentRead: true });
+  });
+});

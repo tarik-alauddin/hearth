@@ -1,5 +1,11 @@
 import { ConditionalCheckFailedException, DynamoDBClient } from '@aws-sdk/client-dynamodb';
-import { DynamoDBDocumentClient, QueryCommand, UpdateCommand, type UpdateCommandInput } from '@aws-sdk/lib-dynamodb';
+import {
+  DynamoDBDocumentClient,
+  GetCommand,
+  QueryCommand,
+  UpdateCommand,
+  type UpdateCommandInput,
+} from '@aws-sdk/lib-dynamodb';
 import {
   SERVERS_BY_INSTANCE_INDEX,
   type AgentStatusReport,
@@ -13,6 +19,8 @@ import {
  * rules about which state may follow which live here and nowhere else.
  */
 export interface ServersStore {
+  /** Strongly consistent read of one server. */
+  getServer(serverId: string): Promise<ServerRecord | undefined>;
   findByInstance(instanceId: string): Promise<ServerRecord | undefined>;
   /** Agent routes. Returns false if the server is no longer on this instance. */
   recordAgentReport(serverId: string, instanceId: string, report: AgentStatusReport, at: Date): Promise<boolean>;
@@ -36,6 +44,10 @@ export interface Transition {
   to: ServerStatus;
   /** Also require the server to still be on this instance. */
   instanceId?: string;
+  /** Fields to set in the same write. */
+  set?: Partial<Omit<ServerRecord, 'serverId' | 'status'>>;
+  /** Fields to remove in the same write. */
+  remove?: readonly (keyof ServerRecord)[];
 }
 
 export function createServersStore(tableName: string): ServersStore {
@@ -55,6 +67,11 @@ export function dynamoServersStore(client: Pick<DynamoDBDocumentClient, 'send'>,
   }
 
   return {
+    async getServer(serverId) {
+      const { Item } = await client.send(new GetCommand({ TableName: tableName, Key: { serverId }, ConsistentRead: true }));
+      return Item as ServerRecord | undefined;
+    },
+
     async findByInstance(instanceId) {
       const { Items = [] } = await client.send(
         new QueryCommand({
@@ -112,9 +129,21 @@ export function dynamoServersStore(client: Pick<DynamoDBDocumentClient, 'send'>,
       });
     },
 
-    async transition(serverId, { from, to, instanceId }) {
+    async transition(serverId, { from, to, instanceId, set = {}, remove = [] }) {
       if (from.length === 0) throw new Error('transition needs at least one from status');
       const values: Record<string, unknown> = { ':to': to };
+      const names: Record<string, string> = { '#status': 'status' };
+      const sets = ['#status = :to'];
+      // Prefixed placeholders, so a field being set can't collide with the condition's.
+      for (const [field, value] of Object.entries(set)) {
+        names[`#set_${field}`] = field;
+        values[`:set_${field}`] = value;
+        sets.push(`#set_${field} = :set_${field}`);
+      }
+      const removes = remove.map((field) => {
+        names[`#rm_${String(field)}`] = String(field);
+        return `#rm_${String(field)}`;
+      });
       const allowed = from.map((status, i) => {
         values[`:from${i}`] = status;
         return `:from${i}`;
@@ -126,9 +155,9 @@ export function dynamoServersStore(client: Pick<DynamoDBDocumentClient, 'send'>,
       }
       return conditionalUpdate({
         Key: { serverId },
-        UpdateExpression: 'SET #status = :to',
+        UpdateExpression: `SET ${sets.join(', ')}${removes.length ? ` REMOVE ${removes.join(', ')}` : ''}`,
         ConditionExpression: condition,
-        ExpressionAttributeNames: { '#status': 'status' },
+        ExpressionAttributeNames: names,
         ExpressionAttributeValues: values,
       });
     },

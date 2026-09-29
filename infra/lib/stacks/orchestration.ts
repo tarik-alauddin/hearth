@@ -8,17 +8,18 @@ import type { Construct } from 'constructs';
 import { SERVERS_BY_INSTANCE_INDEX, SYNCED_INSTANCE_STATES } from '@hearth/shared';
 import { hearthFunction } from '../hearth-function.js';
 import { HearthStack, type HearthStackProps } from '../hearth-stack.js';
+import { LifecycleWorkflows } from '../lifecycle-workflows.js';
+import type { GameInfraStack } from './game-infra.js';
 
 export interface OrchestrationStackProps extends HearthStackProps {
   readonly serversTable: ITableV2;
+  readonly gameInfra: readonly GameInfraStack[];
 }
 
-/**
- * Server lifecycle: state sync now; the create/start/stop workflows and their task Lambdas,
- * the archive sweep and the usage reconciler later.
- */
+/** Server lifecycle: state sync and the create/start/stop workflows; later archiving and sweeps. */
 export class OrchestrationStack extends HearthStack {
   readonly stateSync: NodejsFunction;
+  readonly workflows: LifecycleWorkflows;
 
   constructor(scope: Construct, props: OrchestrationStackProps) {
     super(scope, 'Orchestration', props);
@@ -56,6 +57,12 @@ export class OrchestrationStack extends HearthStack {
       },
       // Handler errors (e.g. a record not written yet) are retried by Lambda: twice, a minute or two apart.
       targets: [new LambdaFunction(this.stateSync)],
+    });
+
+    this.workflows = new LifecycleWorkflows(this, 'Workflows', {
+      config: props.config,
+      serversTable: table,
+      gameInfra: props.gameInfra,
     });
   }
 }

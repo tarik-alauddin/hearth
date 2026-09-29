@@ -14,7 +14,7 @@ export function addEnvironment(app: App, config: EnvConfig): void {
   const data = new DataStack(app, { config });
   // Game regions other than the home region will need cross-region references for the instance roles.
   const gameInfra = config.gameRegions.map((region) => new GameInfraStack(app, { config, region }));
-  new OrchestrationStack(app, { config, serversTable: data.serversTable });
+  new OrchestrationStack(app, { config, serversTable: data.serversTable, gameInfra });
   new ApiStack(app, {
     config,
     serversTable: data.serversTable,

@@ -130,6 +130,31 @@ importers:
         specifier: ^5.0.2
         version: 5.0.2(@types/node@26.6.3)(vite@8.3.1(@types/node@26.6.3)(esbuild@0.28.2)(tsx@4.23.15))
 
+  services/workflows:
+    dependencies:
+      '@aws-sdk/client-ec2':
+        specifier: ^3.1143.0
+        version: 3.1143.0
+      '@hearth/core':
+        specifier: workspace:*
+        version: link:../core
+      '@hearth/shared':
+        specifier: workspace:*
+        version: link:../../packages/shared
+    devDependencies:
+      '@types/aws-lambda':
+        specifier: ^8.10.163
+        version: 8.10.163
+      '@types/node':
+        specifier: ^26.6.3
+        version: 26.6.3
+      typescript:
+        specifier: ~6.0.3
+        version: 6.0.3
+      vitest:
+        specifier: ^5.0.2
+        version: 5.0.2(@types/node@26.6.3)(vite@8.3.1(@types/node@26.6.3)(esbuild@0.28.2)(tsx@4.23.15))
+
 packages:
 
   '@aws-cdk/asset-awscli-v1@2.2.292':
