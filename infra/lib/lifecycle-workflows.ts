@@ -61,9 +61,9 @@ interface Retry {
 }
 
 // Waits are task retries on NotReady; these bound how long each wait may take.
-const RETRY_VOLUME: Retry = { error: 'NotReady', interval: Duration.seconds(5), maxAttempts: 60 }; // 5 min
-const RETRY_AGENT: Retry = { error: 'NotReady', interval: Duration.seconds(10), maxAttempts: 90 }; // 15 min
-const RETRY_STOPPED: Retry = { error: 'NotReady', interval: Duration.seconds(5), maxAttempts: 120 }; // 10 min
+const RETRY_VOLUME: Retry = { error: 'NotReady', interval: Duration.seconds(10), maxAttempts: 30 }; // 5 min
+const RETRY_AGENT: Retry = { error: 'NotReady', interval: Duration.seconds(15), maxAttempts: 60 }; // 15 min
+const RETRY_STOPPED: Retry = { error: 'NotReady', interval: Duration.seconds(15), maxAttempts: 40 }; // 10 min
 const RETRY_CAPACITY: Retry = { error: 'CapacityError', interval: Duration.seconds(30), maxAttempts: 4, backoffRate: 2 };
 
 /**
