@@ -1,8 +1,7 @@
 import type { APIGatewayProxyEventV2WithIAMAuthorizer } from 'aws-lambda';
 import { beforeEach, describe, expect, it } from 'vitest';
 import type { AgentStatusReport, ServerRecord } from '@hearth/shared';
-import type { ServersStore } from '../servers.js';
-import { agentHandlers } from './handlers.js';
+import { agentHandlers, type AgentHandlerDeps } from './handlers.js';
 
 const ROLE = 'hearth-dev-InstanceRole';
 const INSTANCE = 'i-0123456789abcdef0';
@@ -30,7 +29,7 @@ function event(opts: { role?: string; instance?: string; body?: string } = {}) {
 
 function fakeStore(servers: ServerRecord[]) {
   const reports: { serverId: string; instanceId: string; report: AgentStatusReport; at: Date }[] = [];
-  const store: ServersStore = {
+  const store: AgentHandlerDeps['store'] = {
     findByInstance: async (instanceId) => servers.find((s) => s.instanceId === instanceId),
     recordAgentReport: async (serverId, instanceId, report, at) => {
       if (servers.find((s) => s.serverId === serverId)?.instanceId !== instanceId) return false;

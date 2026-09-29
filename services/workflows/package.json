@@ -1,0 +1,21 @@
+{
+  "name": "@hearth/workflows",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@aws-sdk/client-ec2": "^3.1143.0",
+    "@hearth/core": "workspace:*",
+    "@hearth/shared": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/aws-lambda": "^8.10.163",
+    "@types/node": "^26.6.3",
+    "typescript": "~6.0.3",
+    "vitest": "^5.0.2"
+  }
+}

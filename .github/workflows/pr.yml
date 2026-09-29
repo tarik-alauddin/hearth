@@ -13,8 +13,6 @@ concurrency:
 env:
   AWS_REGION: us-west-2
   AWS_ACCOUNT: "138300868928"
-  # Version stamped into the agent binary that synth builds.
-  HEARTH_AGENT_VERSION: ${{ github.sha }}
 
 jobs:
   checks:
@@ -28,6 +26,11 @@ jobs:
       - run: pnpm typecheck
       # Unit tests and CDK assertions; cdk-nag runs inside every synth.
       - run: pnpm test
+      - name: Test summary
+        if: ${{ !cancelled() }}
+        run: node scripts/test-summary.mjs
+        env:
+          SUMMARY_SHA: ${{ github.event.pull_request.head.sha }}
       - run: pnpm synth
 
   user-data:

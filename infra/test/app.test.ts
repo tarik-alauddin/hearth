@@ -35,9 +35,20 @@ describe('environment stacks', () => {
     }
   });
 
-  it('tags every stack with its environment', () => {
+  it('tags every taggable resource with its app and environment', () => {
     for (const stack of assembly.stacks) {
-      expect(stack.tags).toMatchObject({ app: 'hearth', env: stack.stackName.split('-')[1] });
+      const env = stack.stackName.split('-')[1];
+      const resources = Object.values((stack.template as { Resources: Record<string, unknown> }).Resources) as {
+        Properties?: { Tags?: unknown };
+      }[];
+      for (const resource of resources.filter((r) => Array.isArray(r.Properties?.Tags))) {
+        expect(resource.Properties?.Tags).toEqual(
+          expect.arrayContaining([
+            { Key: 'app', Value: 'hearth' },
+            { Key: 'env', Value: env },
+          ]),
+        );
+      }
     }
   });
 });

@@ -1,27 +1,27 @@
-import { fileURLToPath } from 'node:url';
-import { Duration, RemovalPolicy, Validations } from 'aws-cdk-lib';
+import { RemovalPolicy } from 'aws-cdk-lib';
 import { HttpApi, HttpMethod, HttpStage, LogGroupLogDestination } from 'aws-cdk-lib/aws-apigatewayv2';
 import { HttpIamAuthorizer } from 'aws-cdk-lib/aws-apigatewayv2-authorizers';
 import { HttpLambdaIntegration } from 'aws-cdk-lib/aws-apigatewayv2-integrations';
 import type { ITableV2 } from 'aws-cdk-lib/aws-dynamodb';
 import { Policy, PolicyStatement, type IRole } from 'aws-cdk-lib/aws-iam';
-import { Architecture, Runtime } from 'aws-cdk-lib/aws-lambda';
-import { NodejsFunction, OutputFormat } from 'aws-cdk-lib/aws-lambda-nodejs';
 import { LogGroup, RetentionDays } from 'aws-cdk-lib/aws-logs';
 import { StringParameter } from 'aws-cdk-lib/aws-ssm';
+import type { IStateMachine } from 'aws-cdk-lib/aws-stepfunctions';
 import type { Construct } from 'constructs';
 import { SERVERS_BY_INSTANCE_INDEX } from '@hearth/shared';
+import { hearthFunction } from '../hearth-function.js';
 import { HearthStack, type HearthStackProps } from '../hearth-stack.js';
-
-const AGENT_LAMBDA_ENTRY = fileURLToPath(new URL('../../../services/api/src/agent/lambda.ts', import.meta.url));
 
 export interface ApiStackProps extends HearthStackProps {
   readonly serversTable: ITableV2;
   /** Game instance roles, one per game region; they may call the agent routes. */
   readonly instanceRoles: readonly IRole[];
+  /** The lifecycle workflows the server operations start. */
+  readonly workflows: Record<'create' | 'start' | 'stop', IStateMachine>;
+  readonly gameRegions: readonly string[];
 }
 
-/** The HTTP API: agent routes (IAM) now; user routes (Cognito JWT), bot routes and usage routes later. */
+/** The HTTP API: agent and admin routes (IAM) now; user (Cognito), bot and usage routes later. */
 export class ApiStack extends HearthStack {
   readonly api: HttpApi;
   /** SSM parameter agents read at boot to find the API. */
@@ -46,28 +46,16 @@ export class ApiStack extends HearthStack {
     });
 
     // Agent routes: callers sign with their instance role; the handlers map the role session to an instance.
-    const agentFunction = (id: string, handler: string) => {
-      const fn = new NodejsFunction(this, id, {
-        entry: AGENT_LAMBDA_ENTRY,
+    const agentFunction = (id: string, handler: string) =>
+      hearthFunction(this, id, {
+        config: props.config,
+        entry: 'api/src/agent/lambda.ts',
         handler,
-        runtime: Runtime.NODEJS_24_X,
-        architecture: Architecture.ARM_64,
-        memorySize: 256,
-        timeout: Duration.seconds(10),
-        logGroup: new LogGroup(this, `${id}Logs`, { retention: RetentionDays.ONE_MONTH, removalPolicy }),
         environment: {
           SERVERS_TABLE: props.serversTable.tableName,
           INSTANCE_ROLE_NAMES: props.instanceRoles.map((role) => role.roleName).join(','),
-          NODE_OPTIONS: '--enable-source-maps',
         },
-        bundling: { format: OutputFormat.ESM, target: 'node24', sourceMap: true },
       });
-      Validations.of(fn).acknowledge({
-        id: 'AwsSolutions-IAM4[Policy::arn:<AWS::Partition>:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole]',
-        reason: 'AWS-maintained policy that only allows writing to CloudWatch Logs.',
-      });
-      return fn;
-    };
 
     const byInstanceIndexArn = `${props.serversTable.tableArn}/index/${SERVERS_BY_INSTANCE_INDEX}`;
     const configFunction = agentFunction('AgentConfig', 'configHandler');
@@ -91,6 +79,44 @@ export class ApiStack extends HearthStack {
       integration: new HttpLambdaIntegration('AgentStatusIntegration', statusFunction),
       authorizer,
     });
+
+    // Admin routes: server operations for the hearth CLI, signed with your own AWS credentials.
+    const admin = hearthFunction(this, 'Admin', {
+      config: props.config,
+      entry: 'api/src/admin/lambda.ts',
+      handler: 'handler',
+      environment: {
+        SERVERS_TABLE: props.serversTable.tableName,
+        INSTANCE_ROLE_NAMES: props.instanceRoles.map((role) => role.roleName).join(','),
+        HOME_REGION: props.config.homeRegion,
+        GAME_REGIONS: props.gameRegions.join(','),
+        CREATE_WORKFLOW_ARN: props.workflows.create.stateMachineArn,
+        START_WORKFLOW_ARN: props.workflows.start.stateMachineArn,
+        STOP_WORKFLOW_ARN: props.workflows.stop.stateMachineArn,
+      },
+    });
+    admin.addToRolePolicy(
+      new PolicyStatement({
+        actions: ['dynamodb:GetItem', 'dynamodb:PutItem', 'dynamodb:UpdateItem', 'dynamodb:Scan'],
+        resources: [props.serversTable.tableArn],
+      }),
+    );
+    admin.addToRolePolicy(
+      new PolicyStatement({
+        actions: ['states:StartExecution'],
+        resources: Object.values(props.workflows).map((machine) => machine.stateMachineArn),
+      }),
+    );
+    const adminIntegration = new HttpLambdaIntegration('AdminIntegration', admin);
+    for (const [path, method] of [
+      ['/admin/servers', HttpMethod.GET],
+      ['/admin/servers', HttpMethod.POST],
+      ['/admin/servers/{id}', HttpMethod.GET],
+      ['/admin/servers/{id}/start', HttpMethod.POST],
+      ['/admin/servers/{id}/stop', HttpMethod.POST],
+    ] as const) {
+      this.api.addRoutes({ path, methods: [method], integration: adminIntegration, authorizer });
+    }
 
     this.apiUrlParameter = new StringParameter(this, 'ApiUrl', {
       parameterName: `/hearth/${env}/api-url`,

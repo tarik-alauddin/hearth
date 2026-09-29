@@ -1,0 +1,108 @@
+import {
+  GAME_DEFINITIONS,
+  type ListServersResponse,
+  type ServerOperationResult,
+  type ServerRecord,
+  type ServerStatus,
+} from '@hearth/shared';
+import type { Api } from './client.js';
+
+export interface CommandDeps {
+  api: Api;
+  print: (line: string) => void;
+  sleep?: (ms: number) => Promise<void>;
+  /** How often to check progress while waiting, and for how long. */
+  pollMs?: number;
+  timeoutMs?: number;
+}
+
+/** Stop waiting with a non-zero exit; the message says why. */
+export class CommandError extends Error {}
+
+export function commands({ api, print, sleep = (ms) => new Promise((r) => setTimeout(r, ms)), pollMs = 5_000, timeoutMs = 20 * 60_000 }: CommandDeps) {
+  const get = (id: string) => api.get<ServerRecord>(`/admin/servers/${encodeURIComponent(id)}`);
+
+  /** Follows the server until it reaches `target`, printing each change. Fails on FAILED or timeout. */
+  async function waitFor(id: string, target: ServerStatus): Promise<ServerRecord> {
+    let last = '';
+    for (let waited = 0; waited <= timeoutMs; waited += pollMs) {
+      const server = await get(id);
+      const line = `  ${server.status}${server.agentState ? ` · agent ${server.agentState}` : ''}`;
+      if (line !== last) print(line);
+      last = line;
+      if (server.status === 'FAILED') throw new CommandError(`Failed: ${server.statusMessage ?? 'no reason recorded'}`);
+      // Running also needs its public IP, which state sync records moments after EC2 reports running.
+      if (server.status === target && (target !== 'RUNNING' || server.publicIp)) return server;
+      await sleep(pollMs);
+    }
+    throw new CommandError(`Still not ${target} after ${Math.round(timeoutMs / 60_000)} minutes; check \`hearth status ${id}\``);
+  }
+
+  function address(server: ServerRecord): string {
+    return server.publicIp ? `${server.publicIp}:${GAME_DEFINITIONS[server.game].port}` : '-';
+  }
+
+  async function followUp(result: ServerOperationResult, target: ServerStatus, wait: boolean) {
+    if (!wait) return;
+    const server = await waitFor(result.serverId, target);
+    if (target === 'RUNNING') print(`Ready. Join at ${address(server)}   (server ${server.serverId})`);
+    else print(`Stopped.${server.lastStopClean === false ? ' The agent did not report a clean stop; the world may not be saved.' : ' World saved.'}`);
+  }
+
+  return {
+    async create(opts: { game: string; version: string; region?: string; wait: boolean }) {
+      const result = await api.post<ServerOperationResult>('/admin/servers', {
+        game: opts.game,
+        version: opts.version,
+        ...(opts.region ? { region: opts.region } : {}),
+      });
+      print(`Creating ${result.serverId} (${opts.game} ${opts.version}). The first start takes a few minutes.`);
+      await followUp(result, 'RUNNING', opts.wait);
+    },
+
+    async start(id: string, wait: boolean) {
+      const result = await api.post<ServerOperationResult>(`/admin/servers/${encodeURIComponent(id)}/start`);
+      print(result.unchanged ? `Already ${result.status.toLowerCase()}.` : `Starting ${id}.`);
+      await followUp(result, 'RUNNING', wait);
+    },
+
+    async stop(id: string, wait: boolean) {
+      const result = await api.post<ServerOperationResult>(`/admin/servers/${encodeURIComponent(id)}/stop`);
+      print(result.unchanged ? `Already ${result.status.toLowerCase()}.` : `Stopping ${id}; the agent saves the world during shutdown.`);
+      await followUp(result, 'STOPPED', wait);
+    },
+
+    async status(id: string) {
+      const s = await get(id);
+      const rows: [string, string | undefined][] = [
+        ['server', s.serverId],
+        ['game', `${s.game} ${s.version}`],
+        ['status', s.status + (s.statusMessage ? ` (${s.statusMessage})` : '')],
+        ['agent', s.agentState && `${s.agentState}${s.agentVersion ? ` (${s.agentVersion})` : ''}${s.agentMessage ? `: ${s.agentMessage}` : ''}`],
+        ['instance', s.instanceId && `${s.instanceId} (${s.instanceState ?? 'unknown'})`],
+        ['join at', s.publicIp && address(s)],
+        ['last stop', s.lastStoppedAt && `${s.lastStoppedAt}${s.lastStopClean === false ? ' (not clean)' : ''}`],
+      ];
+      for (const [k, v] of rows) if (v) print(`${k.padEnd(10)} ${v}`);
+    },
+
+    async list() {
+      const servers: ServerRecord[] = [];
+      let cursor: string | undefined;
+      do {
+        const page: ListServersResponse = await api.get('/admin/servers', { limit: '100', cursor });
+        servers.push(...page.servers);
+        cursor = page.cursor;
+      } while (cursor);
+      if (servers.length === 0) return print('No servers.');
+      const rows = [
+        ['SERVER', 'GAME', 'VERSION', 'STATUS', 'AGENT', 'ADDRESS'],
+        ...servers
+          .sort((a, b) => a.serverId.localeCompare(b.serverId))
+          .map((s) => [s.serverId, s.game, s.version, s.status, s.agentState ?? '-', address(s)]),
+      ];
+      const widths = rows[0]!.map((_, i) => Math.max(...rows.map((r) => r[i]!.length)));
+      for (const r of rows) print(r.map((cell, i) => cell.padEnd(widths[i]!)).join('  ').trimEnd());
+    },
+  };
+}

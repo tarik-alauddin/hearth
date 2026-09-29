@@ -44,8 +44,15 @@ go test -tags harness -timeout 30m ./harness/   # real agent + Minecraft contain
 To check a real instance launched from the launch template, follow
 [docs/testing/game-instance.md](docs/testing/game-instance.md) (runs in AWS CloudShell).
 
-To create a playable server in an environment and join it, follow
-[docs/testing/game-server.md](docs/testing/game-server.md), which uses `scripts/dev-server.sh`.
+Servers are managed with the `hearth` CLI (admin API routes, signed with your AWS credentials):
+
+```sh
+pnpm hearth create --version 1.21.4
+pnpm hearth list | status <id> | start <id> | stop <id>
+pnpm --filter @hearth/cli bundle   # cli/dist/hearth.cjs, a single file for CloudShell: node hearth.cjs …
+```
+
+To check a server end to end and join it, follow [docs/testing/game-server.md](docs/testing/game-server.md).
 
 ## One-time AWS setup
 

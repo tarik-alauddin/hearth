@@ -85,5 +85,31 @@ describe('ApiStack', () => {
     expect(invoke).toContain('/$default/GET/agent/config');
     expect(invoke).toContain('/$default/POST/agent/status');
     expect(invoke).not.toMatch(/\/\*\//);
+    expect(invoke).not.toContain('/admin');
+  });
+
+  it.each([
+    ['GET /admin/servers'],
+    ['POST /admin/servers'],
+    ['GET /admin/servers/{id}'],
+    ['POST /admin/servers/{id}/start'],
+    ['POST /admin/servers/{id}/stop'],
+  ])('protects %s with IAM auth', (routeKey) => {
+    template.hasResourceProperties('AWS::ApiGatewayV2::Route', { RouteKey: routeKey, AuthorizationType: 'AWS_IAM' });
+  });
+
+  it('lets the admin function start only the three lifecycle workflows', () => {
+    const statements = policyStatements('AdminServiceRoleDefaultPolicy') as { Action: unknown; Resource: unknown }[];
+    const start = statements.find((s) => s.Action === 'states:StartExecution');
+    expect(JSON.stringify(start?.Resource)).toMatch(/create-server|Create/);
+    expect((start?.Resource as unknown[]).length).toBe(3);
+    const dynamo = statements.find((s) => JSON.stringify(s.Action).includes('dynamodb'));
+    expect((dynamo?.Action as string[]).sort()).toEqual([
+      'dynamodb:GetItem',
+      'dynamodb:PutItem',
+      'dynamodb:Scan',
+      'dynamodb:UpdateItem',
+    ]);
+    expect(JSON.stringify(statements)).not.toMatch(/ec2:|DeleteItem/);
   });
 });
