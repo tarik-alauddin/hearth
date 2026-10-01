@@ -1,0 +1,73 @@
+name: Promote agent
+
+# Points an environment's stable agent channel at a release. Servers on stable pick it up on their
+# next start. Blank version = whatever that environment's canary runs now. Rolling back = running
+# this with an older version. Each run's summary records the change; the full history is also in
+# SSM: aws ssm get-parameter-history --name /hearth/<env>/agent/stable
+on:
+  workflow_dispatch:
+    inputs:
+      env:
+        description: Environment
+        type: choice
+        options: [dev, stage, prod]
+        required: true
+      version:
+        description: Release to make stable, e.g. 1.3.0 (blank = the current canary; an older version rolls back)
+        required: false
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: promote-agent-${{ inputs.env }}
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: us-west-2
+  AWS_ACCOUNT: "138300868928"
+
+jobs:
+  promote:
+    runs-on: ubuntu-latest
+    # Required reviewers on the prod environment gate prod promotions.
+    environment: ${{ inputs.env }}
+    steps:
+      - uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: arn:aws:iam::${{ env.AWS_ACCOUNT }}:role/github-deploy
+          aws-region: ${{ env.AWS_REGION }}
+      - name: Point stable at the release
+        env:
+          TARGET_ENV: ${{ inputs.env }}
+          VERSION: ${{ inputs.version }}
+          BUCKET: hearth-agent-releases-${{ env.AWS_ACCOUNT }}
+        run: |
+          set -euo pipefail
+          param() { aws ssm get-parameter --name "/hearth/$TARGET_ENV/agent/$1" --query Parameter.Value --output text 2>/dev/null || true; }
+
+          if [ -z "$VERSION" ]; then
+            target=$(param canary)
+            [ -n "$target" ] || { echo "::error::$TARGET_ENV has no canary release to promote"; exit 1; }
+          else
+            [[ "$VERSION" =~ ^[0-9A-Za-z._-]{1,64}$ ]] || { echo "::error::Invalid version: $VERSION"; exit 1; }
+            sha=$(aws s3 cp "s3://$BUCKET/agent/$VERSION/hearth-agent-linux-arm64.sha256" - 2>/dev/null) \
+              || { echo "::error::No release $VERSION in $BUCKET"; exit 1; }
+            target=$(jq -nc --arg v "$VERSION" --arg s "$sha" '{version: $v, sha256: $s}')
+          fi
+          version=$(jq -r .version <<<"$target")
+          aws s3api head-object --bucket "$BUCKET" --key "agent/$version/hearth-agent-linux-arm64" >/dev/null \
+            || { echo "::error::Release $version has no binary in $BUCKET"; exit 1; }
+
+          previous=$(param stable)
+          aws ssm put-parameter --name "/hearth/$TARGET_ENV/agent/stable" --type String --overwrite --value "$target" >/dev/null
+
+          from=$(jq -r '.version // "none"' <<<"${previous:-{\}}")
+          {
+            echo "## Agent promoted in $TARGET_ENV"
+            echo
+            echo "stable: **$from → $version** (sha256 \`$(jq -r .sha256 <<<"$target")\`)"
+            echo
+            echo "Stable servers run it from their next start. To roll back, run this workflow with version \`$from\`."
+          } >> "$GITHUB_STEP_SUMMARY"

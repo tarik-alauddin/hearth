@@ -50,11 +50,12 @@ export function commands({ api, print, sleep = (ms) => new Promise((r) => setTim
   }
 
   return {
-    async create(opts: { game: string; version: string; region?: string; wait: boolean }) {
+    async create(opts: { game: string; version: string; region?: string; channel?: string; wait: boolean }) {
       const result = await api.post<ServerOperationResult>('/admin/servers', {
         game: opts.game,
         version: opts.version,
         ...(opts.region ? { region: opts.region } : {}),
+        ...(opts.channel ? { agentChannel: opts.channel } : {}),
       });
       print(`Creating ${result.serverId} (${opts.game} ${opts.version}). The first start takes a few minutes.`);
       await followUp(result, 'RUNNING', opts.wait);
@@ -72,6 +73,12 @@ export function commands({ api, print, sleep = (ms) => new Promise((r) => setTim
       await followUp(result, 'STOPPED', wait);
     },
 
+    /** Moves a server to another agent channel; it runs that channel's release from its next start. */
+    async setChannel(id: string, channel: string) {
+      const server = await api.post<ServerRecord>(`/admin/servers/${encodeURIComponent(id)}/settings`, { agentChannel: channel });
+      print(`${server.serverId} is on the ${server.agentChannel} channel; it takes effect on the next start.`);
+    },
+
     async status(id: string) {
       const s = await get(id);
       const rows: [string, string | undefined][] = [
@@ -79,6 +86,7 @@ export function commands({ api, print, sleep = (ms) => new Promise((r) => setTim
         ['game', `${s.game} ${s.version}`],
         ['status', s.status + (s.statusMessage ? ` (${s.statusMessage})` : '')],
         ['agent', s.agentState && `${s.agentState}${s.agentVersion ? ` (${s.agentVersion})` : ''}${s.agentMessage ? `: ${s.agentMessage}` : ''}`],
+        ['channel', s.agentChannel ?? 'stable'],
         ['instance', s.instanceId && `${s.instanceId} (${s.instanceState ?? 'unknown'})`],
         ['join at', s.publicIp && address(s)],
         ['last stop', s.lastStoppedAt && `${s.lastStoppedAt}${s.lastStopClean === false ? ' (not clean)' : ''}`],

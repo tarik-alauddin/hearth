@@ -74,6 +74,16 @@ describe('ApiStack', () => {
     expect(actions.sort()).toEqual(['dynamodb:Query', 'dynamodb:UpdateItem']);
   });
 
+  it("lets the agent config handler read exactly its environment's two agent channel parameters", () => {
+    const ssm = (policyStatements('AgentConfigServiceRoleDefaultPolicy') as { Action: string; Resource: unknown }[]).find(
+      (s) => s.Action === 'ssm:GetParameter',
+    );
+    const resources = JSON.stringify(ssm?.Resource);
+    expect(resources).toContain('parameter/hearth/dev/agent/canary');
+    expect(resources).toContain('parameter/hearth/dev/agent/stable');
+    expect(resources).not.toContain('*');
+  });
+
   it('publishes the API URL for agents', () => {
     template.hasResourceProperties('AWS::SSM::Parameter', { Name: '/hearth/dev/api-url', Type: 'String' });
   });
@@ -94,6 +104,7 @@ describe('ApiStack', () => {
     ['GET /admin/servers/{id}'],
     ['POST /admin/servers/{id}/start'],
     ['POST /admin/servers/{id}/stop'],
+    ['POST /admin/servers/{id}/settings'],
   ])('protects %s with IAM auth', (routeKey) => {
     template.hasResourceProperties('AWS::ApiGatewayV2::Route', { RouteKey: routeKey, AuthorizationType: 'AWS_IAM' });
   });

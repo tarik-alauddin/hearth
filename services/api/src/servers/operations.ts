@@ -1,12 +1,16 @@
 import { InvalidCursor, newId as defaultNewId, type ServersStore } from '@hearth/core';
 import {
+  AGENT_CHANNELS,
+  DEFAULT_AGENT_CHANNEL,
   GAMES,
+  isAgentChannel,
   type CreateServerRequest,
   type GameId,
   type ListServersResponse,
   type ServerOperationResult,
   type ServerRecord,
   type ServerStatus,
+  type UpdateSettingsRequest,
 } from '@hearth/shared';
 
 // The one implementation of create, start and stop. The admin routes use it now; the UI and
@@ -30,7 +34,7 @@ export class OperationError extends Error {
 }
 
 export interface OperationDeps {
-  store: Pick<ServersStore, 'getServer' | 'listServers' | 'createServer' | 'transition'>;
+  store: Pick<ServersStore, 'getServer' | 'listServers' | 'createServer' | 'transition' | 'updateSettings'>;
   workflows: Workflows;
   homeRegion: string;
   /** Regions with game infrastructure. */
@@ -115,7 +119,7 @@ export function serverOperations({
 
     /** Records a new server (PROVISIONING) and runs the create workflow, which also starts it. */
     async createServer(request: unknown, ownerId: string): Promise<ServerOperationResult> {
-      const { game, version, region = homeRegion } = validateCreate(request);
+      const { game, version, region = homeRegion, agentChannel = DEFAULT_AGENT_CHANNEL } = validateCreate(request);
       if (!gameRegions.includes(region)) throw new OperationError(400, `No game infrastructure in ${region}`);
       const at = now();
       const serverId = newId(at);
@@ -128,6 +132,7 @@ export function serverOperations({
         status: 'PROVISIONING',
         version,
         autoUpdate: false,
+        agentChannel,
         createdAt: at.toISOString(),
         statusChangedAt: at.toISOString(),
         lastOperationId: operationId,
@@ -151,6 +156,13 @@ export function serverOperations({
       throw new OperationError(409, `Server ${serverId} is ${server.status} and can't be started`);
     },
 
+    /** Changes settings; they apply from the server's next start. */
+    async updateSettings(serverId: string, request: unknown): Promise<ServerRecord> {
+      const settings = validateSettings(request);
+      if (!(await store.updateSettings(serverId, settings))) throw new OperationError(404, `No server ${serverId}`);
+      return requireServer(serverId);
+    },
+
     /** RUNNING or FAILED (with an instance) → STOPPING. */
     async stopServer(serverId: string): Promise<ServerOperationResult> {
       const server = await requireServer(serverId);
@@ -171,5 +183,19 @@ function validateCreate(request: unknown): CreateServerRequest {
   if (!(GAMES as readonly unknown[]).includes(game)) throw new OperationError(400, `Unknown game; one of ${GAMES.join(', ')}`);
   if (typeof version !== 'string' || !VERSION.test(version)) throw new OperationError(400, 'Invalid version');
   if (region !== undefined && typeof region !== 'string') throw new OperationError(400, 'Invalid region');
-  return { game: game as GameId, version, ...(region ? { region } : {}) };
+  const { agentChannel } = request as Record<string, unknown>;
+  if (agentChannel !== undefined && !isAgentChannel(agentChannel)) {
+    throw new OperationError(400, `agentChannel must be one of ${AGENT_CHANNELS.join(', ')}`);
+  }
+  return { game: game as GameId, version, ...(region ? { region } : {}), ...(agentChannel ? { agentChannel } : {}) };
+}
+
+function validateSettings(request: unknown): UpdateSettingsRequest {
+  if (typeof request !== 'object' || request === null) throw new OperationError(400, 'Body must be a JSON object');
+  const { agentChannel, ...rest } = request as Record<string, unknown>;
+  const unknown = Object.keys(rest);
+  if (unknown.length) throw new OperationError(400, `Unknown settings: ${unknown.join(', ')}`);
+  if (agentChannel === undefined) throw new OperationError(400, 'No settings given');
+  if (!isAgentChannel(agentChannel)) throw new OperationError(400, `agentChannel must be one of ${AGENT_CHANNELS.join(', ')}`);
+  return { agentChannel };
 }

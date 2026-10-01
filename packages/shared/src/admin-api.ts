@@ -1,3 +1,4 @@
+import type { AgentChannel } from './agent-releases.js';
 import type { GameId } from './games.js';
 import type { ServerRecord, ServerStatus } from './server.js';
 
@@ -10,6 +11,13 @@ export interface CreateServerRequest {
   version: string;
   /** Defaults to the home region. */
   region?: string;
+  /** Defaults to stable. */
+  agentChannel?: AgentChannel;
+}
+
+/** `POST /admin/servers/{id}/settings`: the settings to change. */
+export interface UpdateSettingsRequest {
+  agentChannel?: AgentChannel;
 }
 
 /** Response to create, start and stop. */

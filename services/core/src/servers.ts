@@ -28,6 +28,8 @@ export interface ServersStore {
   listServers(page: { limit: number; cursor?: string }): Promise<{ servers: ServerRecord[]; cursor?: string }>;
   /** Writes a new record; fails if the ID is taken. */
   createServer(server: ServerRecord): Promise<void>;
+  /** API: changes user settings on an existing server. Returns false if there's no such server. */
+  updateSettings(serverId: string, settings: ServerSettings): Promise<boolean>;
   findByInstance(instanceId: string): Promise<ServerRecord | undefined>;
   /**
    * Servers in `status` (from the byStatus index: keys, statusChangedAt, instanceId, instanceState),
@@ -50,6 +52,9 @@ export interface ServersStore {
   /** Moves `status` to `to` only if it's currently one of `from`. Returns false if it wasn't. */
   transition(serverId: string, change: Transition): Promise<boolean>;
 }
+
+/** Settings owners can change (more arrive with the UI). */
+export type ServerSettings = Partial<Pick<ServerRecord, 'agentChannel'>>;
 
 export type StatusIndexEntry = Pick<ServerRecord, 'serverId' | 'status' | 'statusChangedAt' | 'instanceId' | 'instanceState'>;
 
@@ -102,6 +107,18 @@ export function dynamoServersStore(
       await client.send(
         new PutCommand({ TableName: tableName, Item: server, ConditionExpression: 'attribute_not_exists(serverId)' }),
       );
+    },
+
+    async updateSettings(serverId, settings) {
+      const entries = Object.entries(settings).filter(([, value]) => value !== undefined);
+      if (entries.length === 0) return true;
+      return conditionalUpdate({
+        Key: { serverId },
+        UpdateExpression: `SET ${entries.map(([field]) => `#${field} = :${field}`).join(', ')}`,
+        ConditionExpression: 'attribute_exists(serverId)',
+        ExpressionAttributeNames: Object.fromEntries(entries.map(([field]) => [`#${field}`, field])),
+        ExpressionAttributeValues: Object.fromEntries(entries.map(([field, value]) => [`:${field}`, value])),
+      });
     },
 
     async findByStatus(status, changedBefore) {

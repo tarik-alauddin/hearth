@@ -7,11 +7,12 @@ import { CommandError, commands } from './commands.js';
 
 const USAGE = `Usage: hearth <command> [options]
 
-  create --version <v> [--game minecraft-java] [--game-region <region>]
+  create --version <v> [--game minecraft-java] [--game-region <region>] [--channel canary|stable]
   list
   status <serverId>
   start  <serverId>
   stop   <serverId>
+  set-channel <serverId> <canary|stable>   agent releases to follow, from the next start
 
 Options:
   --env <env>      dev, stage or prod (default: HEARTH_ENV or dev)
@@ -29,11 +30,12 @@ async function main(argv: string[]): Promise<number> {
       version: { type: 'string' },
       game: { type: 'string', default: 'minecraft-java' },
       'game-region': { type: 'string' },
+      channel: { type: 'string' },
       'no-wait': { type: 'boolean', default: false },
       help: { type: 'boolean', short: 'h', default: false },
     },
   });
-  const [command, id] = positionals;
+  const [command, id, arg] = positionals;
   if (values.help || !command) {
     process.stdout.write(USAGE);
     return values.help ? 0 : 2;
@@ -54,7 +56,7 @@ async function main(argv: string[]): Promise<number> {
   switch (command) {
     case 'create':
       if (!values.version) throw new CommandError('create needs --version, e.g. --version 1.21.4 (match your client)');
-      await run.create({ game: values.game, version: values.version, region: values['game-region'], wait });
+      await run.create({ game: values.game, version: values.version, region: values['game-region'], channel: values.channel, wait });
       return 0;
     case 'list':
       await run.list();
@@ -67,6 +69,10 @@ async function main(argv: string[]): Promise<number> {
       return 0;
     case 'stop':
       await run.stop(needId(), wait);
+      return 0;
+    case 'set-channel':
+      if (!arg) throw new CommandError('set-channel needs a channel: canary or stable');
+      await run.setChannel(needId(), arg);
       return 0;
     default:
       process.stderr.write(`Unknown command "${command}".\n\n${USAGE}`);

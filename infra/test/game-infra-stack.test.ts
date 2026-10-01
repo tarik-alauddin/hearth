@@ -79,10 +79,11 @@ describe('GameInfraStack', () => {
       });
     });
 
-    it('has no access to world backups; its only S3 action is reading the agent', () => {
+    it('has no access to world backups; its only S3 action is reading agent binaries', () => {
       const policies = JSON.stringify(template.findResources('AWS::IAM::Policy'));
       expect(policies).not.toContain('backups');
-      expect(policies.match(/"s3:[A-Za-z*]+"/g)).toEqual(['"s3:GetObject"']);
+      expect([...new Set(policies.match(/"s3:[A-Za-z*]+"/g))]).toEqual(['"s3:GetObject"']);
+      expect(policies).toContain('hearth-agent-releases-138300868928/agent/*');
     });
   });
 

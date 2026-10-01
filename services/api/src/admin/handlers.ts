@@ -42,6 +42,11 @@ export function adminHandler({ operations, instanceRoleNames, log = defaultLog }
           log({ msg: 'start requested', caller, ...result });
           return json(result.unchanged ? 200 : 202, result);
         }
+        case 'POST /admin/servers/{id}/settings': {
+          const server = await operations.updateSettings(serverId, parseBody(event));
+          log({ msg: 'settings changed', caller, serverId, agentChannel: server.agentChannel });
+          return json(200, server);
+        }
         case 'POST /admin/servers/{id}/stop': {
           const result = await operations.stopServer(serverId);
           log({ msg: 'stop requested', caller, ...result });

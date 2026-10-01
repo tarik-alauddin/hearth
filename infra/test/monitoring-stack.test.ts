@@ -76,6 +76,17 @@ describe('AccountStack', () => {
   const app = testApp();
   const template = Template.fromStack(new AccountStack(app));
 
+  it('keeps agent releases in one private, versioned bucket that is never deleted', () => {
+    template.hasResource('AWS::S3::Bucket', {
+      DeletionPolicy: 'Retain',
+      Properties: Match.objectLike({
+        BucketName: 'hearth-agent-releases-138300868928',
+        VersioningConfiguration: { Status: 'Enabled' },
+        PublicAccessBlockConfiguration: Match.objectLike({ BlockPublicAcls: true, RestrictPublicBuckets: true }),
+      }),
+    });
+  });
+
   it('budgets $50 a month for everything tagged app=hearth, emailing at 80%, 100% and forecast 100%', () => {
     template.hasResourceProperties('AWS::Budgets::Budget', {
       Budget: Match.objectLike({

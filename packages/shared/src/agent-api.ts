@@ -1,3 +1,4 @@
+import type { AgentTarget } from './agent-releases.js';
 import type { GameId } from './games.js';
 
 // Contract between the game agent and the API's agent routes. The agent (Go) mirrors these shapes.
@@ -10,6 +11,8 @@ export interface AgentConfig {
   version: string;
   image: string;
   port: number;
+  /** The agent release this server's channel points at; absent until the channel has one. */
+  agent?: AgentTarget;
 }
 
 export const AGENT_STATES = ['starting', 'ready', 'stopping', 'stopped', 'error'] as const;

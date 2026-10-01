@@ -3,6 +3,7 @@ import type {
   APIGatewayProxyStructuredResultV2,
 } from 'aws-lambda';
 import {
+  DEFAULT_AGENT_CHANNEL,
   GAME_DEFINITIONS,
   isAgentState,
   type AgentConfig,
@@ -11,6 +12,7 @@ import {
 } from '@hearth/shared';
 import type { ServersStore } from '@hearth/core';
 import { callerInstanceId } from './caller.js';
+import type { AgentReleases } from './releases.js';
 
 type Event = APIGatewayProxyEventV2WithIAMAuthorizer;
 type Result = APIGatewayProxyStructuredResultV2;
@@ -24,13 +26,15 @@ export interface AgentHandlerDeps {
   store: Pick<ServersStore, 'findByInstance' | 'recordAgentReport'>;
   /** Names of the game instance roles allowed to call agent routes. */
   instanceRoleNames: readonly string[];
+  /** Which agent release each channel points at. */
+  releases: AgentReleases;
   now?: () => Date;
 }
 
 const MAX_VERSION_LENGTH = 64;
 const MAX_MESSAGE_LENGTH = 500;
 
-export function agentHandlers({ store, instanceRoleNames, now = () => new Date() }: AgentHandlerDeps) {
+export function agentHandlers({ store, instanceRoleNames, releases, now = () => new Date() }: AgentHandlerDeps) {
   /** Resolves the calling instance's server, or the error response to send instead. */
   async function callerServer(event: Event): Promise<Caller | { error: Result }> {
     const instanceId = callerInstanceId(event.requestContext.authorizer.iam.userArn, instanceRoleNames);
@@ -46,12 +50,14 @@ export function agentHandlers({ store, instanceRoleNames, now = () => new Date()
     if ('error' in caller) return caller.error;
     const { server } = caller;
     const game = GAME_DEFINITIONS[server.game];
+    const agent = await releases.target(server.agentChannel ?? DEFAULT_AGENT_CHANNEL);
     const body: AgentConfig = {
       serverId: server.serverId,
       game: server.game,
       version: server.version,
       image: game.image,
       port: game.port,
+      ...(agent ? { agent } : {}),
     };
     return json(200, body);
   }

@@ -242,3 +242,23 @@ describe('status timestamps and the byStatus index', () => {
     expect((sent[0] as QueryCommand).input.KeyConditionExpression).toBe('#status = :status');
   });
 });
+
+describe('updateSettings', () => {
+  it('sets only the given settings on an existing server', async () => {
+    const { client, sent } = fakeClient();
+    expect(await dynamoServersStore(client, 't').updateSettings('s1', { agentChannel: 'canary' })).toBe(true);
+    expect((sent[0] as UpdateCommand).input).toMatchObject({
+      Key: { serverId: 's1' },
+      UpdateExpression: 'SET #agentChannel = :agentChannel',
+      ConditionExpression: 'attribute_exists(serverId)',
+      ExpressionAttributeValues: { ':agentChannel': 'canary' },
+    });
+  });
+
+  it('returns false for an unknown server', async () => {
+    const { client } = fakeClient(() => {
+      throw new ConditionalCheckFailedException({ message: 'no', $metadata: {} });
+    });
+    expect(await dynamoServersStore(client, 't').updateSettings('nope', { agentChannel: 'stable' })).toBe(false);
+  });
+});

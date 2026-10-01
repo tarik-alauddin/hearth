@@ -9,7 +9,7 @@ import { StringParameter } from 'aws-cdk-lib/aws-ssm';
 import type { IStateMachine } from 'aws-cdk-lib/aws-stepfunctions';
 import type { NodejsFunction } from 'aws-cdk-lib/aws-lambda-nodejs';
 import type { Construct } from 'constructs';
-import { SERVERS_BY_INSTANCE_INDEX } from '@hearth/shared';
+import { AGENT_CHANNELS, SERVERS_BY_INSTANCE_INDEX, agentChannelParameter, agentReleasesBucket } from '@hearth/shared';
 import { hearthFunction } from '../hearth-function.js';
 import { HearthStack, type HearthStackProps } from '../hearth-stack.js';
 
@@ -55,14 +55,25 @@ export class ApiStack extends HearthStack {
         entry: 'api/src/agent/lambda.ts',
         handler,
         environment: {
+          HEARTH_ENV: env,
           SERVERS_TABLE: props.serversTable.tableName,
           INSTANCE_ROLE_NAMES: props.instanceRoles.map((role) => role.roleName).join(','),
+          AGENT_RELEASES_BUCKET: agentReleasesBucket(props.config.account),
         },
       });
 
     const byInstanceIndexArn = `${props.serversTable.tableArn}/index/${SERVERS_BY_INSTANCE_INDEX}`;
     const configFunction = agentFunction('AgentConfig', 'configHandler');
     configFunction.addToRolePolicy(new PolicyStatement({ actions: ['dynamodb:Query'], resources: [byInstanceIndexArn] }));
+    // Which release each agent channel points at (written by the release and promote workflows).
+    configFunction.addToRolePolicy(
+      new PolicyStatement({
+        actions: ['ssm:GetParameter'],
+        resources: AGENT_CHANNELS.map((channel) =>
+          this.formatArn({ service: 'ssm', resource: 'parameter', resourceName: agentChannelParameter(env, channel).slice(1) }),
+        ),
+      }),
+    );
     const statusFunction = agentFunction('AgentStatus', 'statusHandler');
     statusFunction.addToRolePolicy(new PolicyStatement({ actions: ['dynamodb:Query'], resources: [byInstanceIndexArn] }));
     statusFunction.addToRolePolicy(
@@ -118,6 +129,7 @@ export class ApiStack extends HearthStack {
       ['/admin/servers/{id}', HttpMethod.GET],
       ['/admin/servers/{id}/start', HttpMethod.POST],
       ['/admin/servers/{id}/stop', HttpMethod.POST],
+      ['/admin/servers/{id}/settings', HttpMethod.POST],
     ] as const) {
       this.api.addRoutes({ path, methods: [method], integration: adminIntegration, authorizer });
     }

@@ -24,7 +24,7 @@ import { ManagedPolicy, PolicyStatement, Role, ServicePrincipal } from 'aws-cdk-
 import { LogGroup, RetentionDays } from 'aws-cdk-lib/aws-logs';
 import type { Asset } from 'aws-cdk-lib/aws-s3-assets';
 import type { Construct } from 'constructs';
-import { GAME_DEFINITIONS, type GameDefinition, type GameId } from '@hearth/shared';
+import { GAME_DEFINITIONS, agentReleasesBucket, type GameDefinition, type GameId } from '@hearth/shared';
 import { agentAsset } from '../agent-asset.js';
 import { availabilityZones } from '../config.js';
 import { HearthStack, type HearthStackProps } from '../hearth-stack.js';
@@ -98,6 +98,14 @@ export class GameInfraStack extends HearthStack {
     Validations.of(this.instanceRole).acknowledge({
       id: 'AwsSolutions-IAM5[Resource::*]',
       reason: 'PutMetricData has no resource ARNs; it is limited by the cloudwatch:namespace condition.',
+    });
+
+    // Agent releases (from M4 on): read-only, release binaries only.
+    const releases = `arn:${this.partition}:s3:::${agentReleasesBucket(props.config.account)}/agent/*`;
+    this.instanceRole.addToPolicy(new PolicyStatement({ actions: ['s3:GetObject'], resources: [releases] }));
+    Validations.of(this.instanceRole).acknowledge({
+      id: `AwsSolutions-IAM5[Resource::${releases}]`,
+      reason: 'Any release may be the target or rollback of a server; read-only, binaries only.',
     });
 
     // Instances download the agent at every start; they can read exactly this object.
