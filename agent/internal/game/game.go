@@ -16,10 +16,20 @@ type Config struct {
 	Version  string `json:"version"`
 	Image    string `json:"image"`
 	Port     int    `json:"port"`
+	// Agent is the release this server's channel points at (AgentTarget in packages/shared); nil
+	// until the channel has one.
+	Agent *AgentTarget `json:"agent,omitempty"`
 
 	// Filled in by the agent, not the API.
 	DataDir   string `json:"-"` // root of the world data volume, e.g. /srv/hearth
 	MemoryMiB int    `json:"-"` // instance memory; adapters size the game's heap from it
+}
+
+// AgentTarget is the agent release a server should run.
+type AgentTarget struct {
+	Version string `json:"version"`
+	URL     string `json:"url"` // s3://bucket/key
+	SHA256  string `json:"sha256"`
 }
 
 // Adapter is everything game-specific the agent needs. It grows with the milestones:

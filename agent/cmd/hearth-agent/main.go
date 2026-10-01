@@ -16,15 +16,21 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/ssm"
 	"github.com/tarik-alauddin/hearth/agent/internal/agent"
 	"github.com/tarik-alauddin/hearth/agent/internal/api"
 	"github.com/tarik-alauddin/hearth/agent/internal/container"
 	"github.com/tarik-alauddin/hearth/agent/internal/games"
+	"github.com/tarik-alauddin/hearth/agent/internal/update"
 )
 
 // version is set at build time with -ldflags "-X main.version=...".
 var version = "dev"
+
+// exitRestartForUpdate tells systemd (Restart=on-failure) to restart us, so the bootstrap starts the
+// staged update. 75 is EX_TEMPFAIL.
+const exitRestartForUpdate = 75
 
 func main() {
 	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
@@ -40,6 +46,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 	homeRegion := flags.String("home-region", envOr("HEARTH_HOME_REGION", "us-west-2"), "region of the Hearth API")
 	apiURL := flags.String("api-url", os.Getenv("HEARTH_API_URL"), "API endpoint; read from SSM /hearth/<env>/api-url if empty")
 	dataDir := flags.String("data-dir", envOr("HEARTH_DATA_DIR", "/srv/hearth"), "root of the world data volume")
+	binDir := flags.String("bin-dir", envOr("HEARTH_BIN_DIR", "/opt/hearth/bin"), "where the bootstrap keeps agent binaries")
+	stateDir := flags.String("state-dir", envOr("HEARTH_STATE_DIR", "/var/lib/hearth"), "agent health records shared with the bootstrap")
 	if err := flags.Parse(args); err != nil {
 		return 2
 	}
@@ -77,6 +85,24 @@ func run(args []string, stdout, stderr io.Writer) int {
 	}
 	logger.Info("using API", "url", *apiURL)
 
+	s3Client := s3.NewFromConfig(awsCfg)
+	updater := &update.Updater{
+		BinDir:   *binDir,
+		StateDir: *stateDir,
+		Version:  version,
+		Download: func(ctx context.Context, url string) (io.ReadCloser, error) {
+			bucket, key, err := update.ParseS3URL(url)
+			if err != nil {
+				return nil, err
+			}
+			out, err := s3Client.GetObject(ctx, &s3.GetObjectInput{Bucket: &bucket, Key: &key})
+			if err != nil {
+				return nil, err
+			}
+			return out.Body, nil
+		},
+	}
+
 	a := agent.New(agent.Options{
 		Logger:      logger,
 		Version:     version,
@@ -86,8 +112,12 @@ func run(args []string, stdout, stderr io.Writer) int {
 		DataDir:     *dataDir,
 		MemoryMiB:   agent.HostMemoryMiB(),
 		StopTimeout: *stopTimeout,
+		Updater:     updater,
 	})
-	if err := a.Run(ctx); err != nil {
+	switch err := a.Run(ctx); {
+	case errors.Is(err, agent.ErrUpdateStaged):
+		return exitRestartForUpdate
+	case err != nil:
 		logger.Error("agent failed", "err", err)
 		return 1
 	}

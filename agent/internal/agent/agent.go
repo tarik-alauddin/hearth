@@ -23,6 +23,24 @@ type API interface {
 	ReportStatus(ctx context.Context, report api.StatusReport) error
 }
 
+// Updater replaces the agent with its channel's release (see package update).
+type Updater interface {
+	// Proven reports whether this version has reached the API before.
+	Proven() bool
+	MarkHealthy() error
+	// FailedVersion is a version the bootstrap fell back from, or "".
+	FailedVersion() string
+	// Stage downloads and verifies target for the next start; true if staged.
+	Stage(ctx context.Context, target game.AgentTarget) (bool, error)
+}
+
+var (
+	// ErrUpdateStaged: a new agent is staged; exit so the bootstrap starts it.
+	ErrUpdateStaged = errors.New("agent update staged")
+	// ErrNeverHealthy: this unproven version couldn't reach the API; exit so the bootstrap can fall back.
+	ErrNeverHealthy = errors.New("agent never reached the API")
+)
+
 // Runtime runs the game container.
 type Runtime interface {
 	Start(ctx context.Context, spec container.Spec) error
@@ -48,11 +66,18 @@ type Options struct {
 	PollInterval time.Duration
 	// MaxBackoff caps the wait between retries of API calls and container starts. Defaults to 30 seconds.
 	MaxBackoff time.Duration
+	// Updater, if set, keeps the agent on its channel's release. Nil disables self-update.
+	Updater Updater
+	// HealthDeadline is how long an unproven agent may fail to reach the API before giving up.
+	// Defaults to 3 minutes.
+	HealthDeadline time.Duration
 }
 
 type Agent struct {
 	Options
-	log *slog.Logger
+	log     *slog.Logger
+	started time.Time
+	healthy bool
 }
 
 func New(opts Options) *Agent {
@@ -65,21 +90,51 @@ func New(opts Options) *Agent {
 	if opts.MaxBackoff == 0 {
 		opts.MaxBackoff = 30 * time.Second
 	}
+	if opts.HealthDeadline == 0 {
+		opts.HealthDeadline = 3 * time.Minute
+	}
 	return &Agent{Options: opts, log: opts.Logger}
 }
 
 // Run starts the game and keeps it running until ctx is cancelled (the instance is shutting
 // down), then saves and stops it within StopTimeout. Problems are reported to the API as the
 // "error" state rather than ending the agent, so they're visible without logging in.
+//
+// It returns ErrUpdateStaged when it has staged a newer agent, and ErrNeverHealthy when this
+// unproven version can't reach the API; the caller exits so the bootstrap can act on either.
 func (a *Agent) Run(ctx context.Context) error {
 	a.log.Info("agent starting")
+	a.started = time.Now()
+	notice := ""
+	if a.Updater != nil {
+		if failed := a.Updater.FailedVersion(); failed != "" && failed != a.Version {
+			notice = fmt.Sprintf("agent %s never became healthy; running %s", failed, a.Version)
+			a.log.Warn(notice)
+		}
+	}
 
 	cfg, err := a.fetchConfig(ctx)
+	if errors.Is(err, ErrNeverHealthy) {
+		return err
+	}
 	if err != nil {
 		a.log.Info("shutdown requested before the config arrived")
 		return nil
 	}
 	a.log = a.log.With("serverId", cfg.ServerID, "game", cfg.Game)
+
+	if a.Updater != nil && cfg.Agent != nil {
+		staged, err := a.Updater.Stage(ctx, *cfg.Agent)
+		switch {
+		case err != nil:
+			// Keep running this version; the next start tries again.
+			a.log.Error("agent update failed; staying on this version", "target", cfg.Agent.Version, "err", err)
+		case staged:
+			a.log.Info("agent update staged; restarting into it", "target", cfg.Agent.Version)
+			a.report(ctx, "starting", "updating agent to "+cfg.Agent.Version)
+			return ErrUpdateStaged
+		}
+	}
 
 	newAdapter, ok := a.Games[cfg.Game]
 	if !ok {
@@ -92,7 +147,7 @@ func (a *Agent) Run(ctx context.Context) error {
 	spec := adapter.Container(cfg)
 	spec.Name = ContainerName
 
-	a.report(ctx, "starting", "")
+	a.report(ctx, "starting", notice)
 	if err := a.startContainer(ctx, spec); err != nil {
 		if ctx.Err() == nil {
 			a.fail(ctx, err.Error())
@@ -132,12 +187,18 @@ func (a *Agent) Run(ctx context.Context) error {
 }
 
 // fetchConfig retries until the API answers. Early failures are expected: IAM and the
-// instance's server record may not be in place yet when the instance first boots.
+// instance's server record may not be in place yet when the instance first boots. A version
+// that has never reached the API gives up after HealthDeadline, so the bootstrap can fall back.
 func (a *Agent) fetchConfig(ctx context.Context) (game.Config, error) {
+	unproven := a.Updater != nil && !a.Updater.Proven()
 	for attempt := 1; ; attempt++ {
 		cfg, err := a.API.Config(ctx)
 		if err == nil {
 			return cfg, nil
+		}
+		if unproven && time.Since(a.started) > a.HealthDeadline {
+			a.log.Error("this agent version never reached the API; giving up", "err", err)
+			return game.Config{}, ErrNeverHealthy
 		}
 		a.log.Warn("fetching config failed; retrying", "attempt", attempt, "err", err)
 		if !a.sleep(ctx, a.backoff(attempt)) {
@@ -235,12 +296,24 @@ func (a *Agent) report(ctx context.Context, state, msg string) {
 	for attempt := 1; attempt <= 3; attempt++ {
 		err := a.API.ReportStatus(ctx, report)
 		if err == nil {
+			a.markHealthy()
 			return
 		}
 		a.log.Warn("status report failed", "state", state, "attempt", attempt, "err", err)
 		if attempt < 3 && !a.sleep(ctx, a.backoff(attempt)) {
 			return
 		}
+	}
+}
+
+// markHealthy records, once per run, that this version reached the API.
+func (a *Agent) markHealthy() {
+	if a.healthy || a.Updater == nil {
+		return
+	}
+	a.healthy = true
+	if err := a.Updater.MarkHealthy(); err != nil {
+		a.log.Warn("couldn't record that this agent is healthy", "err", err)
 	}
 }
 
