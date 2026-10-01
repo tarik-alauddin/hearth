@@ -15,18 +15,21 @@ for cmd in dnf systemctl; do
   printf '#!/bin/bash\necho "%s $*" >> /tmp/calls\n' "$cmd" > "/stubs/$cmd"
   chmod +x "/stubs/$cmd"
 done
-# aws: records the call and "downloads" /tmp/first-agent to the destination (the last argument).
+# aws: records the call. `ssm get-parameter` answers with the stable channel (/tmp/stable-release);
+# `s3 cp` "downloads" /tmp/first-agent to the destination (the last argument).
 cat > /stubs/aws <<'STUB'
 #!/bin/bash
 echo "aws $*" >> /tmp/calls
-cp /tmp/first-agent "${@: -1}"
+case "$1 $2" in
+  "ssm get-parameter") cat /tmp/stable-release ;;
+  "s3 cp") cp /tmp/first-agent "${@: -1}" ;;
+esac
 STUB
 chmod +x /stubs/aws
 export PATH="/stubs:$PATH"
 
 # GameInfraStack prepends these to the script in the launch template's user data.
-export HEARTH_ENV=dev HEARTH_HOME_REGION=us-west-2 HEARTH_AGENT_REGION=us-west-2
-export HEARTH_AGENT_URL=s3://cdk-hearthdev-assets-123456789012-us-west-2/abc_noext
+export HEARTH_ENV=dev HEARTH_HOME_REGION=us-west-2 HEARTH_AGENT_BUCKET=hearth-agent-releases-123456789012
 
 cleanup() {
   umount "$MOUNT" 2>/dev/null || true
@@ -73,7 +76,8 @@ ok "formats, labels and mounts a blank volume, and installs docker"
 
 echo "# agent service"
 grep -q "^HEARTH_ENV=dev$" /etc/hearth/agent.env || fail "agent.env missing HEARTH_ENV"
-grep -q "^HEARTH_AGENT_URL=s3://cdk-hearthdev-assets-123456789012-us-west-2/abc_noext$" /etc/hearth/agent.env   || fail "agent.env missing HEARTH_AGENT_URL"
+grep -q "^HEARTH_AGENT_BUCKET=hearth-agent-releases-123456789012$" /etc/hearth/agent.env \
+  || fail "agent.env missing HEARTH_AGENT_BUCKET"
 grep -q "^HEARTH_DATA_DIR=/srv/hearth$" /etc/hearth/agent.env || fail "agent.env missing HEARTH_DATA_DIR"
 [ -x /usr/local/bin/hearth-bootstrap ] || fail "bootstrap not executable"
 bash -n /usr/local/bin/hearth-bootstrap || fail "bootstrap has a syntax error"
@@ -106,16 +110,23 @@ if [ $3 = yes ]; then echo $2 > /var/lib/hearth/agent-healthy; fi
 AGENT
   chmod +x "$1"
 }
-bootstrap() { : > /tmp/calls; : > /tmp/ran; HEARTH_AGENT_URL=s3://assets/first HEARTH_AGENT_REGION=us-west-2 bash /usr/local/bin/hearth-bootstrap; }
+bootstrap() { : > /tmp/calls; : > /tmp/ran; bash /usr/local/bin/hearth-bootstrap; }
+# The stable channel points at /tmp/first-agent, as the release workflows write it.
+publish_stable() { # publish_stable <version>
+  printf '{"version":"%s","sha256":"%s"}' "$1" "$(sha256sum /tmp/first-agent | cut -d' ' -f1)" > /tmp/stable-release
+}
 ran() { tr '\n' ' ' < /tmp/ran | sed 's/ $//'; }
 B=/opt/hearth/bin
 rm -rf "$B" /var/lib/hearth
 
 make_agent /tmp/first-agent 1.0.0 yes
+publish_stable 1.0.0
 bootstrap
 [ "$(ran)" = 1.0.0 ] || fail "first boot should run the downloaded agent, ran '$(ran)'"
-grep -q "^aws s3 cp" /tmp/calls || fail "first boot should download the agent"
-ok "first boot downloads the agent and runs it"
+grep -q "^aws ssm get-parameter .*--name /hearth/dev/agent/stable" /tmp/calls || fail "first boot should read the stable channel"
+grep -q "^aws s3 cp .*s3://hearth-agent-releases-123456789012/agent/1.0.0/hearth-agent-linux-arm64" /tmp/calls \
+  || fail "first boot should download the stable release"
+ok "first boot downloads the stable release, checks it and runs it"
 
 bootstrap
 [ "$(ran)" = 1.0.0 ] || fail "cached start ran '$(ran)'"
@@ -141,9 +152,22 @@ ok "an agent that never becomes healthy falls back to the last known good one"
 
 rm -rf "$B" /var/lib/hearth
 make_agent /tmp/first-agent 1.0.0 no
+publish_stable 1.0.0
 bootstrap; bootstrap; bootstrap
 [ "$(ran)" = 1.0.0 ] || fail "with nothing to fall back to, keep running the only agent"
 ok "with no previous agent, it keeps running the one it has"
+
+rm -rf "$B" /var/lib/hearth
+publish_stable 1.0.0
+echo "tampered" >> /tmp/first-agent
+if bootstrap > /tmp/out 2>&1; then
+  fail "a download that fails its checksum must not run"
+fi
+grep -q "failed its checksum" /tmp/out || fail "should say the checksum failed"
+if [ -e "$B/hearth-agent" ] || [ -n "$(ran)" ]; then
+  fail "a bad download must not be installed or run"
+fi
+ok "a first download that fails its checksum is rejected"
 
 echo "# run again with the world mounted"
 echo "world" > "$MOUNT/level.dat"
@@ -183,10 +207,10 @@ grep -q "[[:space:]]${MOUNT}[[:space:]]ext4[[:space:]]" /etc/fstab || fail "fsta
 ok "keeps a non-xfs filesystem and records its type"
 
 echo "# missing variables"
-if HEARTH_AGENT_URL='' bash "$SCRIPT" > /tmp/out 2>&1; then
-  fail "script ran without HEARTH_AGENT_URL"
+if HEARTH_AGENT_BUCKET='' bash "$SCRIPT" > /tmp/out 2>&1; then
+  fail "script ran without HEARTH_AGENT_BUCKET"
 fi
-grep -q "HEARTH_AGENT_URL" /tmp/out || fail "error should name the missing variable"
+grep -q "HEARTH_AGENT_BUCKET" /tmp/out || fail "error should name the missing variable"
 ok "refuses to run without its variables"
 
 echo "all user data tests passed"

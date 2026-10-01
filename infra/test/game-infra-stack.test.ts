@@ -140,11 +140,11 @@ describe('GameInfraStack', () => {
       expect(userData).toContain('DATA_MOUNT=/srv/hearth');
     });
 
-    it('gives the startup script its environment, home region and agent location', () => {
+    it('gives the startup script its environment, home region and the releases bucket', () => {
       expect(userData).toContain("HEARTH_ENV='dev'");
       expect(userData).toContain("HEARTH_HOME_REGION='us-west-2'");
-      expect(userData).toContain("HEARTH_AGENT_REGION='us-west-2'");
-      expect(userData).toMatch(/HEARTH_AGENT_URL='s3:\/\/cdk-hearthdev-assets-138300868928-us-west-2\/[0-9a-f]{64}/);
+      expect(userData).toContain("HEARTH_AGENT_BUCKET='hearth-agent-releases-138300868928'");
+      expect(userData).not.toContain('cdk-hearthdev-assets');
     });
 
     it('installs the agent as a service ordered after Docker and the data volume', () => {
@@ -155,16 +155,13 @@ describe('GameInfraStack', () => {
     });
   });
 
-  it('lets instances download exactly the agent binary', () => {
+  it("lets instances read only their environment's stable agent channel", () => {
     const statements = Object.values(template.findResources('AWS::IAM::Policy')).flatMap(
       (p) => (p as { Properties: { PolicyDocument: { Statement: { Action: string; Resource: unknown }[] } } })
         .Properties.PolicyDocument.Statement,
     );
-    const s3 = statements.filter((s) => String(s.Action).startsWith('s3:'));
-    expect(s3.map((s) => s.Action)).toEqual(['s3:GetObject']);
-    // One object in this environment's asset bucket, not a wildcard.
-    expect(JSON.stringify(s3[0]?.Resource)).toContain(
-      `:s3:::cdk-hearthdev-assets-138300868928-us-west-2/${stack.agent.s3ObjectKey}"`,
-    );
+    const ssm = statements.filter((s) => s.Action === 'ssm:GetParameter');
+    expect(ssm).toHaveLength(1);
+    expect(JSON.stringify(ssm[0]?.Resource)).toContain(':ssm:us-west-2:138300868928:parameter/hearth/dev/agent/stable');
   });
 });

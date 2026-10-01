@@ -22,10 +22,14 @@ import {
 } from 'aws-cdk-lib/aws-ec2';
 import { ManagedPolicy, PolicyStatement, Role, ServicePrincipal } from 'aws-cdk-lib/aws-iam';
 import { LogGroup, RetentionDays } from 'aws-cdk-lib/aws-logs';
-import type { Asset } from 'aws-cdk-lib/aws-s3-assets';
 import type { Construct } from 'constructs';
-import { GAME_DEFINITIONS, agentReleasesBucket, type GameDefinition, type GameId } from '@hearth/shared';
-import { agentAsset } from '../agent-asset.js';
+import {
+  GAME_DEFINITIONS,
+  agentChannelParameter,
+  agentReleasesBucket,
+  type GameDefinition,
+  type GameId,
+} from '@hearth/shared';
 import { availabilityZones } from '../config.js';
 import { HearthStack, type HearthStackProps } from '../hearth-stack.js';
 
@@ -51,7 +55,6 @@ export class GameInfraStack extends HearthStack {
   readonly instanceRole: Role;
   readonly securityGroups: Record<GameId, SecurityGroup>;
   readonly launchTemplates: Record<GameId, LaunchTemplate>;
-  readonly agent: Asset;
 
   constructor(scope: Construct, props: GameInfraStackProps) {
     super(scope, 'GameInfra', props);
@@ -100,28 +103,28 @@ export class GameInfraStack extends HearthStack {
       reason: 'PutMetricData has no resource ARNs; it is limited by the cloudwatch:namespace condition.',
     });
 
-    // Agent releases (from M4 on): read-only, release binaries only.
-    const releases = `arn:${this.partition}:s3:::${agentReleasesBucket(props.config.account)}/agent/*`;
+    // Agent releases: read-only, release binaries only. The bootstrap's first download comes from the
+    // environment's stable channel; after that the agent updates itself to its server's channel.
+    const releasesBucket = agentReleasesBucket(props.config.account);
+    const releases = `arn:${this.partition}:s3:::${releasesBucket}/agent/*`;
     this.instanceRole.addToPolicy(new PolicyStatement({ actions: ['s3:GetObject'], resources: [releases] }));
     Validations.of(this.instanceRole).acknowledge({
       id: `AwsSolutions-IAM5[Resource::${releases}]`,
       reason: 'Any release may be the target or rollback of a server; read-only, binaries only.',
     });
-
-    // Instances download the agent at every start; they can read exactly this object.
-    this.agent = agentAsset(this, 'Agent');
     this.instanceRole.addToPolicy(
       new PolicyStatement({
-        actions: ['s3:GetObject'],
-        resources: [this.agent.bucket.arnForObjects(this.agent.s3ObjectKey)],
+        actions: ['ssm:GetParameter'],
+        resources: [
+          `arn:${this.partition}:ssm:${props.config.homeRegion}:${this.account}:parameter${agentChannelParameter(env, 'stable')}`,
+        ],
       }),
     );
     const userData = UserData.custom(
       userDataScript({
         HEARTH_ENV: env,
         HEARTH_HOME_REGION: props.config.homeRegion,
-        HEARTH_AGENT_URL: this.agent.s3ObjectUrl,
-        HEARTH_AGENT_REGION: this.region,
+        HEARTH_AGENT_BUCKET: releasesBucket,
       }),
     );
 

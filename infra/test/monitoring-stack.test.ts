@@ -87,6 +87,12 @@ describe('AccountStack', () => {
     });
   });
 
+  it('expires dev builds after 30 days and keeps tagged releases', () => {
+    template.hasResourceProperties('AWS::S3::Bucket', {
+      LifecycleConfiguration: { Rules: [Match.objectLike({ Prefix: 'agent/main-', ExpirationInDays: 30 })] },
+    });
+  });
+
   it('budgets $50 a month for everything tagged app=hearth, emailing at 80%, 100% and forecast 100%', () => {
     template.hasResourceProperties('AWS::Budgets::Budget', {
       Budget: Match.objectLike({
