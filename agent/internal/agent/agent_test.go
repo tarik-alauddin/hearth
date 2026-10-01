@@ -52,6 +52,12 @@ func (f *fakeAPI) states() []string {
 	return s
 }
 
+func (f *fakeAPI) firstMessage() string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.reports[0].Message
+}
+
 func (f *fakeAPI) lastMessage() string {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -292,4 +298,129 @@ func TestParseMemTotal(t *testing.T) {
 	if got := parseMemTotalMiB(strings.NewReader("nothing here")); got != 0 {
 		t.Errorf("got %d", got)
 	}
+}
+
+// fakeUpdater records what the agent asks of the updater.
+type fakeUpdater struct {
+	mu       sync.Mutex
+	proven   bool
+	failed   string
+	stageErr error
+	staged   []string
+	healthy  int
+}
+
+func (f *fakeUpdater) Proven() bool          { return f.proven }
+func (f *fakeUpdater) FailedVersion() string { return f.failed }
+func (f *fakeUpdater) MarkHealthy() error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.healthy++
+	return nil
+}
+func (f *fakeUpdater) Stage(_ context.Context, target game.AgentTarget) (bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.staged = append(f.staged, target.Version)
+	if f.stageErr != nil {
+		return false, f.stageErr
+	}
+	return target.Version != "0.1.0", nil
+}
+
+func (f *fakeUpdater) healthyCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.healthy
+}
+
+var newRelease = &game.AgentTarget{Version: "0.2.0", URL: "s3://releases/agent/0.2.0/x", SHA256: "abc"}
+
+func TestStagesAnUpdateAndExitsBeforeStartingTheGame(t *testing.T) {
+	up := &fakeUpdater{proven: true}
+	h := start(t, func(h *harness) {
+		h.agent.Updater = up
+		h.api.config.Agent = newRelease
+	})
+	select {
+	case err := <-h.done:
+		if !errors.Is(err, ErrUpdateStaged) {
+			t.Fatalf("Run returned %v, want ErrUpdateStaged", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("Run did not return")
+	}
+	if len(h.rt.events) != 0 {
+		t.Errorf("the game should not start before the update: %v", h.rt.events)
+	}
+	if h.api.lastMessage() != "updating agent to 0.2.0" {
+		t.Errorf("message %q", h.api.lastMessage())
+	}
+}
+
+func TestKeepsRunningWhenTheUpdateFails(t *testing.T) {
+	up := &fakeUpdater{proven: true, stageErr: errors.New("checksum mismatch")}
+	h := start(t, func(h *harness) {
+		h.agent.Updater = up
+		h.api.config.Agent = newRelease
+	})
+	eventually(t, "ready", func() bool { return slices.Contains(h.api.states(), "ready") })
+	_ = h.stop(t)
+}
+
+func TestNoTargetNoUpdate(t *testing.T) {
+	up := &fakeUpdater{proven: true}
+	h := start(t, func(h *harness) { h.agent.Updater = up })
+	eventually(t, "ready", func() bool { return slices.Contains(h.api.states(), "ready") })
+	_ = h.stop(t)
+	if len(up.staged) != 0 {
+		t.Errorf("staged %v without a target", up.staged)
+	}
+}
+
+func TestMarksItselfHealthyAfterReachingTheAPI(t *testing.T) {
+	up := &fakeUpdater{}
+	h := start(t, func(h *harness) { h.agent.Updater = up })
+	eventually(t, "ready", func() bool { return slices.Contains(h.api.states(), "ready") })
+	_ = h.stop(t)
+	if up.healthyCount() != 1 {
+		t.Errorf("MarkHealthy called %d times, want once", up.healthyCount())
+	}
+}
+
+func TestUnprovenAgentGivesUpWhenTheAPIIsUnreachable(t *testing.T) {
+	h := start(t, func(h *harness) {
+		h.agent.Updater = &fakeUpdater{proven: false}
+		h.agent.HealthDeadline = 50 * time.Millisecond
+		h.api.configFails = 1 << 30
+	})
+	select {
+	case err := <-h.done:
+		if !errors.Is(err, ErrNeverHealthy) {
+			t.Fatalf("Run returned %v, want ErrNeverHealthy", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("an unproven agent should give up")
+	}
+}
+
+func TestProvenAgentKeepsRetryingWhenTheAPIIsUnreachable(t *testing.T) {
+	h := start(t, func(h *harness) {
+		h.agent.Updater = &fakeUpdater{proven: true}
+		h.agent.HealthDeadline = 50 * time.Millisecond
+		h.api.configFails = 1 << 30
+	})
+	time.Sleep(200 * time.Millisecond)
+	if err := h.stop(t); err != nil {
+		t.Fatalf("a proven agent should retry until shutdown, got %v", err)
+	}
+}
+
+func TestReportsAFallback(t *testing.T) {
+	h := start(t, func(h *harness) { h.agent.Updater = &fakeUpdater{proven: true, failed: "0.2.0"} })
+	eventually(t, "starting", func() bool { return slices.Contains(h.api.states(), "starting") })
+	if msg := h.api.firstMessage(); msg != "agent 0.2.0 never became healthy; running 0.1.0" {
+		t.Errorf("starting message %q", msg)
+	}
+	_ = h.stop(t)
 }

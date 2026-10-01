@@ -15,6 +15,13 @@ for cmd in dnf systemctl; do
   printf '#!/bin/bash\necho "%s $*" >> /tmp/calls\n' "$cmd" > "/stubs/$cmd"
   chmod +x "/stubs/$cmd"
 done
+# aws: records the call and "downloads" /tmp/first-agent to the destination (the last argument).
+cat > /stubs/aws <<'STUB'
+#!/bin/bash
+echo "aws $*" >> /tmp/calls
+cp /tmp/first-agent "${@: -1}"
+STUB
+chmod +x /stubs/aws
 export PATH="/stubs:$PATH"
 
 # GameInfraStack prepends these to the script in the launch template's user data.
@@ -70,7 +77,8 @@ grep -q "^HEARTH_AGENT_URL=s3://cdk-hearthdev-assets-123456789012-us-west-2/abc_
 grep -q "^HEARTH_DATA_DIR=/srv/hearth$" /etc/hearth/agent.env || fail "agent.env missing HEARTH_DATA_DIR"
 [ -x /usr/local/bin/hearth-bootstrap ] || fail "bootstrap not executable"
 bash -n /usr/local/bin/hearth-bootstrap || fail "bootstrap has a syntax error"
-grep -q 'exec /opt/hearth/bin/hearth-agent' /usr/local/bin/hearth-bootstrap || fail "bootstrap doesn't exec the agent"
+# shellcheck disable=SC2016 # the literal text $agent, as written in the bootstrap
+grep -q '^exec "$agent"$' /usr/local/bin/hearth-bootstrap || fail "bootstrap doesn't exec the agent"
 unit=/etc/systemd/system/hearth-agent.service
 grep -q "^RequiresMountsFor=/srv/hearth$" "$unit" || fail "unit not tied to the data volume"
 grep -q "^After=docker.service" "$unit" || fail "unit not ordered after docker"
@@ -85,6 +93,57 @@ if ! verify=$(SYSTEMD_LOG_LEVEL=warning systemd-analyze verify "$unit" 2>&1) || 
   fail "systemd-analyze rejected the unit"
 fi
 ok "writes agent.env, the bootstrap and the systemd unit, and enables the service"
+
+echo "# bootstrap: first download, cache, updates and fallback"
+# A fake agent: prints its version for -version; otherwise records that it ran and, if healthy,
+# marks itself healthy the way the real agent does after reaching the API.
+make_agent() { # make_agent <path> <version> <healthy: yes|no>
+  cat > "$1" <<AGENT
+#!/bin/bash
+if [ "\${1:-}" = -version ]; then echo $2; exit 0; fi
+echo $2 >> /tmp/ran
+if [ $3 = yes ]; then echo $2 > /var/lib/hearth/agent-healthy; fi
+AGENT
+  chmod +x "$1"
+}
+bootstrap() { : > /tmp/calls; : > /tmp/ran; HEARTH_AGENT_URL=s3://assets/first HEARTH_AGENT_REGION=us-west-2 bash /usr/local/bin/hearth-bootstrap; }
+ran() { tr '\n' ' ' < /tmp/ran | sed 's/ $//'; }
+B=/opt/hearth/bin
+rm -rf "$B" /var/lib/hearth
+
+make_agent /tmp/first-agent 1.0.0 yes
+bootstrap
+[ "$(ran)" = 1.0.0 ] || fail "first boot should run the downloaded agent, ran '$(ran)'"
+grep -q "^aws s3 cp" /tmp/calls || fail "first boot should download the agent"
+ok "first boot downloads the agent and runs it"
+
+bootstrap
+[ "$(ran)" = 1.0.0 ] || fail "cached start ran '$(ran)'"
+! grep -q "^aws" /tmp/calls || fail "a normal start must not download"
+ok "later starts run the cached agent without downloading"
+
+make_agent "$B/hearth-agent.next" 2.0.0 yes
+bootstrap
+[ "$(ran)" = 2.0.0 ] || fail "update should run the new agent, ran '$(ran)'"
+[ "$("$B/hearth-agent.previous" -version)" = 1.0.0 ] || fail "the healthy old agent should be kept as previous"
+[ ! -e "$B/hearth-agent.next" ] || fail "the staged update should be consumed"
+ok "a staged update becomes current, keeping the old agent as last known good"
+
+make_agent "$B/hearth-agent.next" 3.0.0 no
+bootstrap; bootstrap
+[ "$(ran)" = 3.0.0 ] || fail "an unhealthy agent gets $(( 2 )) tries, ran '$(ran)'"
+bootstrap
+[ "$(ran)" = 2.0.0 ] || fail "the third start should fall back to 2.0.0, ran '$(ran)'"
+[ "$(cat /var/lib/hearth/agent-failed)" = 3.0.0 ] || fail "the failed version should be recorded"
+[ "$(cat /var/lib/hearth/agent-healthy)" = 2.0.0 ] || fail "the restored agent counts as healthy"
+[ "$("$B/hearth-agent.failed" -version)" = 3.0.0 ] || fail "the failed agent should be kept aside"
+ok "an agent that never becomes healthy falls back to the last known good one"
+
+rm -rf "$B" /var/lib/hearth
+make_agent /tmp/first-agent 1.0.0 no
+bootstrap; bootstrap; bootstrap
+[ "$(ran)" = 1.0.0 ] || fail "with nothing to fall back to, keep running the only agent"
+ok "with no previous agent, it keeps running the one it has"
 
 echo "# run again with the world mounted"
 echo "world" > "$MOUNT/level.dat"

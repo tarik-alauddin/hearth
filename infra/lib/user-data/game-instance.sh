@@ -60,19 +60,59 @@ HEARTH_AGENT_REGION=$HEARTH_AGENT_REGION
 HEARTH_DATA_DIR=$DATA_MOUNT
 EOF
 
-# The bootstrap stays small and stable: it downloads the agent on every service start, then
-# becomes it (exec), so systemd's stop signal goes straight to the agent.
+# The bootstrap runs on every service start, then becomes the agent (exec), so systemd's stop
+# signal goes straight to it. An instance keeps this bootstrap for life, so it stays small: the
+# agent does the updating (see agent/internal/update), the bootstrap only swaps files.
 cat > /usr/local/bin/hearth-bootstrap <<'EOF'
 #!/bin/bash
 set -euo pipefail
-install -d -m 0755 /opt/hearth/bin
-tmp=$(mktemp /opt/hearth/bin/.hearth-agent.XXXXXX)
-trap 'rm -f "$tmp"' EXIT
-aws s3 cp --only-show-errors --region "$HEARTH_AGENT_REGION" "$HEARTH_AGENT_URL" "$tmp"
-chmod 0755 "$tmp"
-mv -f "$tmp" /opt/hearth/bin/hearth-agent
-trap - EXIT
-exec /opt/hearth/bin/hearth-agent
+BIN=${HEARTH_BIN_DIR:-/opt/hearth/bin}
+STATE=${HEARTH_STATE_DIR:-/var/lib/hearth}
+MAX_UNHEALTHY_STARTS=2
+agent="$BIN/hearth-agent"
+log() { echo "hearth-bootstrap: $*"; }
+install -d -m 0755 "$BIN" "$STATE"
+
+# The agent staged an update and exited: make it current. The current agent becomes the last
+# known good one, but only if it ever reached the API.
+if [ -x "$agent.next" ]; then
+  if [ -x "$agent" ] && [ -f "$STATE/agent-healthy" ]; then
+    mv -f "$agent" "$agent.previous"
+  fi
+  mv -f "$agent.next" "$agent"
+  rm -f "$STATE/agent-healthy" "$STATE/agent-failed"
+  echo 0 > "$STATE/unhealthy-starts"
+  log "updated the agent"
+fi
+
+# First boot: no agent yet.
+if [ ! -x "$agent" ]; then
+  tmp=$(mktemp "$BIN/.hearth-agent.XXXXXX")
+  trap 'rm -f "$tmp"' EXIT
+  aws s3 cp --only-show-errors --region "$HEARTH_AGENT_REGION" "$HEARTH_AGENT_URL" "$tmp"
+  chmod 0755 "$tmp"
+  mv -f "$tmp" "$agent"
+  trap - EXIT
+  log "downloaded the first agent"
+fi
+
+# A new agent that keeps exiting before it ever reaches the API goes back to the last known good
+# one. The agent then won't stage the failed version again, and reports the fallback.
+if [ ! -f "$STATE/agent-healthy" ]; then
+  starts=$(( $(cat "$STATE/unhealthy-starts" 2>/dev/null || echo 0) + 1 ))
+  echo "$starts" > "$STATE/unhealthy-starts"
+  if [ "$starts" -gt "$MAX_UNHEALTHY_STARTS" ] && [ -x "$agent.previous" ]; then
+    failed=$("$agent" -version 2>/dev/null || echo unknown)
+    log "agent $failed never became healthy; falling back to the previous agent"
+    echo "$failed" > "$STATE/agent-failed"
+    mv -f "$agent" "$agent.failed"
+    mv -f "$agent.previous" "$agent"
+    "$agent" -version 2>/dev/null > "$STATE/agent-healthy" || true
+    echo 0 > "$STATE/unhealthy-starts"
+  fi
+fi
+
+exec "$agent"
 EOF
 chmod 0755 /usr/local/bin/hearth-bootstrap
 
