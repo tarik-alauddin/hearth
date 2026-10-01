@@ -55,6 +55,6 @@ jobs:
           aws-region: ${{ env.AWS_REGION }}
       - name: cdk deploy
         working-directory: infra
-        run: pnpm exec cdk deploy --app cdk.out 'hearth-dev-*' --require-approval never --concurrency 4
+        run: pnpm exec cdk deploy --app cdk.out 'hearth-dev-*' hearth-account --require-approval never --concurrency 4
 
   # deploy-stage (+ E2E) and deploy-prod (with approval) are added once there is something to test.

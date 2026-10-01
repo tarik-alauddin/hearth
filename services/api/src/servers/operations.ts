@@ -129,6 +129,7 @@ export function serverOperations({
         version,
         autoUpdate: false,
         createdAt: at.toISOString(),
+        statusChangedAt: at.toISOString(),
         lastOperationId: operationId,
       });
       await run(serverId, 'create', operationId, 'PROVISIONING', 'PROVISIONING');

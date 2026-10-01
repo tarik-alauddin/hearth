@@ -1,5 +1,5 @@
-import type { ServersStore } from '@hearth/core';
-import type { ServerRecord, ServerStatus } from '@hearth/shared';
+import { emfMetrics, type Metrics, type ServersStore } from '@hearth/core';
+import { METRICS, type ServerRecord, type ServerStatus } from '@hearth/shared';
 
 // Step Functions task handlers for the create, start and stop workflows. Each task is short;
 // waiting is done by throwing NotReady, which the state machine retries on a fixed interval.
@@ -22,6 +22,11 @@ export interface WorkflowState {
   serverId: string;
   /** When this start or stop began (ISO 8601); agent reports from before it are ignored. */
   since?: string;
+}
+
+/** Which workflow a task runs in (create | start | stop), passed by the state machine. */
+export interface TaskContext {
+  workflow?: string;
 }
 
 export interface InstanceInfo {
@@ -50,12 +55,13 @@ export interface TaskDeps {
   ec2: Ec2;
   gameInfra: GameInfra;
   now?: () => Date;
+  metrics?: Metrics;
 }
 
 /** The device name of the world volume; see GameInfraStack. */
 export const DATA_DEVICE = '/dev/sdf';
 
-export function workflowTasks({ env, store, ec2, gameInfra, now = () => new Date() }: TaskDeps) {
+export function workflowTasks({ env, store, ec2, gameInfra, now = () => new Date(), metrics = emfMetrics(env) }: TaskDeps) {
   async function server(serverId: string, expected?: ServerStatus): Promise<ServerRecord> {
     const record = await store.getServer(serverId);
     if (!record) throw new Error(`Server ${serverId} not found`);
@@ -142,8 +148,8 @@ export function workflowTasks({ env, store, ec2, gameInfra, now = () => new Date
       throw new NotReady(`Waiting for the agent on ${state.serverId}`);
     },
 
-    /** Create and start: STARTING → RUNNING. */
-    async markRunning(state: WorkflowState): Promise<WorkflowState> {
+    /** Create and start: STARTING → RUNNING, recording how long it took to become ready. */
+    async markRunning(state: WorkflowState, context: TaskContext = {}): Promise<WorkflowState> {
       const record = await server(state.serverId);
       await transition(state.serverId, {
         from: ['STARTING'],
@@ -151,6 +157,10 @@ export function workflowTasks({ env, store, ec2, gameInfra, now = () => new Date
         instanceId: requireInstance(record),
         remove: ['statusMessage'],
       });
+      if (state.since) {
+        const seconds = Math.round((now().getTime() - Date.parse(state.since)) / 1000);
+        metrics.record(METRICS.timeToReady, seconds, 'Seconds', { Workflow: context.workflow ?? 'unknown' });
+      }
       return state;
     },
 
@@ -181,6 +191,7 @@ export function workflowTasks({ env, store, ec2, gameInfra, now = () => new Date
         set: { lastStopClean: clean },
         remove: ['statusMessage'],
       });
+      metrics.record(METRICS.stopClean, clean ? 1 : 0, 'Count');
       return state;
     },
 

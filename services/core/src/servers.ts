@@ -10,6 +10,7 @@ import {
 } from '@aws-sdk/lib-dynamodb';
 import {
   SERVERS_BY_INSTANCE_INDEX,
+  SERVERS_BY_STATUS_INDEX,
   type AgentStatusReport,
   type InstanceState,
   type ServerRecord,
@@ -28,6 +29,11 @@ export interface ServersStore {
   /** Writes a new record; fails if the ID is taken. */
   createServer(server: ServerRecord): Promise<void>;
   findByInstance(instanceId: string): Promise<ServerRecord | undefined>;
+  /**
+   * Servers in `status` (from the byStatus index: keys, statusChangedAt, instanceId, instanceState),
+   * optionally only those that have been in it since before `changedBefore`.
+   */
+  findByStatus(status: ServerStatus, changedBefore?: Date): Promise<StatusIndexEntry[]>;
   /** Agent routes. Returns false if the server is no longer on this instance. */
   recordAgentReport(serverId: string, instanceId: string, report: AgentStatusReport, at: Date): Promise<boolean>;
   /**
@@ -45,6 +51,8 @@ export interface ServersStore {
   transition(serverId: string, change: Transition): Promise<boolean>;
 }
 
+export type StatusIndexEntry = Pick<ServerRecord, 'serverId' | 'status' | 'statusChangedAt' | 'instanceId' | 'instanceState'>;
+
 export interface Transition {
   from: readonly ServerStatus[];
   to: ServerStatus;
@@ -60,7 +68,11 @@ export function createServersStore(tableName: string): ServersStore {
   return dynamoServersStore(DynamoDBDocumentClient.from(new DynamoDBClient({})), tableName);
 }
 
-export function dynamoServersStore(client: Pick<DynamoDBDocumentClient, 'send'>, tableName: string): ServersStore {
+export function dynamoServersStore(
+  client: Pick<DynamoDBDocumentClient, 'send'>,
+  tableName: string,
+  now: () => Date = () => new Date(),
+): ServersStore {
   /** Runs a conditional update; false when the condition didn't hold. */
   async function conditionalUpdate(input: Omit<UpdateCommandInput, 'TableName'>): Promise<boolean> {
     try {
@@ -90,6 +102,29 @@ export function dynamoServersStore(client: Pick<DynamoDBDocumentClient, 'send'>,
       await client.send(
         new PutCommand({ TableName: tableName, Item: server, ConditionExpression: 'attribute_not_exists(serverId)' }),
       );
+    },
+
+    async findByStatus(status, changedBefore) {
+      const entries: StatusIndexEntry[] = [];
+      let start: Record<string, unknown> | undefined;
+      do {
+        const out = await client.send(
+          new QueryCommand({
+            TableName: tableName,
+            IndexName: SERVERS_BY_STATUS_INDEX,
+            KeyConditionExpression: changedBefore ? '#status = :status AND statusChangedAt < :before' : '#status = :status',
+            ExpressionAttributeNames: { '#status': 'status' },
+            ExpressionAttributeValues: {
+              ':status': status,
+              ...(changedBefore ? { ':before': changedBefore.toISOString() } : {}),
+            },
+            ExclusiveStartKey: start,
+          }),
+        );
+        entries.push(...((out.Items ?? []) as StatusIndexEntry[]));
+        start = out.LastEvaluatedKey;
+      } while (start);
+      return entries;
     },
 
     async findByInstance(instanceId) {
@@ -154,6 +189,11 @@ export function dynamoServersStore(client: Pick<DynamoDBDocumentClient, 'send'>,
       const values: Record<string, unknown> = { ':to': to };
       const names: Record<string, string> = { '#status': 'status' };
       const sets = ['#status = :to'];
+      // A same-status write (e.g. recording the volume while STARTING) isn't a status change.
+      if (!(from.length === 1 && from[0] === to)) {
+        sets.push('statusChangedAt = :changedAt');
+        values[':changedAt'] = now().toISOString();
+      }
       // Prefixed placeholders, so a field being set can't collide with the condition's.
       for (const [field, value] of Object.entries(set)) {
         names[`#set_${field}`] = field;

@@ -44,11 +44,11 @@ function requireId(id: string | undefined): string {
 
 type StepFactory = (id: string, fn: NodejsFunction, task: string, retry?: Retry) => LambdaInvoke;
 
-/** Invokes a task Lambda with `{ task, input }`; its result becomes the next step's input. */
-function invoke(scope: Construct, id: string, fn: NodejsFunction, task: string): LambdaInvoke {
+/** Invokes a task Lambda with `{ task, input, workflow }`; its result becomes the next step's input. */
+function invoke(scope: Construct, id: string, fn: NodejsFunction, task: string, workflow: string): LambdaInvoke {
   return new LambdaInvoke(scope, id, {
     lambdaFunction: fn,
-    payload: TaskInput.fromObject({ task, input: JsonPath.entirePayload }),
+    payload: TaskInput.fromObject({ task, input: JsonPath.entirePayload, workflow }),
     payloadResponseOnly: true,
   });
 }
@@ -148,10 +148,11 @@ export class LifecycleWorkflows extends Construct {
   ): StateMachine {
     const scope = new Construct(this, id);
     const invoked = new Set<NodejsFunction>([status]);
-    const failed = invoke(scope, 'MarkFailed', status, 'markFailed').next(new Fail(scope, 'Failed'));
+    const workflow = id.toLowerCase();
+    const failed = invoke(scope, 'MarkFailed', status, 'markFailed', workflow).next(new Fail(scope, 'Failed'));
     const step: StepFactory = (stepId, fn, task, retry) => {
       invoked.add(fn);
-      const s = invoke(scope, stepId, fn, task);
+      const s = invoke(scope, stepId, fn, task, workflow);
       if (retry) {
         s.addRetry({
           errors: [retry.error],
