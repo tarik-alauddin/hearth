@@ -164,7 +164,9 @@ if bootstrap > /tmp/out 2>&1; then
   fail "a download that fails its checksum must not run"
 fi
 grep -q "failed its checksum" /tmp/out || fail "should say the checksum failed"
-[ ! -e "$B/hearth-agent" ] && [ -z "$(ran)" ] || fail "a bad download must not be installed or run"
+if [ -e "$B/hearth-agent" ] || [ -n "$(ran)" ]; then
+  fail "a bad download must not be installed or run"
+fi
 ok "a first download that fails its checksum is rejected"
 
 echo "# run again with the world mounted"
