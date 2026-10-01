@@ -17,6 +17,12 @@ function fakeStore(initial: ServerRecord[] = []) {
       if (servers.has(server.serverId)) throw new Error('exists');
       servers.set(server.serverId, { ...server });
     },
+    updateSettings: async (id, settings) => {
+      const s = servers.get(id);
+      if (!s) return false;
+      Object.assign(s, settings);
+      return true;
+    },
     transition: async (id, { from, to, instanceId, set = {} }) => {
       const s = servers.get(id);
       if (!s || !from.includes(s.status) || (instanceId !== undefined && s.instanceId !== instanceId)) return false;
@@ -76,6 +82,7 @@ describe('server operations', () => {
         ownerId: 'arn:caller',
         region: 'us-west-2',
         status: 'PROVISIONING',
+        agentChannel: 'stable',
         createdAt: NOW.toISOString(),
         statusChangedAt: NOW.toISOString(),
         lastOperationId: 'ID2',
@@ -89,6 +96,17 @@ describe('server operations', () => {
       ['a region without game infrastructure', { game: 'minecraft-java', version: '1.21.4', region: 'eu-west-1' }],
       ['a non-object body', 'hello'],
     ])('rejects %s with 400', async (_, body) => {
+      await expect(ops(fakeStore().store).createServer(body, 'c')).rejects.toMatchObject({ statusCode: 400 });
+    });
+
+    it('puts a server on the requested agent channel', async () => {
+      const { store, servers } = fakeStore();
+      await ops(store).createServer({ game: 'minecraft-java', version: '1.21.4', agentChannel: 'canary' }, 'c');
+      expect(servers.get('ID1')?.agentChannel).toBe('canary');
+    });
+
+    it('rejects an unknown agent channel', async () => {
+      const body = { game: 'minecraft-java', version: '1.21.4', agentChannel: 'beta' };
       await expect(ops(fakeStore().store).createServer(body, 'c')).rejects.toMatchObject({ statusCode: 400 });
     });
 
@@ -166,6 +184,27 @@ describe('server operations', () => {
 
     it('rejects an invalid cursor with 400', async () => {
       await expect(ops(fakeStore(three).store).listServers(undefined, 'bad')).rejects.toMatchObject({ statusCode: 400 });
+    });
+  });
+
+  describe('settings', () => {
+    it('changes the agent channel and returns the server', async () => {
+      const { store } = fakeStore([server({})]);
+      expect((await ops(store).updateSettings('s1', { agentChannel: 'canary' })).agentChannel).toBe('canary');
+    });
+
+    it.each([
+      ['no settings', {}],
+      ['an unknown setting', { agentChannel: 'canary', difficulty: 'hard' }],
+      ['an unknown channel', { agentChannel: 'nightly' }],
+    ])('rejects %s with 400', async (_, body) => {
+      await expect(ops(fakeStore([server({})]).store).updateSettings('s1', body)).rejects.toMatchObject({ statusCode: 400 });
+    });
+
+    it('returns 404 for an unknown server', async () => {
+      await expect(ops(fakeStore().store).updateSettings('nope', { agentChannel: 'stable' })).rejects.toMatchObject({
+        statusCode: 404,
+      });
     });
   });
 

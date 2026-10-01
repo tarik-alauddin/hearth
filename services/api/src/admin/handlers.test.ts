@@ -42,6 +42,10 @@ function fakeOperations(): { calls: string[]; ops: ReturnType<typeof serverOpera
       calls.push(`create ${JSON.stringify(body)} ${owner}`);
       return result('new');
     },
+    updateSettings: async (id: string, body: unknown) => {
+      calls.push(`settings ${id} ${JSON.stringify(body)}`);
+      return { serverId: id, agentChannel: 'canary' };
+    },
     startServer: async (id: string) => result(id, id === 'running'),
     stopServer: async (id: string) => result(id),
   } as unknown as ReturnType<typeof serverOperations>;
@@ -76,6 +80,13 @@ describe('admin routes', () => {
     expect((await handle(ops)(event('POST /admin/servers/{id}/start', { id: 's1' }))).statusCode).toBe(202);
     expect((await handle(ops)(event('POST /admin/servers/{id}/start', { id: 'running' }))).statusCode).toBe(200);
     expect((await handle(ops)(event('POST /admin/servers/{id}/stop', { id: 's1' }))).statusCode).toBe(202);
+  });
+
+  it('changes settings', async () => {
+    const { calls, ops } = fakeOperations();
+    const res = await handle(ops)(event('POST /admin/servers/{id}/settings', { id: 's1', body: '{"agentChannel":"canary"}' }));
+    expect(res.statusCode).toBe(200);
+    expect(calls).toEqual(['settings s1 {"agentChannel":"canary"}']);
   });
 
   it('maps operation errors to their status codes', async () => {

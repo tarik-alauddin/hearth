@@ -106,6 +106,9 @@ importers:
       '@aws-sdk/client-sfn':
         specifier: ^3.1143.0
         version: 3.1143.0
+      '@aws-sdk/client-ssm':
+        specifier: ^3.1143.0
+        version: 3.1143.0
       '@hearth/core':
         specifier: workspace:*
         version: link:../core

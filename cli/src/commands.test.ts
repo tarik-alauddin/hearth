@@ -81,6 +81,21 @@ describe('commands', () => {
     expect(out.at(-1)).toMatch(/did not report a clean stop/);
   });
 
+  it('creates on a channel and moves servers between channels', async () => {
+    const { api, posts } = fakeApi([{ status: 'RUNNING', publicIp: '1.2.3.4' }]);
+    const { out, cmd } = run(api);
+    await cmd.create({ game: 'minecraft-java', version: '1.21.4', channel: 'canary', wait: false });
+    expect(posts[0]).toBe('/admin/servers {"game":"minecraft-java","version":"1.21.4","agentChannel":"canary"}');
+
+    api.post = (async (path: string, body?: unknown) => {
+      posts.push(`${path} ${JSON.stringify(body)}`);
+      return { serverId: 's1', agentChannel: 'stable' };
+    }) as Api['post'];
+    await cmd.setChannel('s1', 'stable');
+    expect(posts.at(-1)).toBe('/admin/servers/s1/settings {"agentChannel":"stable"}');
+    expect(out.at(-1)).toBe('s1 is on the stable channel; it takes effect on the next start.');
+  });
+
   it('does not wait with --no-wait', async () => {
     const { api, gets } = fakeApi([]);
     await run(api).cmd.start('s1', false);

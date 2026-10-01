@@ -1,11 +1,14 @@
-import { DefaultStackSynthesizer, Stack, Tags } from 'aws-cdk-lib';
+import { DefaultStackSynthesizer, RemovalPolicy, Stack, Tags, Validations } from 'aws-cdk-lib';
 import { CfnBudget } from 'aws-cdk-lib/aws-budgets';
+import { BlockPublicAccess, Bucket, BucketEncryption } from 'aws-cdk-lib/aws-s3';
+import { agentReleasesBucket } from '@hearth/shared';
 import type { Construct } from 'constructs';
 import { ALERT_EMAIL, AWS_ACCOUNT, HOME_REGION, MONTHLY_BUDGET_USD, envConfig } from '../config.js';
 
 /**
- * Account-wide resources, deployed once (with dev's CDK bootstrap): a monthly budget for everything
- * tagged app=hearth. Needs `app` activated as a cost allocation tag in Billing (see the README).
+ * Account-wide resources, deployed once (with dev's CDK bootstrap): the agent releases bucket shared
+ * by every environment, and a monthly budget for everything tagged app=hearth (which needs `app`
+ * activated as a cost allocation tag in Billing; see the README).
  */
 export class AccountStack extends Stack {
   constructor(scope: Construct) {
@@ -15,6 +18,21 @@ export class AccountStack extends Stack {
       synthesizer: new DefaultStackSynthesizer({ qualifier: envConfig('dev').qualifier }),
     });
     Tags.of(this).add('app', 'hearth');
+
+    // Agent releases: immutable, versioned binaries (agent/<version>/…) that channels point at.
+    // Kept forever: they're small, and any of them may be a rollback target.
+    const releases = new Bucket(this, 'AgentReleases', {
+      bucketName: agentReleasesBucket(AWS_ACCOUNT),
+      blockPublicAccess: BlockPublicAccess.BLOCK_ALL,
+      encryption: BucketEncryption.S3_MANAGED,
+      enforceSSL: true,
+      versioned: true,
+      removalPolicy: RemovalPolicy.RETAIN,
+    });
+    Validations.of(releases).acknowledge({
+      id: 'AwsSolutions-S1',
+      reason: 'Only the release workflow writes and only game instances read; access logs would need a second bucket.',
+    });
 
     const email = [{ subscriptionType: 'EMAIL', address: ALERT_EMAIL }];
     const at = (threshold: number, notificationType: 'ACTUAL' | 'FORECASTED') => ({

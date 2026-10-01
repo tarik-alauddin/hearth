@@ -2,10 +2,12 @@ import type { APIGatewayProxyEventV2WithIAMAuthorizer } from 'aws-lambda';
 import { beforeEach, describe, expect, it } from 'vitest';
 import type { AgentStatusReport, ServerRecord } from '@hearth/shared';
 import { agentHandlers, type AgentHandlerDeps } from './handlers.js';
+import type { AgentReleases } from './releases.js';
 
 const ROLE = 'hearth-dev-InstanceRole';
 const INSTANCE = 'i-0123456789abcdef0';
 const NOW = new Date('2026-09-28T12:00:00Z');
+const noReleases: AgentReleases = { target: async () => undefined };
 
 const server: ServerRecord = {
   serverId: '01K6ABCDEF0123456789ABCDEF',
@@ -46,7 +48,7 @@ describe('agent handlers', () => {
 
   beforeEach(() => {
     store = fakeStore([server]);
-    handlers = agentHandlers({ store: store.store, instanceRoleNames: [ROLE], now: () => NOW });
+    handlers = agentHandlers({ store: store.store, instanceRoleNames: [ROLE], releases: noReleases, now: () => NOW });
   });
 
   describe('GET /agent/config', () => {
@@ -64,6 +66,24 @@ describe('agent handlers', () => {
 
     it('rejects callers that are not game instances', async () => {
       expect((await handlers.config(event({ role: 'github-deploy' }))).statusCode).toBe(403);
+    });
+
+    it("includes the agent release for the server's channel", async () => {
+      const channels: string[] = [];
+      const releases: AgentReleases = {
+        target: async (channel) => {
+          channels.push(channel);
+          return channel === 'canary' ? { version: '1.3.0', sha256: 'abc', url: 's3://b/agent/1.3.0/x' } : undefined;
+        },
+      };
+      const onCanary = fakeStore([{ ...server, agentChannel: 'canary' }]);
+      const res = await agentHandlers({ store: onCanary.store, instanceRoleNames: [ROLE], releases }).config(event());
+      expect(JSON.parse(res.body!).agent).toEqual({ version: '1.3.0', sha256: 'abc', url: 's3://b/agent/1.3.0/x' });
+
+      const onStable = fakeStore([server]); // no channel set: stable
+      const res2 = await agentHandlers({ store: onStable.store, instanceRoleNames: [ROLE], releases }).config(event());
+      expect(JSON.parse(res2.body!).agent).toBeUndefined();
+      expect(channels).toEqual(['canary', 'stable']);
     });
 
     it('returns 404 when no server is on the instance', async () => {
@@ -107,7 +127,7 @@ describe('agent handlers', () => {
     it('returns 409 when the server moved to another instance', async () => {
       const moved = fakeStore([server]);
       moved.store.recordAgentReport = async () => false;
-      const h = agentHandlers({ store: moved.store, instanceRoleNames: [ROLE], now: () => NOW });
+      const h = agentHandlers({ store: moved.store, instanceRoleNames: [ROLE], releases: noReleases, now: () => NOW });
       const res = await h.status(event({ body: body({ state: 'ready', agentVersion: '0.1.0' }) }));
       expect(res.statusCode).toBe(409);
     });
