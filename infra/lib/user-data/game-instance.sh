@@ -5,11 +5,10 @@
 #
 # GameInfraStack prepends these variables when it builds the launch template's user data:
 #   HEARTH_ENV           environment (dev, stage, prod)
-#   HEARTH_HOME_REGION   region of the Hearth API
-#   HEARTH_AGENT_URL     s3:// URL of the agent binary
-#   HEARTH_AGENT_REGION  region of the bucket holding the agent
+#   HEARTH_HOME_REGION   region of the Hearth API, the agent channels and the releases bucket
+#   HEARTH_AGENT_BUCKET  the agent releases bucket
 set -euo pipefail
-: "${HEARTH_ENV:?}" "${HEARTH_HOME_REGION:?}" "${HEARTH_AGENT_URL:?}" "${HEARTH_AGENT_REGION:?}"
+: "${HEARTH_ENV:?}" "${HEARTH_HOME_REGION:?}" "${HEARTH_AGENT_BUCKET:?}"
 
 DATA_DEVICE=/dev/sdf
 DATA_LABEL=hearth-data
@@ -55,8 +54,7 @@ install -d -m 0755 /etc/hearth
 cat > /etc/hearth/agent.env <<EOF
 HEARTH_ENV=$HEARTH_ENV
 HEARTH_HOME_REGION=$HEARTH_HOME_REGION
-HEARTH_AGENT_URL=$HEARTH_AGENT_URL
-HEARTH_AGENT_REGION=$HEARTH_AGENT_REGION
+HEARTH_AGENT_BUCKET=$HEARTH_AGENT_BUCKET
 HEARTH_DATA_DIR=$DATA_MOUNT
 EOF
 
@@ -85,15 +83,26 @@ if [ -x "$agent.next" ]; then
   log "updated the agent"
 fi
 
-# First boot: no agent yet.
+# First boot: no agent yet, so download the environment's stable release. The agent then updates
+# itself to its server's channel.
 if [ ! -x "$agent" ]; then
+  release=$(aws ssm get-parameter --region "$HEARTH_HOME_REGION" --name "/hearth/$HEARTH_ENV/agent/stable" \
+    --query Parameter.Value --output text)
+  # Written by the release workflows as {"version":"…","sha256":"…"}.
+  version=$(sed -E 's/.*"version":"([^"]+)".*/\1/' <<<"$release")
+  sha256=$(sed -E 's/.*"sha256":"([0-9a-f]{64})".*/\1/' <<<"$release")
   tmp=$(mktemp "$BIN/.hearth-agent.XXXXXX")
   trap 'rm -f "$tmp"' EXIT
-  aws s3 cp --only-show-errors --region "$HEARTH_AGENT_REGION" "$HEARTH_AGENT_URL" "$tmp"
+  aws s3 cp --only-show-errors --region "$HEARTH_HOME_REGION" \
+    "s3://$HEARTH_AGENT_BUCKET/agent/$version/hearth-agent-linux-arm64" "$tmp"
+  if ! echo "$sha256  $tmp" | sha256sum --check --quiet; then
+    log "agent $version failed its checksum"
+    exit 1
+  fi
   chmod 0755 "$tmp"
   mv -f "$tmp" "$agent"
   trap - EXIT
-  log "downloaded the first agent"
+  log "downloaded agent $version"
 fi
 
 # A new agent that keeps exiting before it ever reaches the API goes back to the last known good

@@ -17,12 +17,12 @@ Stacks are named `hearth-<env>-<Stack>`, e.g. `hearth-dev-Data`, `hearth-prod-Ga
 
 ## Development
 
-Requires Node 24 and pnpm 10; Go 1.25+ for the agent.
+Requires Node 24 and pnpm 10; Go 1.27+ for the agent.
 
 ```sh
 pnpm install
 pnpm lint && pnpm typecheck && pnpm test
-pnpm synth                      # every environment; cdk-nag violations fail synth; builds the agent (needs Go, or Docker)
+pnpm synth                      # every environment; cdk-nag violations fail synth
 cd infra && pnpm exec cdk synth -c env=dev
 ```
 
@@ -77,6 +77,22 @@ condition. The repo was created after GitHub switched new repos to ID-based subj
    (takes up to 24 hours to apply).
 4. After each environment's first deploy, accept the SNS confirmation email for `hearth-<env>-alerts`;
    alarms aren't delivered until then.
+
+## Agent releases
+
+Agents are versioned releases in the `hearth-agent-releases-<account>` bucket. Each environment has
+two channels, `canary` and `stable` (SSM `/hearth/<env>/agent/<channel>`); each server follows one
+(`hearth set-channel <id> canary|stable`, default stable) and picks up its channel's release on its
+next start. A new release that never reaches the API falls back to the previous one automatically.
+
+- **Release:** push a tag `agent-vX.Y.Z`. The *Agent release* workflow runs the harness, uploads it
+  and points dev's canary at it. Merges to `main` that touch `agent/` publish `main-<sha>` to dev's
+  canary (dev only, expires after 30 days).
+- **Promote or roll back:** run the *Promote agent* workflow with an environment, a channel and a
+  version (blank stable = that environment's current canary). Prod waits for approval. History:
+  `aws ssm get-parameter-history --name /hearth/<env>/agent/stable`.
+- **A new environment needs a stable release before it can run servers:** new instances download
+  their first agent from `stable`. Promote one there once.
 
 ## Monitoring
 

@@ -1,9 +1,9 @@
 name: Promote agent
 
-# Points an environment's stable agent channel at a release. Servers on stable pick it up on their
-# next start. Blank version = whatever that environment's canary runs now. Rolling back = running
-# this with an older version. Each run's summary records the change; the full history is also in
-# SSM: aws ssm get-parameter-history --name /hearth/<env>/agent/stable
+# Points one channel in one environment at an agent release. Servers on that channel pick it up on
+# their next start. Rolling back = running this with an older version. Each run's summary records
+# the change; the full history is also in SSM:
+#   aws ssm get-parameter-history --name /hearth/<env>/agent/<channel>
 on:
   workflow_dispatch:
     inputs:
@@ -12,8 +12,14 @@ on:
         type: choice
         options: [dev, stage, prod]
         required: true
+      channel:
+        description: Channel
+        type: choice
+        options: [stable, canary]
+        default: stable
+        required: true
       version:
-        description: Release to make stable, e.g. 1.3.0 (blank = the current canary; an older version rolls back)
+        description: Release, e.g. 1.3.0 (blank, for stable only = what this environment's canary runs; an older version rolls back)
         required: false
 
 permissions:
@@ -38,9 +44,10 @@ jobs:
         with:
           role-to-assume: arn:aws:iam::${{ env.AWS_ACCOUNT }}:role/github-deploy
           aws-region: ${{ env.AWS_REGION }}
-      - name: Point stable at the release
+      - name: Point the channel at the release
         env:
           TARGET_ENV: ${{ inputs.env }}
+          CHANNEL: ${{ inputs.channel }}
           VERSION: ${{ inputs.version }}
           BUCKET: hearth-agent-releases-${{ env.AWS_ACCOUNT }}
         run: |
@@ -48,6 +55,7 @@ jobs:
           param() { aws ssm get-parameter --name "/hearth/$TARGET_ENV/agent/$1" --query Parameter.Value --output text 2>/dev/null || true; }
 
           if [ -z "$VERSION" ]; then
+            [ "$CHANNEL" = stable ] || { echo "::error::Give a version to put on canary"; exit 1; }
             target=$(param canary)
             [ -n "$target" ] || { echo "::error::$TARGET_ENV has no canary release to promote"; exit 1; }
           else
@@ -57,17 +65,22 @@ jobs:
             target=$(jq -nc --arg v "$VERSION" --arg s "$sha" '{version: $v, sha256: $s}')
           fi
           version=$(jq -r .version <<<"$target")
+          # Dev builds (main-<sha>) stay in dev; other environments only take tagged releases.
+          if [ "$TARGET_ENV" != dev ] && ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::$version is a dev build; only tagged releases (X.Y.Z) go to $TARGET_ENV"
+            exit 1
+          fi
           aws s3api head-object --bucket "$BUCKET" --key "agent/$version/hearth-agent-linux-arm64" >/dev/null \
             || { echo "::error::Release $version has no binary in $BUCKET"; exit 1; }
 
-          previous=$(param stable)
-          aws ssm put-parameter --name "/hearth/$TARGET_ENV/agent/stable" --type String --overwrite --value "$target" >/dev/null
+          previous=$(param "$CHANNEL")
+          aws ssm put-parameter --name "/hearth/$TARGET_ENV/agent/$CHANNEL" --type String --overwrite --value "$target" >/dev/null
 
           from=$(jq -r '.version // "none"' <<<"${previous:-{\}}")
           {
-            echo "## Agent promoted in $TARGET_ENV"
+            echo "## Agent promoted: $TARGET_ENV $CHANNEL"
             echo
-            echo "stable: **$from → $version** (sha256 \`$(jq -r .sha256 <<<"$target")\`)"
+            echo "**$from → $version** (sha256 \`$(jq -r .sha256 <<<"$target")\`)"
             echo
-            echo "Stable servers run it from their next start. To roll back, run this workflow with version \`$from\`."
+            echo "Servers on $CHANNEL in $TARGET_ENV run it from their next start. To roll back, run this workflow again with version \`$from\`."
           } >> "$GITHUB_STEP_SUMMARY"

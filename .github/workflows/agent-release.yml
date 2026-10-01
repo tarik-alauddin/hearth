@@ -1,0 +1,87 @@
+name: Agent release
+
+# Builds the agent, uploads it to the releases bucket and points dev's canary at it.
+# - Tag agent-vX.Y.Z: a release (the harness runs first). Use "Promote agent" to place it on any
+#   channel in any environment.
+# - Merge to main touching agent/: a dev build, main-<sha>, for dev only (it can't be promoted
+#   outside dev, and expires after 30 days).
+on:
+  push:
+    branches: [main]
+    paths: ["agent/**"]
+    tags: ["agent-v*"]
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: agent-release
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: us-west-2
+  AWS_ACCOUNT: "138300868928"
+  BUCKET: hearth-agent-releases-138300868928
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    environment: dev
+    timeout-minutes: 40
+    defaults:
+      run:
+        working-directory: agent
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: agent/go.mod
+          cache-dependency-path: agent/go.sum
+      - name: Version
+        id: version
+        env:
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          if [ "$REF_TYPE" = tag ]; then
+            version=${REF_NAME#agent-v}
+            [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::Tag must be agent-vX.Y.Z"; exit 1; }
+          else
+            version=main-${GITHUB_SHA::7}
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - run: go vet -tags harness ./...
+      - run: go test -race ./...
+      - name: Harness (real agent, Minecraft container, mock API)
+        if: github.ref_type == 'tag'
+        run: go test -tags harness -timeout 30m ./harness/
+      - name: Build
+        run: ./build.sh "${{ steps.version.outputs.version }}"
+      - uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: arn:aws:iam::${{ env.AWS_ACCOUNT }}:role/github-deploy
+          aws-region: ${{ env.AWS_REGION }}
+      - name: Upload and point dev's canary at it
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          REF_TYPE: ${{ github.ref_type }}
+        run: |
+          set -euo pipefail
+          key="agent/$VERSION/hearth-agent-linux-arm64"
+          if [ "$REF_TYPE" = tag ] && aws s3api head-object --bucket "$BUCKET" --key "$key" >/dev/null 2>&1; then
+            echo "::error::Release $VERSION already exists; releases are immutable. Tag a new version."
+            exit 1
+          fi
+          sha=$(sha256sum bin/hearth-agent | cut -d' ' -f1)
+          aws s3 cp --only-show-errors bin/hearth-agent "s3://$BUCKET/$key"
+          printf '%s' "$sha" | aws s3 cp --only-show-errors - "s3://$BUCKET/$key.sha256"
+          release=$(jq -nc --arg v "$VERSION" --arg s "$sha" '{version: $v, sha256: $s}')
+          aws ssm put-parameter --name /hearth/dev/agent/canary --type String --overwrite --value "$release" >/dev/null
+          {
+            echo "## Agent $VERSION released"
+            echo
+            echo "sha256 \`$sha\`. **dev canary → $VERSION.** Canary servers in dev run it from their next start."
+            echo
+            echo "Next: run **Promote agent** to put it on another channel or environment."
+          } >> "$GITHUB_STEP_SUMMARY"
