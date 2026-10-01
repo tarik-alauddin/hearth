@@ -33,6 +33,9 @@ export function isInstanceState(value: unknown): value is InstanceState {
 /** GSI on `Servers` keyed by `instanceId` */
 export const SERVERS_BY_INSTANCE_INDEX = 'byInstance';
 
+/** GSI on `Servers`: `status` + `statusChangedAt`, for finding failed or stuck servers. */
+export const SERVERS_BY_STATUS_INDEX = 'byStatus';
+
 /** An item in the `Servers` table. Fields are added as milestones need them. */
 export interface ServerRecord {
   /** ULID; the table's partition key. */
@@ -57,6 +60,7 @@ export interface ServerRecord {
   lastStartedAt?: string;
   lastStoppedAt?: string;
   createdAt?: string; // ISO 8601 UTC
+  statusChangedAt?: string; // ISO 8601 UTC; set by every status change
   lastOperationId?: string; // the latest create/start/stop claim; names its workflow execution
   // Written by the lifecycle workflows.
   statusMessage?: string; // why the server is FAILED

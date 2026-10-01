@@ -2,7 +2,7 @@
 // permissions they need; each only dispatches the tasks it's allowed to run.
 import { createServersStore } from '@hearth/core';
 import { sdkEc2 } from './ec2.js';
-import { workflowTasks, type GameInfra, type WorkflowState } from './tasks.js';
+import { workflowTasks, type GameInfra, type TaskContext, type WorkflowState } from './tasks.js';
 
 function requireEnv(name: string): string {
   const value = process.env[name];
@@ -19,11 +19,12 @@ const tasks = workflowTasks({
 
 type TaskName = keyof typeof tasks;
 
-/** The state machine invokes `{ task, input }`; the result becomes the next step's input. */
+/** The state machine invokes `{ task, input, workflow }`; the result becomes the next step's input. */
 function dispatcher(allowed: readonly TaskName[]) {
-  return async ({ task, input }: { task: TaskName; input: WorkflowState }) => {
+  return async ({ task, input, workflow }: { task: TaskName; input: WorkflowState; workflow?: string }) => {
     if (!allowed.includes(task)) throw new Error(`This function doesn't run ${task}`);
-    return tasks[task](input);
+    const run = tasks[task] as (input: WorkflowState, context: TaskContext) => Promise<WorkflowState>;
+    return run(input, { workflow });
   };
 }
 

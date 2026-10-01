@@ -7,6 +7,7 @@ import { Policy, PolicyStatement, type IRole } from 'aws-cdk-lib/aws-iam';
 import { LogGroup, RetentionDays } from 'aws-cdk-lib/aws-logs';
 import { StringParameter } from 'aws-cdk-lib/aws-ssm';
 import type { IStateMachine } from 'aws-cdk-lib/aws-stepfunctions';
+import type { NodejsFunction } from 'aws-cdk-lib/aws-lambda-nodejs';
 import type { Construct } from 'constructs';
 import { SERVERS_BY_INSTANCE_INDEX } from '@hearth/shared';
 import { hearthFunction } from '../hearth-function.js';
@@ -26,6 +27,8 @@ export class ApiStack extends HearthStack {
   readonly api: HttpApi;
   /** SSM parameter agents read at boot to find the API. */
   readonly apiUrlParameter: StringParameter;
+  /** The API's Lambdas, for error alarms. */
+  readonly functions: NodejsFunction[];
 
   constructor(scope: Construct, props: ApiStackProps) {
     super(scope, 'Api', props);
@@ -107,6 +110,7 @@ export class ApiStack extends HearthStack {
         resources: Object.values(props.workflows).map((machine) => machine.stateMachineArn),
       }),
     );
+    this.functions = [configFunction, statusFunction, admin];
     const adminIntegration = new HttpLambdaIntegration('AdminIntegration', admin);
     for (const [path, method] of [
       ['/admin/servers', HttpMethod.GET],

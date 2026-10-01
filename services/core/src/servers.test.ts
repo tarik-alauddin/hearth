@@ -126,7 +126,7 @@ describe('transition', () => {
     expect(ok).toBe(true);
     expect((sent[0] as UpdateCommand).input).toMatchObject({
       Key: { serverId: 's1' },
-      UpdateExpression: 'SET #status = :to',
+      UpdateExpression: 'SET #status = :to, statusChangedAt = :changedAt',
       ConditionExpression: '#status IN (:from0, :from1) AND instanceId = :instanceId',
       ExpressionAttributeNames: { '#status': 'status' },
       ExpressionAttributeValues: { ':to': 'STOPPED', ':from0': 'RUNNING', ':from1': 'STOPPING', ':instanceId': 'i-1' },
@@ -157,7 +157,7 @@ describe('transition with fields', () => {
       remove: ['statusMessage'],
     });
     expect((sent[0] as UpdateCommand).input).toMatchObject({
-      UpdateExpression: 'SET #status = :to, #set_instanceId = :set_instanceId REMOVE #rm_statusMessage',
+      UpdateExpression: 'SET #status = :to, statusChangedAt = :changedAt, #set_instanceId = :set_instanceId REMOVE #rm_statusMessage',
       ConditionExpression: '#status IN (:from0) AND instanceId = :instanceId',
       ExpressionAttributeNames: { '#status': 'status', '#set_instanceId': 'instanceId', '#rm_statusMessage': 'statusMessage' },
       ExpressionAttributeValues: { ':to': 'STARTING', ':from0': 'PROVISIONING', ':instanceId': 'i-old', ':set_instanceId': 'i-new' },
@@ -204,5 +204,41 @@ describe('createServer and listServers', () => {
     await expect(dynamoServersStore(client, 't').listServers({ limit: 1, cursor: 'garbage' })).rejects.toBeInstanceOf(
       InvalidCursor,
     );
+  });
+});
+
+describe('status timestamps and the byStatus index', () => {
+  const at = new Date('2026-09-30T12:00:00Z');
+
+  it('stamps statusChangedAt when the status changes', async () => {
+    const { client, sent } = fakeClient();
+    await dynamoServersStore(client, 't', () => at).transition('s1', { from: ['STOPPED'], to: 'STARTING' });
+    expect((sent[0] as UpdateCommand).input.ExpressionAttributeValues).toMatchObject({ ':changedAt': at.toISOString() });
+  });
+
+  it('leaves statusChangedAt alone for a same-status write', async () => {
+    const { client, sent } = fakeClient();
+    await dynamoServersStore(client, 't', () => at).transition('s1', { from: ['STARTING'], to: 'STARTING', set: { volumeId: 'v' } });
+    expect((sent[0] as UpdateCommand).input.UpdateExpression).not.toContain('statusChangedAt');
+  });
+
+  it('finds servers stuck in a status through the index, across pages', async () => {
+    let page = 0;
+    const { client, sent } = fakeClient(() =>
+      page++ === 0 ? { Items: [{ serverId: 'a' }], LastEvaluatedKey: { serverId: 'a' } } : { Items: [{ serverId: 'b' }] },
+    );
+    const found = await dynamoServersStore(client, 't').findByStatus('STARTING', at);
+    expect(found.map((s) => s.serverId)).toEqual(['a', 'b']);
+    expect((sent[0] as QueryCommand).input).toMatchObject({
+      IndexName: 'byStatus',
+      KeyConditionExpression: '#status = :status AND statusChangedAt < :before',
+      ExpressionAttributeValues: { ':status': 'STARTING', ':before': at.toISOString() },
+    });
+  });
+
+  it('finds every server in a status without a time bound', async () => {
+    const { client, sent } = fakeClient(() => ({ Items: [] }));
+    await dynamoServersStore(client, 't').findByStatus('FAILED');
+    expect((sent[0] as QueryCommand).input.KeyConditionExpression).toBe('#status = :status');
   });
 });

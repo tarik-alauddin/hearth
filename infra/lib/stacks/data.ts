@@ -1,8 +1,8 @@
 import { Duration, RemovalPolicy, Validations } from 'aws-cdk-lib';
-import { AttributeType, TableV2 } from 'aws-cdk-lib/aws-dynamodb';
+import { AttributeType, ProjectionType, TableV2 } from 'aws-cdk-lib/aws-dynamodb';
 import { BlockPublicAccess, Bucket, BucketEncryption, StorageClass } from 'aws-cdk-lib/aws-s3';
 import type { Construct } from 'constructs';
-import { SERVERS_BY_INSTANCE_INDEX } from '@hearth/shared';
+import { SERVERS_BY_INSTANCE_INDEX, SERVERS_BY_STATUS_INDEX } from '@hearth/shared';
 import { HearthStack, type HearthStackProps } from '../hearth-stack.js';
 
 /** Stateful: DynamoDB tables and the S3 backup bucket. Retained with termination protection in prod. */
@@ -25,6 +25,14 @@ export class DataStack extends HearthStack {
         {
           indexName: SERVERS_BY_INSTANCE_INDEX,
           partitionKey: { name: 'instanceId', type: AttributeType.STRING },
+        },
+        // Failed and stuck servers for the fleet check: only what it needs is projected.
+        {
+          indexName: SERVERS_BY_STATUS_INDEX,
+          partitionKey: { name: 'status', type: AttributeType.STRING },
+          sortKey: { name: 'statusChangedAt', type: AttributeType.STRING },
+          projectionType: ProjectionType.INCLUDE,
+          nonKeyAttributes: ['instanceId', 'instanceState'],
         },
       ],
     });

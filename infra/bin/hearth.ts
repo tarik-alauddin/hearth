@@ -2,6 +2,7 @@ import { App } from 'aws-cdk-lib';
 import { ENVIRONMENTS, isEnvName } from '@hearth/shared';
 import { envConfig } from '../lib/config.js';
 import { addChecks, addEnvironment } from '../lib/hearth-app.js';
+import { AccountStack } from '../lib/stacks/account.js';
 
 // Synthesizes every environment into one cloud assembly, so the build that passed
 // stage is the one deployed to prod. `-c env=dev` limits synth to one environment.
@@ -16,4 +17,6 @@ for (const env of ENVIRONMENTS) {
     addEnvironment(app, envConfig(env));
   }
 }
+// Account-wide resources (the budget), deployed alongside dev.
+new AccountStack(app);
 addChecks(app);

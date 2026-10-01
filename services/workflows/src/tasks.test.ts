@@ -79,11 +79,20 @@ describe('workflow tasks', () => {
   let server: ServerRecord;
   let ec2: FakeEc2;
   let tasks: ReturnType<typeof workflowTasks>;
+  let recorded: { name: string; value: number; dimensions?: Record<string, string> }[];
 
   const setup = (overrides: Partial<ServerRecord> = {}) => {
     server = newServer(overrides);
     ec2 = new FakeEc2();
-    tasks = workflowTasks({ env: 'dev', store: fakeStore(server), ec2, gameInfra: GAME_INFRA, now: () => NOW });
+    recorded = [];
+    tasks = workflowTasks({
+      env: 'dev',
+      store: fakeStore(server),
+      ec2,
+      gameInfra: GAME_INFRA,
+      now: () => NOW,
+      metrics: { record: (name, value, _unit, dimensions) => recorded.push({ name, value, dimensions }) },
+    });
   };
   beforeEach(() => setup());
 
@@ -151,6 +160,11 @@ describe('workflow tasks', () => {
       await tasks.markRunning({ serverId: 's1' });
       expect(server.status).toBe('RUNNING');
     });
+
+    it('records how long the server took to become ready, per workflow', async () => {
+      await tasks.markRunning({ serverId: 's1', since: '2026-09-29T11:58:30.000Z' }, { workflow: 'start' });
+      expect(recorded).toEqual([{ name: 'TimeToReady', value: 90, dimensions: { Workflow: 'start' } }]);
+    });
   });
 
   describe('stop', () => {
@@ -169,11 +183,13 @@ describe('workflow tasks', () => {
       Object.assign(server, { agentState: 'stopped', agentReportedAt: LATER });
       await tasks.markStopped({ serverId: 's1', since: NOW.toISOString() });
       expect(server).toMatchObject({ status: 'STOPPED', lastStopClean: true });
+      expect(recorded).toEqual([{ name: 'StopClean', value: 1, dimensions: undefined }]);
     });
 
     it('records an unclean stop when the agent never reported stopping', async () => {
       await tasks.markStopped({ serverId: 's1', since: NOW.toISOString() });
       expect(server).toMatchObject({ status: 'STOPPED', lastStopClean: false });
+      expect(recorded).toEqual([{ name: 'StopClean', value: 0, dimensions: undefined }]);
     });
   });
 

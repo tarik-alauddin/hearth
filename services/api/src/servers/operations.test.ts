@@ -77,6 +77,7 @@ describe('server operations', () => {
         region: 'us-west-2',
         status: 'PROVISIONING',
         createdAt: NOW.toISOString(),
+        statusChangedAt: NOW.toISOString(),
         lastOperationId: 'ID2',
       });
       expect(started).toEqual([{ workflow: 'create', serverId: 'ID1', operationId: 'ID2' }]);

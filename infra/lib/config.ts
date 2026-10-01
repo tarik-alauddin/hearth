@@ -3,6 +3,11 @@ import type { EnvName } from '@hearth/shared';
 export const AWS_ACCOUNT = '138300868928';
 export const HOME_REGION = 'us-west-2';
 
+/** Where alarms and budget alerts are emailed. */
+export const ALERT_EMAIL = 'tarikza.dev@gmail.com';
+/** Monthly AWS budget for everything tagged app=hearth, in USD. */
+export const MONTHLY_BUDGET_USD = 50;
+
 export interface EnvConfig {
   readonly env: EnvName;
   readonly account: string;
@@ -13,6 +18,8 @@ export interface EnvConfig {
   /** CDK bootstrap qualifier, so each environment has its own CDK roles and asset bucket. */
   readonly qualifier: string;
   readonly isProd: boolean;
+  /** Run the fleet check every 15 minutes. Elsewhere it only runs when invoked by hand. */
+  readonly fleetCheckScheduled: boolean;
 }
 
 // Qualifiers are at most 10 alphanumeric characters.
@@ -30,6 +37,7 @@ export function envConfig(env: EnvName): EnvConfig {
     gameRegions: [HOME_REGION],
     qualifier: QUALIFIERS[env],
     isProd: env === 'prod',
+    fleetCheckScheduled: env === 'prod',
   };
 }
 

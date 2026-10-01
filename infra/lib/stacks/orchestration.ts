@@ -20,6 +20,8 @@ export interface OrchestrationStackProps extends HearthStackProps {
 export class OrchestrationStack extends HearthStack {
   readonly stateSync: NodejsFunction;
   readonly workflows: LifecycleWorkflows;
+  /** Delivers EC2 state changes to state sync. */
+  readonly stateChanges: Rule;
 
   constructor(scope: Construct, props: OrchestrationStackProps) {
     super(scope, 'Orchestration', props);
@@ -48,7 +50,7 @@ export class OrchestrationStack extends HearthStack {
       reason: 'ec2:DescribeInstances does not support resource-level permissions.',
     });
 
-    new Rule(this, 'Ec2StateChanges', {
+    this.stateChanges = new Rule(this, 'Ec2StateChanges', {
       description: `Hearth ${env}: EC2 instance state changes to state sync`,
       eventPattern: {
         source: ['aws.ec2'],

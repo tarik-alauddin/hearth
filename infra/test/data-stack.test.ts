@@ -30,12 +30,27 @@ describe('DataStack', () => {
 
     it('has a byInstance index on instanceId', () => {
       dev.template.hasResourceProperties('AWS::DynamoDB::GlobalTable', {
-        GlobalSecondaryIndexes: [
+        GlobalSecondaryIndexes: Match.arrayWith([
           Match.objectLike({
             IndexName: 'byInstance',
             KeySchema: [{ AttributeName: 'instanceId', KeyType: 'HASH' }],
           }),
-        ],
+        ]),
+      });
+    });
+
+    it('has a byStatus index on status + statusChangedAt with a small projection', () => {
+      dev.template.hasResourceProperties('AWS::DynamoDB::GlobalTable', {
+        GlobalSecondaryIndexes: Match.arrayWith([
+          {
+            IndexName: 'byStatus',
+            KeySchema: [
+              { AttributeName: 'status', KeyType: 'HASH' },
+              { AttributeName: 'statusChangedAt', KeyType: 'RANGE' },
+            ],
+            Projection: { ProjectionType: 'INCLUDE', NonKeyAttributes: ['instanceId', 'instanceState'] },
+          },
+        ]),
       });
     });
 

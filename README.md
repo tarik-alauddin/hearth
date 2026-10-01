@@ -71,6 +71,22 @@ condition. The repo was created after GitHub switched new repos to ID-based subj
    ```
 
 2. In GitHub, create Environments `dev`, `stage` and `prod`, with required reviewers on `prod`.
+3. Activate `app` as a cost allocation tag, so the `hearth-monthly` budget (in the `hearth-account` stack)
+   counts Hearth's spend. Billing → Cost allocation tags, or:
+   `aws ce update-cost-allocation-tags-status --cost-allocation-tags-status TagKey=app,Status=Active`
+   (takes up to 24 hours to apply).
+4. After each environment's first deploy, accept the SNS confirmation email for `hearth-<env>-alerts`;
+   alarms aren't delivered until then.
+
+## Monitoring
+
+Each environment has a CloudWatch dashboard (`hearth-<env>`) and alarms emailed through
+`hearth-<env>-alerts`. The fleet check (stuck, failed and mismatched servers) runs every 15 minutes in
+prod; elsewhere run it on demand, which also prints its report:
+
+```sh
+aws lambda invoke --function-name $(aws lambda list-functions   --query "Functions[?starts_with(FunctionName, 'hearth-dev-Monitoring-FleetCheck')].FunctionName | [0]" --output text) out.json && cat out.json
+```
 
 ## CI/CD
 
