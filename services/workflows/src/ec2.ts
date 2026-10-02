@@ -27,7 +27,7 @@ export function sdkEc2(): Ec2 {
   };
 
   return {
-    async runInstance(region, { subnetId, launchTemplateId, clientToken }) {
+    async runInstance(region, { subnetId, launchTemplateId, clientToken, tags }) {
       try {
         const out = await client(region).send(
           new RunInstancesCommand({
@@ -37,6 +37,10 @@ export function sdkEc2(): Ec2 {
             MinCount: 1,
             MaxCount: 1,
             ClientToken: clientToken,
+            // Added to the launch template's tags.
+            TagSpecifications: [
+              { ResourceType: 'instance', Tags: Object.entries(tags).map(([Key, Value]) => ({ Key, Value })) },
+            ],
           }),
         );
         const id = out.Instances?.[0]?.InstanceId;
@@ -48,14 +52,29 @@ export function sdkEc2(): Ec2 {
     },
 
     async describeInstance(region, instanceId) {
-      const out = await client(region).send(new DescribeInstancesCommand({ InstanceIds: [instanceId] }));
-      const instance = out.Reservations?.[0]?.Instances?.[0];
+      const out = await client(region)
+        .send(new DescribeInstancesCommand({ InstanceIds: [instanceId] }))
+        .catch((err: unknown) => {
+          // EC2 is eventually consistent: a just-launched instance can be unknown for a few seconds.
+          if ((err as { name?: string }).name === 'InvalidInstanceID.NotFound') return undefined;
+          throw err;
+        });
+      const instance = out?.Reservations?.[0]?.Instances?.[0];
       if (!instance) return undefined;
       const volumes: Record<string, string> = {};
       for (const mapping of instance.BlockDeviceMappings ?? []) {
         if (mapping.DeviceName && mapping.Ebs?.VolumeId) volumes[mapping.DeviceName] = mapping.Ebs.VolumeId;
       }
       return { state: instance.State?.Name ?? 'unknown', volumes };
+    },
+
+    async findInstances(region, serverId) {
+      const out = await client(region).send(
+        new DescribeInstancesCommand({ Filters: [{ Name: 'tag:serverId', Values: [serverId] }] }),
+      );
+      return (out.Reservations ?? [])
+        .flatMap((r) => r.Instances ?? [])
+        .flatMap((i) => (i.InstanceId ? [{ instanceId: i.InstanceId, state: i.State?.Name ?? 'unknown' }] : []));
     },
 
     async createTags(region, resourceIds, tags) {

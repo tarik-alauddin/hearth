@@ -76,9 +76,17 @@ describe('OrchestrationStack', () => {
     });
 
     it('routes every failure to mark FAILED, keeping the input', () => {
-      for (const name of ['hearth-dev-create-server', 'hearth-dev-start-server', 'hearth-dev-stop-server']) {
+      const q = '\\"';
+      const caught = (path: string, next: string) =>
+        `${q}ErrorEquals${q}:[${q}States.ALL${q}],${q}ResultPath${q}:${q}${path}${q},${q}Next${q}:${q}${next}${q}`;
+      expect(definition('hearth-dev-stop-server')).toContain(caught('$.error', 'MarkFailed'));
+      expect(definition('hearth-dev-stop-server')).not.toContain('StopAfterFailure');
+      // Create and start first stop the instance, and mark FAILED even if that fails.
+      for (const name of ['hearth-dev-create-server', 'hearth-dev-start-server']) {
         const def = definition(name);
-        expect(def).toContain('\\"ErrorEquals\\":[\\"States.ALL\\"],\\"ResultPath\\":\\"$.error\\",\\"Next\\":\\"MarkFailed\\"');
+        expect(def).toContain(caught('$.error', 'StopAfterFailure'));
+        expect(def).not.toContain(caught('$.error', 'MarkFailed'));
+        expect(def).toContain(caught('$.cleanupError', 'MarkFailed'));
       }
     });
 

@@ -22,6 +22,8 @@ export interface WorkflowState {
   serverId: string;
   /** When this start or stop began (ISO 8601); agent reports from before it are ignored. */
   since?: string;
+  /** Failure path: the instance stopAfterFailure found for this server, if any. */
+  instanceId?: string;
 }
 
 /** Which workflow a task runs in (create | start | stop), passed by the state machine. */
@@ -36,8 +38,15 @@ export interface InstanceInfo {
 }
 
 export interface Ec2 {
-  runInstance(region: string, req: { subnetId: string; launchTemplateId: string; clientToken: string }): Promise<string>;
+  /** Launches one instance, tagged in the same call so it is never without its tags. */
+  runInstance(
+    region: string,
+    req: { subnetId: string; launchTemplateId: string; clientToken: string; tags: Record<string, string> },
+  ): Promise<string>;
+  /** Undefined while EC2 doesn't know the instance (yet): a new instance takes a moment to show up. */
   describeInstance(region: string, instanceId: string): Promise<InstanceInfo | undefined>;
+  /** Every instance tagged with this server's ID, whatever its state. */
+  findInstances(region: string, serverId: string): Promise<{ instanceId: string; state: string }[]>;
   createTags(region: string, resourceIds: string[], tags: Record<string, string>): Promise<void>;
   startInstance(region: string, instanceId: string): Promise<void>;
   stopInstance(region: string, instanceId: string): Promise<void>;
@@ -95,10 +104,12 @@ export function workflowTasks({ env, store, ec2, gameInfra, now = () => new Date
       for (const [i, subnetId] of infra.subnetIds.entries()) {
         try {
           // The client token makes a retried launch return the same instance instead of a second one.
+          // Tagged at launch: the failure path finds a server's instances by this tag.
           instanceId = await ec2.runInstance(record.region, {
             subnetId,
             launchTemplateId: template.id,
             clientToken: `${serverId}-${i}`,
+            tags: { serverId, Name: `hearth-${env}-${serverId}` },
           });
           break;
         } catch (err) {
@@ -107,7 +118,6 @@ export function workflowTasks({ env, store, ec2, gameInfra, now = () => new Date
       }
       if (!instanceId) throw new CapacityError(`No capacity for ${record.game} in any AZ of ${record.region}`);
 
-      await ec2.createTags(record.region, [instanceId], { serverId, Name: `hearth-${env}-${serverId}` });
       await transition(serverId, {
         from: ['PROVISIONING'],
         to: 'STARTING',
@@ -194,13 +204,38 @@ export function workflowTasks({ env, store, ec2, gameInfra, now = () => new Date
       return state;
     },
 
-    /** Any workflow's failure path: mark the server FAILED with the reason. */
-    async markFailed(input: WorkflowState & { error?: { Error?: string; Cause?: string } }): Promise<WorkflowState> {
-      const message = failureMessage(input.error);
+    /**
+     * Create and start, before marking FAILED: a failed server never keeps an instance running.
+     * Stops the record's instance and any other tagged with this server (a launch can fail before
+     * the record learns its instance). Throws while one is still pending; the state machine retries.
+     */
+    async stopAfterFailure(input: WorkflowState): Promise<WorkflowState> {
+      const record = await server(input.serverId);
+      const found = await ec2.findInstances(record.region, input.serverId);
+      const live = found.filter((i) => i.state === 'pending' || i.state === 'running');
+      const toStop = new Set(live.map((i) => i.instanceId));
+      // EC2 may not list a just-launched instance yet; stopping it by ID fails until it does.
+      if (record.instanceId && !found.some((i) => i.instanceId === record.instanceId)) toStop.add(record.instanceId);
+      if (live.some((i) => i.state === 'pending')) throw new NotReady(`An instance of ${input.serverId} is still pending`);
+      for (const instanceId of toStop) await ec2.stopInstance(record.region, instanceId);
+      return { ...input, instanceId: record.instanceId ?? found.find((i) => i.state !== 'terminated')?.instanceId };
+    },
+
+    /**
+     * Any workflow's failure path: mark the server FAILED with the reason. An instance the record
+     * didn't know about is recorded, so the server can be started or stopped again.
+     */
+    async markFailed(
+      input: WorkflowState & { error?: { Error?: string; Cause?: string }; cleanupError?: unknown },
+    ): Promise<WorkflowState> {
+      const stopFailed = input.cleanupError ? ' (its instance could not be stopped)' : '';
+      const message = failureMessage(input.error) + stopFailed;
+      const record = await store.getServer(input.serverId);
+      const adopt = input.instanceId && !record?.instanceId ? { instanceId: input.instanceId } : {};
       const moved = await store.transition(input.serverId, {
         from: ['PROVISIONING', 'STARTING', 'STOPPING'],
         to: 'FAILED',
-        set: { statusMessage: message },
+        set: { statusMessage: message, ...adopt },
       });
       console.log(JSON.stringify({ msg: 'workflow failed', serverId: input.serverId, message, markedFailed: moved }));
       return { serverId: input.serverId };

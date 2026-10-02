@@ -48,11 +48,20 @@ class FakeEc2 implements Ec2 {
   tags: Record<string, Record<string, string>> = {};
   noCapacityIn = new Set<string>();
 
-  async runInstance(_: string, { subnetId, clientToken }: { subnetId: string; clientToken: string }) {
+  async runInstance(
+    _: string,
+    { subnetId, clientToken, tags }: { subnetId: string; clientToken: string; tags: Record<string, string> },
+  ) {
     this.calls.push(`run ${subnetId} ${clientToken}`);
     if (this.noCapacityIn.has(subnetId)) throw new CapacityError('none');
     this.instances['i-new'] = { state: 'pending', volumes: {} };
+    this.tags['i-new'] = tags;
     return 'i-new';
+  }
+  async findInstances(_: string, serverId: string) {
+    return Object.entries(this.instances)
+      .filter(([id]) => this.tags[id]?.serverId === serverId)
+      .map(([instanceId, { state }]) => ({ instanceId, state }));
   }
   async describeInstance(_: string, id: string) {
     return this.instances[id];
@@ -201,6 +210,47 @@ describe('workflow tasks', () => {
         error: { Error: 'AgentError', Cause: JSON.stringify({ errorMessage: 'image pull failed' }) },
       });
       expect(server).toMatchObject({ status: 'FAILED', statusMessage: 'AgentError: image pull failed' });
+    });
+
+    it('stops the running instance of a failed server', async () => {
+      await tasks.launchInstance({ serverId: 's1' });
+      ec2.instances['i-new'] = { state: 'running', volumes: {} };
+      const out = await tasks.stopAfterFailure({ serverId: 's1', since: LATER });
+      expect(ec2.calls).toContain('stop i-new');
+      expect(out).toEqual({ serverId: 's1', since: LATER, instanceId: 'i-new' });
+    });
+
+    it('waits for a pending instance, which EC2 cannot stop yet', async () => {
+      await tasks.launchInstance({ serverId: 's1' });
+      await expect(tasks.stopAfterFailure({ serverId: 's1' })).rejects.toBeInstanceOf(NotReady);
+      expect(ec2.calls).not.toContain('stop i-new');
+    });
+
+    it('stops and records an instance the record never learned about', async () => {
+      ec2.instances['i-lost'] = { state: 'running', volumes: {} };
+      ec2.tags['i-lost'] = { serverId: 's1' };
+      const out = await tasks.stopAfterFailure({ serverId: 's1' });
+      expect(ec2.calls).toEqual(['stop i-lost']);
+      await tasks.markFailed({ ...out, error: { Error: 'Error' } });
+      expect(server).toMatchObject({ status: 'FAILED', instanceId: 'i-lost' });
+    });
+
+    it('stops a recorded instance EC2 does not list yet', async () => {
+      setup({ status: 'STARTING', instanceId: 'i-1' });
+      await tasks.stopAfterFailure({ serverId: 's1' });
+      expect(ec2.calls).toEqual(['stop i-1']);
+    });
+
+    it('has nothing to stop when no instance was launched', async () => {
+      const out = await tasks.stopAfterFailure({ serverId: 's1' });
+      expect(ec2.calls).toEqual([]);
+      expect(out.instanceId).toBeUndefined();
+    });
+
+    it('says so when the instance could not be stopped', async () => {
+      setup({ status: 'STARTING', instanceId: 'i-1' });
+      await tasks.markFailed({ serverId: 's1', error: { Error: 'States.Timeout' }, cleanupError: { Error: 'x' } });
+      expect(server.statusMessage).toContain('its instance could not be stopped');
     });
 
     it('leaves a server alone if it already moved on', async () => {

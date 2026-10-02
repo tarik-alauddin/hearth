@@ -29,5 +29,5 @@ function dispatcher(allowed: readonly TaskName[]) {
 }
 
 export const launchHandler = dispatcher(['launchInstance', 'recordVolume']);
-export const powerHandler = dispatcher(['startInstance', 'stopInstance', 'waitForStopped']);
+export const powerHandler = dispatcher(['startInstance', 'stopInstance', 'waitForStopped', 'stopAfterFailure']);
 export const statusHandler = dispatcher(['waitForAgent', 'markRunning', 'markStopped', 'markFailed']);

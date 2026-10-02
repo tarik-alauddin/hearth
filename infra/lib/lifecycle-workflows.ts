@@ -64,6 +64,8 @@ interface Retry {
 const RETRY_VOLUME: Retry = { error: 'NotReady', interval: Duration.seconds(10), maxAttempts: 30 }; // 5 min
 const RETRY_AGENT: Retry = { error: 'NotReady', interval: Duration.seconds(15), maxAttempts: 60 }; // 15 min
 const RETRY_STOPPED: Retry = { error: 'NotReady', interval: Duration.seconds(15), maxAttempts: 40 }; // 10 min
+// Stopping a failed server's instance: retried on anything (e.g. the instance is still pending).
+const RETRY_CLEANUP: Retry = { error: 'States.ALL', interval: Duration.seconds(10), maxAttempts: 18 }; // 3 min
 const RETRY_CAPACITY: Retry = { error: 'CapacityError', interval: Duration.seconds(30), maxAttempts: 4, backoffRate: 2 };
 
 /**
@@ -118,18 +120,18 @@ export class LifecycleWorkflows extends Construct {
       );
     }
 
-    this.createServer = this.stateMachine('Create', `hearth-${env}-create-server`, status, (step) =>
+    this.createServer = this.stateMachine('Create', `hearth-${env}-create-server`, status, power, (step) =>
       step('LaunchInstance', launch, 'launchInstance', RETRY_CAPACITY)
         .next(step('RecordVolume', launch, 'recordVolume', RETRY_VOLUME))
         .next(step('WaitForAgent', status, 'waitForAgent', RETRY_AGENT))
         .next(step('MarkRunning', status, 'markRunning')),
     );
-    this.startServer = this.stateMachine('Start', `hearth-${env}-start-server`, status, (step) =>
+    this.startServer = this.stateMachine('Start', `hearth-${env}-start-server`, status, power, (step) =>
       step('StartInstance', power, 'startInstance', RETRY_CAPACITY)
         .next(step('WaitForAgent', status, 'waitForAgent', RETRY_AGENT))
         .next(step('MarkRunning', status, 'markRunning')),
     );
-    this.stopServer = this.stateMachine('Stop', `hearth-${env}-stop-server`, status, (step) =>
+    this.stopServer = this.stateMachine('Stop', `hearth-${env}-stop-server`, status, undefined, (step) =>
       step('StopInstance', power, 'stopInstance')
         .next(step('WaitForStopped', power, 'waitForStopped', RETRY_STOPPED))
         .next(step('MarkStopped', status, 'markStopped')),
@@ -139,17 +141,34 @@ export class LifecycleWorkflows extends Construct {
   /**
    * A state machine built from task steps. Every step falls through to "mark FAILED" on any error,
    * keeping its input (serverId, since) and adding the error, so the failure knows which server and why.
+   * With `cleanup` (create and start), the failure path first stops the server's instance, so a
+   * FAILED server is never left running; if even that fails, the server is still marked FAILED.
    */
   private stateMachine(
     id: string,
     name: string,
     status: NodejsFunction,
+    cleanup: NodejsFunction | undefined,
     build: (step: StepFactory) => Chain,
   ): StateMachine {
     const scope = new Construct(this, id);
     const invoked = new Set<NodejsFunction>([status]);
     const workflow = id.toLowerCase();
-    const failed = invoke(scope, 'MarkFailed', status, 'markFailed', workflow).next(new Fail(scope, 'Failed'));
+    const markFailed = invoke(scope, 'MarkFailed', status, 'markFailed', workflow);
+    markFailed.next(new Fail(scope, 'Failed'));
+    let failed = markFailed;
+    if (cleanup) {
+      invoked.add(cleanup);
+      failed = invoke(scope, 'StopAfterFailure', cleanup, 'stopAfterFailure', workflow);
+      failed.addRetry({
+        errors: [RETRY_CLEANUP.error],
+        interval: RETRY_CLEANUP.interval,
+        maxAttempts: RETRY_CLEANUP.maxAttempts,
+        backoffRate: 1,
+      });
+      failed.addCatch(markFailed, { resultPath: '$.cleanupError' });
+      failed.next(markFailed);
+    }
     const step: StepFactory = (stepId, fn, task, retry) => {
       invoked.add(fn);
       const s = invoke(scope, stepId, fn, task, workflow);
