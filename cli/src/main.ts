@@ -2,7 +2,7 @@
 // Signs requests with your AWS credentials (profile, environment or CloudShell).
 import { parseArgs } from 'node:util';
 import { fromNodeProviderChain } from '@aws-sdk/credential-providers';
-import { ApiError, apiClient, findApiUrl } from './client.js';
+import { ApiError, apiClient, findApiUrl, invokeFleetCheck } from './client.js';
 import { CommandError, commands } from './commands.js';
 
 const USAGE = `Usage: hearth <command> [options]
@@ -13,6 +13,7 @@ const USAGE = `Usage: hearth <command> [options]
   start  <serverId>
   stop   <serverId>
   set-channel <serverId> <canary|stable>   agent releases to follow, from the next start
+  fleet-check                              stuck, failed and mismatched servers; instances with no server
 
 Options:
   --env <env>      dev, stage or prod (default: HEARTH_ENV or dev)
@@ -46,7 +47,7 @@ async function main(argv: string[]): Promise<number> {
     region: values.region,
     credentials: fromNodeProviderChain(),
   });
-  const run = commands({ api, print: (line) => process.stdout.write(`${line}\n`) });
+  const run = commands({ api, fleetCheck: () => invokeFleetCheck(values.env, values.region), print: (line) => process.stdout.write(`${line}\n`) });
   const wait = !values['no-wait'];
   const needId = () => {
     if (!id) throw new CommandError(`${command} needs a server ID`);
@@ -73,6 +74,9 @@ async function main(argv: string[]): Promise<number> {
     case 'set-channel':
       if (!arg) throw new CommandError('set-channel needs a channel: canary or stable');
       await run.setChannel(needId(), arg);
+      return 0;
+    case 'fleet-check':
+      await run.fleetCheck();
       return 0;
     default:
       process.stderr.write(`Unknown command "${command}".\n\n${USAGE}`);

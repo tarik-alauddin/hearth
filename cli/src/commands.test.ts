@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { ServerRecord } from '@hearth/shared';
+import type { FleetReport, ServerRecord } from '@hearth/shared';
 import type { Api } from './client.js';
 import { CommandError, commands } from './commands.js';
 
@@ -113,5 +113,32 @@ describe('commands', () => {
     expect(out[0]).toMatch(/^SERVER\s+GAME\s+VERSION\s+STATUS\s+AGENT\s+ADDRESS$/);
     expect(out[1]).toMatch(/^a\s+minecraft-java\s+1\.21\.4\s+STOPPED\s+-\s+-$/);
     expect(out[2]).toMatch(/^b .*RUNNING\s+ready\s+35\.1\.2\.3:25565$/);
+  });
+
+  it('fleet-check prints each finding, with the untracked instances to fix', async () => {
+    const report: FleetReport = {
+      stuck: [],
+      failed: ['s1'],
+      mismatched: [],
+      untracked: [{ instanceId: 'i-1', region: 'us-west-2', state: 'running', launchedAt: '2026-10-02T19:00:56.000Z', serverId: 's9' }],
+      running: 2,
+    };
+    const out: string[] = [];
+    await commands({ api: fakeApi([]).api, fleetCheck: async () => report, print: (l) => out.push(l) }).fleetCheck();
+    expect(out).toEqual([
+      'running     2',
+      'stuck       none',
+      'failed      s1',
+      'mismatched  none',
+      'untracked   1',
+      '  i-1  us-west-2  running  launched 2026-10-02T19:00:56.000Z  tagged server s9',
+    ]);
+  });
+
+  it('fleet-check says when all is clear', async () => {
+    const report: FleetReport = { stuck: [], failed: [], mismatched: [], untracked: [], running: 0 };
+    const out: string[] = [];
+    await commands({ api: fakeApi([]).api, fleetCheck: async () => report, print: (l) => out.push(l) }).fleetCheck();
+    expect(out.at(-1)).toBe('All clear.');
   });
 });

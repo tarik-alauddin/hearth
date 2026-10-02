@@ -1,5 +1,6 @@
 import {
   GAME_DEFINITIONS,
+  type FleetReport,
   type ListServersResponse,
   type ServerOperationResult,
   type ServerRecord,
@@ -9,6 +10,8 @@ import type { Api } from './client.js';
 
 export interface CommandDeps {
   api: Api;
+  /** Runs the fleet check Lambda and returns its report. */
+  fleetCheck?: () => Promise<FleetReport>;
   print: (line: string) => void;
   sleep?: (ms: number) => Promise<void>;
   /** How often to check progress while waiting, and for how long. */
@@ -19,7 +22,7 @@ export interface CommandDeps {
 /** Stop waiting with a non-zero exit; the message says why. */
 export class CommandError extends Error {}
 
-export function commands({ api, print, sleep = (ms) => new Promise((r) => setTimeout(r, ms)), pollMs = 5_000, timeoutMs = 20 * 60_000 }: CommandDeps) {
+export function commands({ api, fleetCheck, print, sleep = (ms) => new Promise((r) => setTimeout(r, ms)), pollMs = 5_000, timeoutMs = 20 * 60_000 }: CommandDeps) {
   const get = (id: string) => api.get<ServerRecord>(`/admin/servers/${encodeURIComponent(id)}`);
 
   /** Follows the server until it reaches `target`, printing each change. Fails on FAILED or timeout. */
@@ -92,6 +95,23 @@ export function commands({ api, print, sleep = (ms) => new Promise((r) => setTim
         ['last stop', s.lastStoppedAt && `${s.lastStoppedAt}${s.lastStopClean === false ? ' (not clean)' : ''}`],
       ];
       for (const [k, v] of rows) if (v) print(`${k.padEnd(10)} ${v}`);
+    },
+
+    /** Runs the fleet check now and prints what it found. */
+    async fleetCheck() {
+      if (!fleetCheck) throw new CommandError('fleet-check is not available here');
+      const r = await fleetCheck();
+      const ids = (list: string[]) => (list.length ? list.join(', ') : 'none');
+      print(`running     ${r.running}`);
+      print(`stuck       ${ids(r.stuck)}`);
+      print(`failed      ${ids(r.failed)}`);
+      print(`mismatched  ${ids(r.mismatched)}`);
+      print(`untracked   ${r.untracked.length ? r.untracked.length : 'none'}`);
+      for (const i of r.untracked) {
+        const server = i.serverId ? `tagged server ${i.serverId}` : 'no serverId tag';
+        print(`  ${i.instanceId}  ${i.region}  ${i.state}  launched ${i.launchedAt ?? 'unknown'}  ${server}`);
+      }
+      if (r.stuck.length + r.failed.length + r.mismatched.length + r.untracked.length === 0) print('All clear.');
     },
 
     async list() {

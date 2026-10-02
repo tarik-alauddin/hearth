@@ -5,6 +5,7 @@ import {
   ComparisonOperator,
   Dashboard,
   GraphWidget,
+  LogQueryWidget,
   MathExpression,
   Metric,
   TextWidget,
@@ -21,7 +22,7 @@ import { Topic } from 'aws-cdk-lib/aws-sns';
 import { EmailSubscription } from 'aws-cdk-lib/aws-sns-subscriptions';
 import type { StateMachine } from 'aws-cdk-lib/aws-stepfunctions';
 import type { Construct } from 'constructs';
-import { METRICS, SERVERS_BY_STATUS_INDEX, metricsNamespace } from '@hearth/shared';
+import { METRICS, SERVERS_BY_INSTANCE_INDEX, SERVERS_BY_STATUS_INDEX, fleetCheckFunctionName, metricsNamespace } from '@hearth/shared';
 import { ALERT_EMAIL } from '../config.js';
 import { hearthFunction } from '../hearth-function.js';
 import { HearthStack, type HearthStackProps } from '../hearth-stack.js';
@@ -54,20 +55,33 @@ export class MonitoringStack extends HearthStack {
     const custom = (name: string, statistic: string, dimensionsMap?: Record<string, string>) =>
       new Metric({ namespace, metricName: name, statistic, dimensionsMap, period: FIVE_MINUTES });
 
-    // Fleet check: an independent look at the table for failed, stuck and mismatched servers.
+    // Fleet check: an independent look for failed, stuck and mismatched servers, and for instances
+    // no server knows about. `hearth fleet-check` invokes it by name.
     this.fleetCheck = hearthFunction(this, 'FleetCheck', {
       config: props.config,
       entry: 'events/src/fleet-check-lambda.ts',
       handler: 'handler',
+      functionName: fleetCheckFunctionName(env),
       timeout: Duration.seconds(30),
-      environment: { HEARTH_ENV: env, SERVERS_TABLE: props.serversTable.tableName },
+      environment: {
+        HEARTH_ENV: env,
+        SERVERS_TABLE: props.serversTable.tableName,
+        GAME_REGIONS: props.config.gameRegions.join(','),
+      },
     });
     this.fleetCheck.addToRolePolicy(
       new PolicyStatement({
         actions: ['dynamodb:Query'],
-        resources: [`${props.serversTable.tableArn}/index/${SERVERS_BY_STATUS_INDEX}`],
+        resources: [SERVERS_BY_STATUS_INDEX, SERVERS_BY_INSTANCE_INDEX].map(
+          (index) => `${props.serversTable.tableArn}/index/${index}`,
+        ),
       }),
     );
+    this.fleetCheck.addToRolePolicy(new PolicyStatement({ actions: ['ec2:DescribeInstances'], resources: ['*'] }));
+    Validations.of(this.fleetCheck).acknowledge({
+      id: 'AwsSolutions-IAM5[Resource::*]',
+      reason: 'DescribeInstances has no resource-level permissions; the fleet check only reads.',
+    });
     if (props.config.fleetCheckScheduled) {
       new Rule(this, 'FleetCheckSchedule', {
         description: `Hearth ${env}: fleet check every 15 minutes`,
@@ -163,6 +177,11 @@ export class MonitoringStack extends HearthStack {
     alarm('stuck-servers', 'A server has been mid-transition for over 35 minutes. See the fleet check log.', custom(METRICS.stuckServers, 'Maximum'));
     alarm('failed-servers', 'A server is FAILED. `hearth status <id>` shows why.', custom(METRICS.failedServers, 'Maximum'));
     alarm(
+      'untracked-instances',
+      'A Hearth instance has no server record. `hearth fleet-check` lists it; stop or terminate it if unneeded.',
+      custom(METRICS.untrackedInstances, 'Maximum'),
+    );
+    alarm(
       'status-mismatches',
       'A server is RUNNING but EC2 says its instance is not. See the fleet check log.',
       custom(METRICS.statusMismatches, 'Maximum'),
@@ -192,7 +211,21 @@ export class MonitoringStack extends HearthStack {
             custom(METRICS.failedServers, 'Maximum').with({ label: 'failed' }),
             custom(METRICS.stuckServers, 'Maximum').with({ label: 'stuck' }),
             custom(METRICS.statusMismatches, 'Maximum').with({ label: 'mismatched' }),
+            custom(METRICS.untrackedInstances, 'Maximum').with({ label: 'untracked instances' }),
           ]),
+        ],
+        [
+          new LogQueryWidget({
+            title: 'Fleet check findings (latest per server or instance)',
+            logGroupNames: [this.fleetCheck.logGroup.logGroupName],
+            queryLines: [
+              'filter msg in ["stuck server", "failed server", "status mismatch", "untracked instance"]',
+              'stats latest(@timestamp) as lastSeen, latest(status) as status, latest(state) as instanceState by msg, serverId, instanceId, region',
+              'sort lastSeen desc',
+            ],
+            width: 24,
+            height: 6,
+          }),
         ],
         [
           graph(

@@ -16,4 +16,6 @@ export const METRICS = {
   runningServers: 'RunningServers',
   /** Fleet check: RUNNING servers whose instance EC2 says isn't running. */
   statusMismatches: 'StatusMismatches',
+  /** Fleet check: this environment's Hearth instances that no server record points at. */
+  untrackedInstances: 'UntrackedInstances',
 } as const;
