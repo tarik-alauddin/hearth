@@ -87,9 +87,12 @@ describe('AccountStack', () => {
     });
   });
 
-  it('expires dev builds after 30 days and keeps tagged releases', () => {
+
+  it('permanently removes pruned releases after 30 days', () => {
     template.hasResourceProperties('AWS::S3::Bucket', {
-      LifecycleConfiguration: { Rules: [Match.objectLike({ Prefix: 'agent/main-', ExpirationInDays: 30 })] },
+      LifecycleConfiguration: {
+        Rules: [Match.objectLike({ NoncurrentVersionExpiration: { NoncurrentDays: 30 }, ExpiredObjectDeleteMarker: true })],
+      },
     });
   });
 

@@ -85,11 +85,15 @@ two channels, `canary` and `stable` (SSM `/hearth/<env>/agent/<channel>`); each 
 (`hearth set-channel <id> canary|stable`, default stable) and picks up its channel's release on its
 next start. A new release that never reaches the API falls back to the previous one automatically.
 
-- **Release:** push a tag `agent-vX.Y.Z`. The *Agent release* workflow runs the harness, uploads it
-  and points dev's canary at it. Merges to `main` that touch `agent/` publish `main-<sha>` to dev's
-  canary (dev only, expires after 30 days).
+- **Release:** every merge to `main` that changes `agent/` publishes one, versioned by date and
+  commit (`2026.10.01-3f2a9c1`): the *Agent release* workflow runs the harness, uploads it, points
+  dev's canary at it, and creates the tag `agent-<version>` with a GitHub Release. Run the workflow
+  by hand to cut a release without an agent change. It then prunes old releases
+  (`scripts/prune-agent-releases.sh`): every channel's current release and its previous two are
+  kept, plus the newest five; pruned ones can be restored from the bucket for 30 days.
 - **Promote or roll back:** run the *Promote agent* workflow with an environment, a channel and a
-  version (blank stable = that environment's current canary). Prod waits for approval. History:
+  version from the Releases page (blank stable = that environment's current canary). Prod waits for
+  approval. History:
   `aws ssm get-parameter-history --name /hearth/<env>/agent/stable`.
 - **A new environment needs a stable release before it can run servers:** new instances download
   their first agent from `stable`. Promote one there once.

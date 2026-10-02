@@ -22,7 +22,9 @@ jobs:
       - uses: ./.github/actions/setup
       - run: pnpm lint
       - name: shellcheck
-        run: shellcheck infra/lib/user-data/*.sh infra/test/user-data/*.sh agent/*.sh scripts/*.sh
+        run: shellcheck infra/lib/user-data/*.sh infra/test/user-data/*.sh agent/*.sh scripts/*.sh scripts/test/*.sh
+      - name: Release pruning test
+        run: bash scripts/test/prune-agent-releases-test.sh
       - run: pnpm typecheck
       # Unit tests and CDK assertions; cdk-nag runs inside every synth.
       - run: pnpm test

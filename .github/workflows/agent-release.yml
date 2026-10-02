@@ -1,18 +1,18 @@
 name: Agent release
 
-# Builds the agent, uploads it to the releases bucket and points dev's canary at it.
-# - Tag agent-vX.Y.Z: a release (the harness runs first). Use "Promote agent" to place it on any
-#   channel in any environment.
-# - Merge to main touching agent/: a dev build, main-<sha>, for dev only (it can't be promoted
-#   outside dev, and expires after 30 days).
+# Every merge to main that changes the agent publishes a release, versioned by date and commit
+# (e.g. 2026.10.01-3f2a9c1): harness-tested, uploaded to the releases bucket, tagged
+# agent-<version> with a GitHub Release, and placed on dev's canary. "Promote agent" then puts any
+# release on any channel in any environment. Old releases that no channel needs are pruned.
+# Run by hand to cut a release without an agent change.
 on:
   push:
     branches: [main]
     paths: ["agent/**"]
-    tags: ["agent-v*"]
+  workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write # the tag and GitHub Release
   id-token: write
 
 concurrency:
@@ -40,21 +40,10 @@ jobs:
           cache-dependency-path: agent/go.sum
       - name: Version
         id: version
-        env:
-          REF_TYPE: ${{ github.ref_type }}
-          REF_NAME: ${{ github.ref_name }}
-        run: |
-          if [ "$REF_TYPE" = tag ]; then
-            version=${REF_NAME#agent-v}
-            [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::Tag must be agent-vX.Y.Z"; exit 1; }
-          else
-            version=main-${GITHUB_SHA::7}
-          fi
-          echo "version=$version" >> "$GITHUB_OUTPUT"
+        run: echo "version=$(date -u +%Y.%m.%d)-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
       - run: go vet -tags harness ./...
       - run: go test -race ./...
       - name: Harness (real agent, Minecraft container, mock API)
-        if: github.ref_type == 'tag'
         run: go test -tags harness -timeout 30m ./harness/
       - name: Build
         run: ./build.sh "${{ steps.version.outputs.version }}"
@@ -63,14 +52,14 @@ jobs:
           role-to-assume: arn:aws:iam::${{ env.AWS_ACCOUNT }}:role/github-deploy
           aws-region: ${{ env.AWS_REGION }}
       - name: Upload and point dev's canary at it
+        id: upload
         env:
           VERSION: ${{ steps.version.outputs.version }}
-          REF_TYPE: ${{ github.ref_type }}
         run: |
           set -euo pipefail
           key="agent/$VERSION/hearth-agent-linux-arm64"
-          if [ "$REF_TYPE" = tag ] && aws s3api head-object --bucket "$BUCKET" --key "$key" >/dev/null 2>&1; then
-            echo "::error::Release $VERSION already exists; releases are immutable. Tag a new version."
+          if aws s3api head-object --bucket "$BUCKET" --key "$key" >/dev/null 2>&1; then
+            echo "::error::Release $VERSION already exists; releases are immutable."
             exit 1
           fi
           sha=$(sha256sum bin/hearth-agent | cut -d' ' -f1)
@@ -78,10 +67,26 @@ jobs:
           printf '%s' "$sha" | aws s3 cp --only-show-errors - "s3://$BUCKET/$key.sha256"
           release=$(jq -nc --arg v "$VERSION" --arg s "$sha" '{version: $v, sha256: $s}')
           aws ssm put-parameter --name /hearth/dev/agent/canary --type String --overwrite --value "$release" >/dev/null
+          echo "sha256=$sha" >> "$GITHUB_OUTPUT"
+      - name: Tag and GitHub Release
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          SHA256: ${{ steps.upload.outputs.sha256 }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release create "agent-$VERSION" --target "$GITHUB_SHA" --title "Agent $VERSION" --notes \
+            "Agent release \`$VERSION\` (sha256 \`$SHA256\`), on dev's canary. Promote it with **Promote agent**, version \`$VERSION\`."
           {
             echo "## Agent $VERSION released"
             echo
-            echo "sha256 \`$sha\`. **dev canary → $VERSION.** Canary servers in dev run it from their next start."
+            echo "sha256 \`$SHA256\` · tag \`agent-$VERSION\` · **dev canary → $VERSION**"
             echo
-            echo "Next: run **Promote agent** to put it on another channel or environment."
+            echo "Next: **Promote agent** with version \`$VERSION\` to put it on another channel or environment."
           } >> "$GITHUB_STEP_SUMMARY"
+      # Keeps every channel's current release and its previous two, plus the newest five.
+      - name: Prune old releases
+        working-directory: .
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash scripts/prune-agent-releases.sh

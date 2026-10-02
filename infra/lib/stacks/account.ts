@@ -20,8 +20,7 @@ export class AccountStack extends Stack {
     Tags.of(this).add('app', 'hearth');
 
     // Agent releases: immutable, versioned binaries (agent/<version>/…) that channels point at.
-    // Kept forever: they're small, and any of them may be a rollback target. Written by the
-    // "Agent release" workflow.
+    // Written by the "Agent release" workflow, which also prunes releases no channel needs.
     const releases = new Bucket(this, 'AgentReleases', {
       bucketName: agentReleasesBucket(AWS_ACCOUNT),
       blockPublicAccess: BlockPublicAccess.BLOCK_ALL,
@@ -29,8 +28,10 @@ export class AccountStack extends Stack {
       enforceSSL: true,
       versioned: true,
       removalPolicy: RemovalPolicy.RETAIN,
-      // Dev builds (main-<sha>) are for trying changes in dev; tagged releases are kept forever.
-      lifecycleRules: [{ id: 'expire-dev-builds', prefix: 'agent/main-', expiration: Duration.days(30) }],
+      // Releases pruned by scripts/prune-agent-releases.sh stay recoverable for 30 days.
+      lifecycleRules: [
+        { id: 'remove-pruned-releases', noncurrentVersionExpiration: Duration.days(30), expiredObjectDeleteMarker: true },
+      ],
     });
     Validations.of(releases).acknowledge({
       id: 'AwsSolutions-S1',
