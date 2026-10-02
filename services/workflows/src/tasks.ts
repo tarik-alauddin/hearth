@@ -36,17 +36,17 @@ export interface InstanceInfo {
 }
 
 export interface Ec2 {
-  runInstance(region: string, req: { subnetId: string; launchTemplateId: string; version: string; clientToken: string }): Promise<string>;
+  runInstance(region: string, req: { subnetId: string; launchTemplateId: string; clientToken: string }): Promise<string>;
   describeInstance(region: string, instanceId: string): Promise<InstanceInfo | undefined>;
   createTags(region: string, resourceIds: string[], tags: Record<string, string>): Promise<void>;
   startInstance(region: string, instanceId: string): Promise<void>;
   stopInstance(region: string, instanceId: string): Promise<void>;
 }
 
-/** Per game region: where to launch and from which launch template version (GameInfraStack). */
+/** Per game region: where to launch and from which launch template (GameInfraStack). */
 export type GameInfra = Record<
   string,
-  { subnetIds: string[]; launchTemplates: Record<string, { id: string; version: string }> }
+  { subnetIds: string[]; launchTemplates: Record<string, { id: string }> }
 >;
 
 export interface TaskDeps {
@@ -83,7 +83,7 @@ export function workflowTasks({ env, store, ec2, gameInfra, now = () => new Date
   }
 
   return {
-    /** Create: launch from the pinned launch template, trying each AZ; PROVISIONING → STARTING. */
+    /** Create: launch from the launch template, trying each AZ; PROVISIONING → STARTING. */
     async launchInstance({ serverId }: WorkflowState): Promise<WorkflowState> {
       const record = await server(serverId, 'PROVISIONING');
       const infra = gameInfra[record.region];
@@ -98,7 +98,6 @@ export function workflowTasks({ env, store, ec2, gameInfra, now = () => new Date
           instanceId = await ec2.runInstance(record.region, {
             subnetId,
             launchTemplateId: template.id,
-            version: template.version,
             clientToken: `${serverId}-${i}`,
           });
           break;

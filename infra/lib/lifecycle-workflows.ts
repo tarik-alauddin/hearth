@@ -81,8 +81,8 @@ export class LifecycleWorkflows extends Construct {
     const { env } = props.config;
     const table = props.serversTable;
 
-    // Where to launch, per game region: subnets and the launch template version each deploy produced
-    // (CloudFormation never moves a template's default version, so launches name it).
+    // Where to launch, per game region: subnets and launch templates. Launches use $Latest: a version
+    // number passed here goes stale, since a user-data-only change leaves this stack undeployed.
     const gameInfra = Object.fromEntries(
       props.gameInfra.map((infra) => [
         infra.region,
@@ -91,7 +91,7 @@ export class LifecycleWorkflows extends Construct {
           launchTemplates: Object.fromEntries(
             Object.entries(infra.launchTemplates).map(([game, template]) => [
               game,
-              { id: requireId(template.launchTemplateId), version: template.latestVersionNumber },
+              { id: requireId(template.launchTemplateId) },
             ]),
           ),
         },

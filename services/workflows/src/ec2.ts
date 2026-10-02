@@ -27,11 +27,12 @@ export function sdkEc2(): Ec2 {
   };
 
   return {
-    async runInstance(region, { subnetId, launchTemplateId, version, clientToken }) {
+    async runInstance(region, { subnetId, launchTemplateId, clientToken }) {
       try {
         const out = await client(region).send(
           new RunInstancesCommand({
-            LaunchTemplate: { LaunchTemplateId: launchTemplateId, Version: version },
+            // $Latest, not the default version: CloudFormation never moves a template's default.
+            LaunchTemplate: { LaunchTemplateId: launchTemplateId, Version: '$Latest' },
             SubnetId: subnetId,
             MinCount: 1,
             MaxCount: 1,

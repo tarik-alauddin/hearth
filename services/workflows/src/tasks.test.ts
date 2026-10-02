@@ -71,7 +71,7 @@ class FakeEc2 implements Ec2 {
 const GAME_INFRA = {
   'us-west-2': {
     subnetIds: ['subnet-a', 'subnet-b', 'subnet-c'],
-    launchTemplates: { 'minecraft-java': { id: 'lt-1', version: '7' } },
+    launchTemplates: { 'minecraft-java': { id: 'lt-1' } },
   },
 };
 
@@ -97,7 +97,7 @@ describe('workflow tasks', () => {
   beforeEach(() => setup());
 
   describe('create', () => {
-    it('launches from the pinned template, tags the instance and moves to STARTING', async () => {
+    it('launches from the template, tags the instance and moves to STARTING', async () => {
       const out = await tasks.launchInstance({ serverId: 's1' });
       expect(out).toEqual({ serverId: 's1', since: NOW.toISOString() });
       expect(ec2.calls).toEqual(['run subnet-a s1-0']);
