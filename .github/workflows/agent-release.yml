@@ -33,6 +33,13 @@ jobs:
       run:
         working-directory: agent
     steps:
+      # "Run workflow" offers a branch picker (which copy of this file runs); only main's may run.
+      - name: Only from main
+        if: github.ref != 'refs/heads/main'
+        working-directory: . # agent/ doesn't exist before checkout
+        run: |
+          echo "::error::Run this workflow from main, not ${GITHUB_REF_NAME}."
+          exit 1
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
         with:

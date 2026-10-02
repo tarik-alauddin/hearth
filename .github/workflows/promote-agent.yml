@@ -40,6 +40,12 @@ jobs:
     # Required reviewers on the prod environment gate prod promotions.
     environment: ${{ inputs.env }}
     steps:
+      # "Run workflow" offers a branch picker (which copy of this file runs); only main's may run.
+      - name: Only from main
+        if: github.ref != 'refs/heads/main'
+        run: |
+          echo "::error::Run this workflow from main, not ${GITHUB_REF_NAME}."
+          exit 1
       - uses: aws-actions/configure-aws-credentials@v6
         with:
           role-to-assume: arn:aws:iam::${{ env.AWS_ACCOUNT }}:role/github-deploy
