@@ -1,4 +1,6 @@
+import { InvokeCommand, LambdaClient } from '@aws-sdk/client-lambda';
 import { GetParameterCommand, SSMClient } from '@aws-sdk/client-ssm';
+import { fleetCheckFunctionName, type FleetReport } from '@hearth/shared';
 import { Sha256 } from '@aws-crypto/sha256-js';
 import { SignatureV4 } from '@smithy/signature-v4';
 import type { AwsCredentialIdentityProvider } from '@smithy/types';
@@ -67,6 +69,14 @@ export function apiClient(opts: {
 }
 
 /** The API endpoint: HEARTH_API_URL, or the SSM parameter ApiStack publishes for the environment. */
+/** Runs the environment's fleet check Lambda (directly, not through the API) and returns its report. */
+export async function invokeFleetCheck(env: string, region: string): Promise<FleetReport> {
+  const out = await new LambdaClient({ region }).send(new InvokeCommand({ FunctionName: fleetCheckFunctionName(env) }));
+  const body = new TextDecoder().decode(out.Payload);
+  if (out.FunctionError) throw new Error(`The fleet check failed: ${body}`);
+  return JSON.parse(body) as FleetReport;
+}
+
 export async function findApiUrl(env: string, region: string): Promise<string> {
   if (process.env.HEARTH_API_URL) return process.env.HEARTH_API_URL;
   const out = await new SSMClient({ region }).send(new GetParameterCommand({ Name: `/hearth/${env}/api-url` }));

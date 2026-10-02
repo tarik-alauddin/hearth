@@ -11,6 +11,8 @@ export interface HearthFunctionProps {
   /** Entry file, relative to the repo's services/ directory, e.g. `api/src/agent/lambda.ts`. */
   entry: string;
   handler: string;
+  /** A fixed name, for functions people invoke by hand. */
+  functionName?: string;
   environment?: Record<string, string>;
   timeout?: Duration;
 }
@@ -20,6 +22,7 @@ export function hearthFunction(scope: Construct, id: string, props: HearthFuncti
   const fn = new NodejsFunction(scope, id, {
     entry: fileURLToPath(new URL(`../../services/${props.entry}`, import.meta.url)),
     handler: props.handler,
+    functionName: props.functionName,
     runtime: Runtime.NODEJS_24_X,
     architecture: Architecture.ARM_64,
     memorySize: 256,

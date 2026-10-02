@@ -101,12 +101,15 @@ next start. A new release that never reaches the API falls back to the previous 
 ## Monitoring
 
 Each environment has a CloudWatch dashboard (`hearth-<env>`) and alarms emailed through
-`hearth-<env>-alerts`. The fleet check (stuck, failed and mismatched servers) runs every 15 minutes in
-prod; elsewhere run it on demand, which also prints its report:
+`hearth-<env>-alerts`. The fleet check (stuck, failed and mismatched servers, and Hearth instances no
+server points at) runs every 15 minutes in prod; run it anywhere on demand to see its findings:
 
 ```sh
-aws lambda invoke --function-name $(aws lambda list-functions   --query "Functions[?starts_with(FunctionName, 'hearth-dev-Monitoring-FleetCheck')].FunctionName | [0]" --output text) out.json && cat out.json
+pnpm hearth fleet-check [--env dev]
 ```
+
+It only reports. An untracked instance shows its `serverId` tag (the server it was launched for);
+stop or terminate it in the EC2 console if nothing needs it.
 
 ## CI/CD
 

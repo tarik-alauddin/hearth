@@ -42,6 +42,7 @@ describe('MonitoringStack', () => {
         'stop-workflow-failed',
         'stuck-servers',
         'unclean-stop',
+        'untracked-instances',
       ].map((n) => `hearth-dev-${n}`),
     );
     expect(alarms.every((a) => a.Properties.AlarmActions.length === 1)).toBe(true);
@@ -52,12 +53,20 @@ describe('MonitoringStack', () => {
     expect(Object.keys(dev.findResources('AWS::Events::Rule'))).toHaveLength(0);
   });
 
-  it('lets the fleet check only query the byStatus index', () => {
+  it('lets the fleet check only query the status and instance indexes and describe instances', () => {
     const policies = Object.entries(dev.findResources('AWS::IAM::Policy'))
       .filter(([id]) => id.startsWith('FleetCheck'))
       .flatMap(([, p]) => (p as { Properties: { PolicyDocument: { Statement: { Action: string; Resource: unknown }[] } } }).Properties.PolicyDocument.Statement);
-    expect(policies.map((s) => s.Action)).toEqual(['dynamodb:Query']);
+    expect(policies.map((s) => s.Action)).toEqual(['dynamodb:Query', 'ec2:DescribeInstances']);
     expect(JSON.stringify(policies[0]?.Resource)).toContain('/index/byStatus');
+    expect(JSON.stringify(policies[0]?.Resource)).toContain('/index/byInstance');
+  });
+
+  it('names the fleet check so the CLI can invoke it, and tells it the game regions', () => {
+    dev.hasResourceProperties('AWS::Lambda::Function', {
+      FunctionName: 'hearth-dev-fleet-check',
+      Environment: { Variables: Match.objectLike({ GAME_REGIONS: 'us-west-2' }) },
+    });
   });
 
   it('leaves the task Lambdas (which throw NotReady by design) out of the error alarm', () => {
