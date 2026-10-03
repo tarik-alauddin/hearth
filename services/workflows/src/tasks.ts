@@ -12,6 +12,10 @@ export class NotReady extends Error {
 export class CapacityError extends Error {
   override name = 'CapacityError';
 }
+/** The agent couldn't be stopped through Run Command; the stop workflow stops the instance anyway. */
+export class AgentStopFailed extends Error {
+  override name = 'AgentStopFailed';
+}
 /** The agent reported an error; not retried. */
 export class AgentError extends Error {
   override name = 'AgentError';
@@ -24,6 +28,8 @@ export interface WorkflowState {
   since?: string;
   /** Failure path: the instance stopAfterFailure found for this server, if any. */
   instanceId?: string;
+  /** Stop: the Run Command stopping the agent. */
+  commandId?: string;
 }
 
 /** Which workflow a task runs in (create | start | stop), passed by the state machine. */
@@ -52,16 +58,27 @@ export interface Ec2 {
   stopInstance(region: string, instanceId: string): Promise<void>;
 }
 
-/** Per game region: where to launch and from which launch template (GameInfraStack). */
+export type CommandStatus = 'pending' | 'success' | 'failed';
+
+/** Run Command, for Hearth's own SSM documents. */
+export interface Ssm {
+  /** Sends the document to one instance; returns the command ID. */
+  sendCommand(region: string, req: { instanceId: string; documentName: string }): Promise<string>;
+  /** How the command went on the instance; 'pending' until it finishes. */
+  commandStatus(region: string, req: { commandId: string; instanceId: string }): Promise<CommandStatus>;
+}
+
+/** Per game region: where to launch, from which launch template, and the stop-agent document (GameInfraStack). */
 export type GameInfra = Record<
   string,
-  { subnetIds: string[]; launchTemplates: Record<string, { id: string }> }
+  { subnetIds: string[]; launchTemplates: Record<string, { id: string }>; stopAgentDocument: string }
 >;
 
 export interface TaskDeps {
   env: string;
   store: Pick<ServersStore, 'getServer' | 'transition'>;
   ec2: Ec2;
+  ssm: Ssm;
   gameInfra: GameInfra;
   now?: () => Date;
   metrics?: Metrics;
@@ -70,7 +87,7 @@ export interface TaskDeps {
 /** The device name of the world volume; see GameInfraStack. */
 export const DATA_DEVICE = '/dev/sdf';
 
-export function workflowTasks({ env, store, ec2, gameInfra, now = () => new Date(), metrics = emfMetrics(env) }: TaskDeps) {
+export function workflowTasks({ env, store, ec2, ssm, gameInfra, now = () => new Date(), metrics = emfMetrics(env) }: TaskDeps) {
   async function server(serverId: string, expected?: ServerStatus): Promise<ServerRecord> {
     const record = await store.getServer(serverId);
     if (!record) throw new Error(`Server ${serverId} not found`);
@@ -173,12 +190,41 @@ export function workflowTasks({ env, store, ec2, gameInfra, now = () => new Date
       return state;
     },
 
-    /** Stop: power off the instance the API claimed as STOPPING. The agent saves during shutdown. */
-    async stopInstance({ serverId }: WorkflowState): Promise<WorkflowState> {
+    /**
+     * Stop, first: stop the agent through Run Command while the instance is fully up. The agent saves
+     * the world and stops the game, as it would during an OS shutdown, and reports `stopped`.
+     */
+    async stopAgent({ serverId }: WorkflowState): Promise<WorkflowState> {
       const record = await server(serverId, 'STOPPING');
+      const instanceId = requireInstance(record);
       const since = now().toISOString();
+      // An instance that isn't running (e.g. a FAILED server's) has no agent to stop.
+      const instance = await ec2.describeInstance(record.region, instanceId);
+      if (instance?.state !== 'running') return { serverId, since };
+      const documentName = gameInfra[record.region]?.stopAgentDocument;
+      if (!documentName) throw new Error(`No stop-agent document for ${record.region}`);
+      const commandId = await ssm.sendCommand(record.region, { instanceId, documentName });
+      return { serverId, since, commandId };
+    },
+
+    /** Stop: wait until the agent has stopped (the command returns once the agent has exited). */
+    async waitForAgentStop(state: WorkflowState): Promise<WorkflowState> {
+      if (!state.commandId) return state;
+      const record = await server(state.serverId);
+      const instanceId = requireInstance(record);
+      const status = await ssm.commandStatus(record.region, { commandId: state.commandId, instanceId });
+      if (status === 'pending') throw new NotReady(`Waiting for the agent on ${instanceId} to stop`);
+      if (status === 'failed') throw new AgentStopFailed(`Stopping the agent on ${instanceId} failed`);
+      return state;
+    },
+
+    /** Stop: power off the instance the API claimed as STOPPING. */
+    async stopInstance(state: WorkflowState): Promise<WorkflowState> {
+      const record = await server(state.serverId, 'STOPPING');
+      // Keep the stop's start time from stopAgent, so the agent's stopped report counts as this stop's.
+      const since = state.since ?? now().toISOString();
       await ec2.stopInstance(record.region, requireInstance(record));
-      return { serverId, since };
+      return { serverId: state.serverId, since };
     },
 
     /** Stop: wait until EC2 reports the instance stopped. */

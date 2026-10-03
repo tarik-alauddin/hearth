@@ -22,6 +22,7 @@ import {
 } from 'aws-cdk-lib/aws-ec2';
 import { ManagedPolicy, PolicyStatement, Role, ServicePrincipal } from 'aws-cdk-lib/aws-iam';
 import { LogGroup, RetentionDays } from 'aws-cdk-lib/aws-logs';
+import { CfnDocument } from 'aws-cdk-lib/aws-ssm';
 import type { Construct } from 'constructs';
 import {
   GAME_DEFINITIONS,
@@ -55,6 +56,8 @@ export class GameInfraStack extends HearthStack {
   readonly instanceRole: Role;
   readonly securityGroups: Record<GameId, SecurityGroup>;
   readonly launchTemplates: Record<GameId, LaunchTemplate>;
+  /** Run Command document the stop workflow runs before stopping an instance. */
+  readonly stopAgentDocument: CfnDocument;
 
   constructor(scope: Construct, props: GameInfraStackProps) {
     super(scope, 'GameInfra', props);
@@ -137,6 +140,26 @@ export class GameInfraStack extends HearthStack {
     }
     this.securityGroups = securityGroups as Record<GameId, SecurityGroup>;
     this.launchTemplates = launchTemplates as Record<GameId, LaunchTemplate>;
+
+    // The stop workflow stops the agent this way while the instance is still fully up: the agent
+    // saves the world and stops the game (the same path as an OS shutdown), with time to spare.
+    this.stopAgentDocument = new CfnDocument(this, 'StopAgentDocument', {
+      name: `hearth-${env}-stop-agent`,
+      documentType: 'Command',
+      updateMethod: 'NewVersion',
+      content: {
+        schemaVersion: '2.2',
+        description: 'Hearth: stop the game agent, which saves the world and stops the game.',
+        mainSteps: [
+          {
+            action: 'aws:runShellScript',
+            name: 'stopAgent',
+            // Blocks until the agent has exited (bounded by the unit's TimeoutStopSec).
+            inputs: { runCommand: ['systemctl stop hearth-agent.service'], timeoutSeconds: '900' },
+          },
+        ],
+      },
+    });
   }
 
   private securityGroup(env: string, game: GameDefinition): SecurityGroup {
