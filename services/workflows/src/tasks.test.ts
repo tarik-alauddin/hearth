@@ -82,6 +82,7 @@ class FakeEc2 implements Ec2 {
 
 class FakeSsm implements Ssm {
   sent: string[] = [];
+  cancelled: string[] = [];
   status: CommandStatus = 'pending';
   async sendCommand(_: string, { instanceId, documentName }: { instanceId: string; documentName: string }) {
     this.sent.push(`${documentName} ${instanceId}`);
@@ -89,6 +90,9 @@ class FakeSsm implements Ssm {
   }
   async commandStatus() {
     return this.status;
+  }
+  async cancelCommand(_: string, { commandId }: { commandId: string }) {
+    this.cancelled.push(commandId);
   }
 }
 
@@ -219,6 +223,25 @@ describe('workflow tasks', () => {
       const state = await tasks.stopAgent({ serverId: 's1' });
       expect(ssm.sent).toEqual([]);
       await expect(tasks.waitForAgentStop(state)).resolves.toEqual(state);
+    });
+
+    it('cancels the agent stop command when giving up on it, so a later boot never receives it', async () => {
+      await tasks.stopInstance({ serverId: 's1', since: EARLIER, commandId: 'cmd-1', agentStopError: { Error: 'NotReady' } });
+      expect(ssm.cancelled).toEqual(['cmd-1']);
+      expect(ec2.calls).toEqual(['stop i-1']);
+    });
+
+    it('stops the instance even if the cancel fails', async () => {
+      ssm.cancelCommand = async () => {
+        throw new Error('InvalidCommandId');
+      };
+      await tasks.stopInstance({ serverId: 's1', commandId: 'cmd-1', agentStopError: { Error: 'NotReady' } });
+      expect(ec2.calls).toEqual(['stop i-1']);
+    });
+
+    it('leaves a finished agent stop command alone', async () => {
+      await tasks.stopInstance({ serverId: 's1', since: EARLIER, commandId: 'cmd-1' });
+      expect(ssm.cancelled).toEqual([]);
     });
 
     it("keeps the stop's start time, so the agent's earlier stopped report still counts", async () => {

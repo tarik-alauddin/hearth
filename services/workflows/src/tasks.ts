@@ -30,6 +30,8 @@ export interface WorkflowState {
   instanceId?: string;
   /** Stop: the Run Command stopping the agent. */
   commandId?: string;
+  /** Stop: set when stopping the agent failed or timed out, and the instance is stopped anyway. */
+  agentStopError?: unknown;
 }
 
 /** Which workflow a task runs in (create | start | stop), passed by the state machine. */
@@ -66,6 +68,8 @@ export interface Ssm {
   sendCommand(region: string, req: { instanceId: string; documentName: string }): Promise<string>;
   /** How the command went on the instance; 'pending' until it finishes. */
   commandStatus(region: string, req: { commandId: string; instanceId: string }): Promise<CommandStatus>;
+  /** Cancels the command if it hasn't finished. */
+  cancelCommand(region: string, req: { commandId: string; instanceId: string }): Promise<void>;
 }
 
 /** Per game region: where to launch, from which launch template, and the stop-agent document (GameInfraStack). */
@@ -221,6 +225,13 @@ export function workflowTasks({ env, store, ec2, ssm, gameInfra, now = () => new
     /** Stop: power off the instance the API claimed as STOPPING. */
     async stopInstance(state: WorkflowState): Promise<WorkflowState> {
       const record = await server(state.serverId, 'STOPPING');
+      // Gave up on the agent: cancel its stop command, so a later boot can never receive it.
+      if (state.agentStopError && state.commandId) {
+        const req = { commandId: state.commandId, instanceId: requireInstance(record) };
+        await ssm.cancelCommand(record.region, req).catch((err: unknown) => {
+          console.log(JSON.stringify({ msg: "couldn't cancel the agent stop command", ...req, err: String(err) }));
+        });
+      }
       // Keep the stop's start time from stopAgent, so the agent's stopped report counts as this stop's.
       const since = state.since ?? now().toISOString();
       await ec2.stopInstance(record.region, requireInstance(record));
