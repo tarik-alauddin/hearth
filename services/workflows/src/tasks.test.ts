@@ -2,11 +2,14 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import type { ServerRecord } from '@hearth/shared';
 import {
   AgentError,
+  AgentStopFailed,
   CapacityError,
   NotReady,
   failureMessage,
   workflowTasks,
+  type CommandStatus,
   type Ec2,
+  type Ssm,
   type InstanceInfo,
   type TaskDeps,
 } from './tasks.js';
@@ -77,27 +80,43 @@ class FakeEc2 implements Ec2 {
   }
 }
 
+class FakeSsm implements Ssm {
+  sent: string[] = [];
+  status: CommandStatus = 'pending';
+  async sendCommand(_: string, { instanceId, documentName }: { instanceId: string; documentName: string }) {
+    this.sent.push(`${documentName} ${instanceId}`);
+    return 'cmd-1';
+  }
+  async commandStatus() {
+    return this.status;
+  }
+}
+
 const GAME_INFRA = {
   'us-west-2': {
     subnetIds: ['subnet-a', 'subnet-b', 'subnet-c'],
     launchTemplates: { 'minecraft-java': { id: 'lt-1' } },
+    stopAgentDocument: 'hearth-dev-stop-agent',
   },
 };
 
 describe('workflow tasks', () => {
   let server: ServerRecord;
   let ec2: FakeEc2;
+  let ssm: FakeSsm;
   let tasks: ReturnType<typeof workflowTasks>;
   let recorded: { name: string; value: number; dimensions?: Record<string, string> }[];
 
   const setup = (overrides: Partial<ServerRecord> = {}) => {
     server = newServer(overrides);
     ec2 = new FakeEc2();
+    ssm = new FakeSsm();
     recorded = [];
     tasks = workflowTasks({
       env: 'dev',
       store: fakeStore(server),
       ec2,
+      ssm,
       gameInfra: GAME_INFRA,
       now: () => NOW,
       metrics: { record: (name, value, _unit, dimensions) => recorded.push({ name, value, dimensions }) },
@@ -178,6 +197,34 @@ describe('workflow tasks', () => {
 
   describe('stop', () => {
     beforeEach(() => setup({ status: 'STOPPING', instanceId: 'i-1', agentState: 'ready', agentReportedAt: EARLIER }));
+
+    it('stops the agent through Run Command before the instance, and waits for it', async () => {
+      ec2.instances['i-1'] = { state: 'running', volumes: {} };
+      const state = await tasks.stopAgent({ serverId: 's1' });
+      expect(state).toEqual({ serverId: 's1', since: NOW.toISOString(), commandId: 'cmd-1' });
+      expect(ssm.sent).toEqual(['hearth-dev-stop-agent i-1']);
+      expect(ec2.calls).toEqual([]);
+      await expect(tasks.waitForAgentStop(state)).rejects.toBeInstanceOf(NotReady);
+      ssm.status = 'success';
+      await expect(tasks.waitForAgentStop(state)).resolves.toEqual(state);
+    });
+
+    it('fails the agent stop when the command fails, so the workflow stops the instance anyway', async () => {
+      ssm.status = 'failed';
+      await expect(tasks.waitForAgentStop({ serverId: 's1', commandId: 'cmd-1' })).rejects.toBeInstanceOf(AgentStopFailed);
+    });
+
+    it('skips the agent when the instance is not running', async () => {
+      ec2.instances['i-1'] = { state: 'stopped', volumes: {} };
+      const state = await tasks.stopAgent({ serverId: 's1' });
+      expect(ssm.sent).toEqual([]);
+      await expect(tasks.waitForAgentStop(state)).resolves.toEqual(state);
+    });
+
+    it("keeps the stop's start time, so the agent's earlier stopped report still counts", async () => {
+      const out = await tasks.stopInstance({ serverId: 's1', since: EARLIER });
+      expect(out.since).toBe(EARLIER);
+    });
 
     it('stops the instance and waits until EC2 says stopped', async () => {
       await tasks.stopInstance({ serverId: 's1' });

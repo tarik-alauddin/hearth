@@ -155,6 +155,16 @@ describe('GameInfraStack', () => {
     });
   });
 
+  it('has a Run Command document that stops the agent', () => {
+    template.hasResourceProperties('AWS::SSM::Document', {
+      Name: 'hearth-dev-stop-agent',
+      DocumentType: 'Command',
+      Content: Match.objectLike({
+        mainSteps: [Match.objectLike({ inputs: Match.objectLike({ runCommand: ['systemctl stop hearth-agent.service'] }) })],
+      }),
+    });
+  });
+
   it("lets instances read only their environment's stable agent channel", () => {
     const statements = Object.values(template.findResources('AWS::IAM::Policy')).flatMap(
       (p) => (p as { Properties: { PolicyDocument: { Statement: { Action: string; Resource: unknown }[] } } })

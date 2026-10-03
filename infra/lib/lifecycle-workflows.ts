@@ -42,7 +42,13 @@ function requireId(id: string | undefined): string {
   return id;
 }
 
-type StepFactory = (id: string, fn: NodejsFunction, task: string, retry?: Retry) => LambdaInvoke;
+/** Where a step goes on error instead of the workflow's failure path, keeping the error at resultPath. */
+interface Fallback {
+  next: LambdaInvoke;
+  resultPath: string;
+}
+
+type StepFactory = (id: string, fn: NodejsFunction, task: string, retry?: Retry, fallback?: Fallback) => LambdaInvoke;
 
 /** Invokes a task Lambda with `{ task, input, workflow }`; its result becomes the next step's input. */
 function invoke(scope: Construct, id: string, fn: NodejsFunction, task: string, workflow: string): LambdaInvoke {
@@ -63,6 +69,8 @@ interface Retry {
 // Waits are task retries on NotReady; these bound how long each wait may take.
 const RETRY_VOLUME: Retry = { error: 'NotReady', interval: Duration.seconds(10), maxAttempts: 30 }; // 5 min
 const RETRY_AGENT: Retry = { error: 'NotReady', interval: Duration.seconds(15), maxAttempts: 60 }; // 15 min
+// The agent gets 5 minutes to stop; past that something is wrong, and the instance is stopped anyway.
+const RETRY_AGENT_STOP: Retry = { error: 'NotReady', interval: Duration.seconds(10), maxAttempts: 36 }; // 6 min
 const RETRY_STOPPED: Retry = { error: 'NotReady', interval: Duration.seconds(15), maxAttempts: 40 }; // 10 min
 // Stopping a failed server's instance: retried on anything (e.g. the instance is still pending).
 const RETRY_CLEANUP: Retry = { error: 'States.ALL', interval: Duration.seconds(10), maxAttempts: 18 }; // 3 min
@@ -90,6 +98,7 @@ export class LifecycleWorkflows extends Construct {
         infra.region,
         {
           subnetIds: infra.vpc.publicSubnets.map((subnet) => subnet.subnetId),
+          stopAgentDocument: infra.stopAgentDocument.ref,
           launchTemplates: Object.fromEntries(
             Object.entries(infra.launchTemplates).map(([game, template]) => [
               game,
@@ -113,7 +122,7 @@ export class LifecycleWorkflows extends Construct {
     const power = fn('PowerTasks', 'powerHandler');
     const status = fn('StatusTasks', 'statusHandler');
     this.grantLaunch(launch, props);
-    this.grantPower(power, env);
+    this.grantPower(power, props);
     for (const f of [launch, power, status]) {
       f.addToRolePolicy(
         new PolicyStatement({ actions: ['dynamodb:GetItem', 'dynamodb:UpdateItem'], resources: [table.tableArn] }),
@@ -131,11 +140,17 @@ export class LifecycleWorkflows extends Construct {
         .next(step('WaitForAgent', status, 'waitForAgent', RETRY_AGENT))
         .next(step('MarkRunning', status, 'markRunning')),
     );
-    this.stopServer = this.stateMachine('Stop', `hearth-${env}-stop-server`, status, undefined, (step) =>
-      step('StopInstance', power, 'stopInstance')
+    this.stopServer = this.stateMachine('Stop', `hearth-${env}-stop-server`, status, undefined, (step) => {
+      const stopInstance = step('StopInstance', power, 'stopInstance');
+      // A stuck or unreachable agent mustn't block the stop: stop the instance anyway (the stop is
+      // then recorded as unclean, since the agent never reported stopped).
+      const stopAnyway = { next: stopInstance, resultPath: '$.agentStopError' };
+      return step('StopAgent', power, 'stopAgent', undefined, stopAnyway)
+        .next(step('WaitForAgentStop', power, 'waitForAgentStop', RETRY_AGENT_STOP, stopAnyway))
+        .next(stopInstance)
         .next(step('WaitForStopped', power, 'waitForStopped', RETRY_STOPPED))
-        .next(step('MarkStopped', status, 'markStopped')),
-    );
+        .next(step('MarkStopped', status, 'markStopped'));
+    });
   }
 
   /**
@@ -169,7 +184,7 @@ export class LifecycleWorkflows extends Construct {
       failed.addCatch(markFailed, { resultPath: '$.cleanupError' });
       failed.next(markFailed);
     }
-    const step: StepFactory = (stepId, fn, task, retry) => {
+    const step: StepFactory = (stepId, fn, task, retry, fallback) => {
       invoked.add(fn);
       const s = invoke(scope, stepId, fn, task, workflow);
       if (retry) {
@@ -180,7 +195,8 @@ export class LifecycleWorkflows extends Construct {
           backoffRate: retry.backoffRate ?? 1,
         });
       }
-      s.addCatch(failed, { resultPath: '$.error' });
+      if (fallback) s.addCatch(fallback.next, { resultPath: fallback.resultPath });
+      else s.addCatch(failed, { resultPath: '$.error' });
       return s;
     };
     const machine = new StateMachine(scope, 'StateMachine', {
@@ -264,9 +280,14 @@ export class LifecycleWorkflows extends Construct {
     );
   }
 
-  /** Power: start and stop only this environment's Hearth instances (enforced by tag). */
-  private grantPower(fn: NodejsFunction, env: string) {
-    const instances = `arn:${Stack.of(this).partition}:ec2:*:${Stack.of(this).account}:instance/*`;
+  /**
+   * Power: start and stop only this environment's Hearth instances (enforced by tag), and run only
+   * Hearth's stop-agent document on them.
+   */
+  private grantPower(fn: NodejsFunction, props: LifecycleWorkflowsProps) {
+    const { env } = props.config;
+    const { partition, account } = Stack.of(this);
+    const instances = `arn:${partition}:ec2:*:${account}:instance/*`;
     fn.addToRolePolicy(
       new PolicyStatement({
         actions: ['ec2:StartInstances', 'ec2:StopInstances'],
@@ -275,10 +296,27 @@ export class LifecycleWorkflows extends Construct {
       }),
     );
     fn.addToRolePolicy(new PolicyStatement({ actions: ['ec2:DescribeInstances'], resources: ['*'] }));
+    // Run Command: SendCommand names both a document and the instances; each must be allowed.
+    fn.addToRolePolicy(
+      new PolicyStatement({
+        actions: ['ssm:SendCommand'],
+        resources: props.gameInfra.map(
+          (infra) => `arn:${partition}:ssm:${infra.region}:${account}:document/${infra.stopAgentDocument.ref}`,
+        ),
+      }),
+    );
+    fn.addToRolePolicy(
+      new PolicyStatement({
+        actions: ['ssm:SendCommand'],
+        resources: [instances],
+        conditions: { StringEquals: { 'ssm:resourceTag/app': 'hearth', 'ssm:resourceTag/env': env } },
+      }),
+    );
+    fn.addToRolePolicy(new PolicyStatement({ actions: ['ssm:GetCommandInvocation'], resources: ['*'] }));
     acknowledgeWildcards(
       fn,
       ['*', instances],
-      'Instances are chosen at runtime; limited to this environment by the app and env tag condition. DescribeInstances has no resource-level permissions.',
+      'Instances are chosen at runtime; limited to this environment by the app and env tag condition. DescribeInstances and GetCommandInvocation have no resource-level permissions.',
     );
   }
 }

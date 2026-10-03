@@ -113,6 +113,27 @@ describe('OrchestrationStack', () => {
       expect(pass?.Condition).toEqual({ StringEquals: { 'iam:PassedToService': 'ec2.amazonaws.com' } });
     });
 
+    it('stops the agent before the instance, and stops the instance even if the agent stop fails', () => {
+      const def = definition('hearth-dev-stop-server');
+      const order = ['StopAgent', 'WaitForAgentStop', 'StopInstance', 'WaitForStopped', 'MarkStopped'].map((s) =>
+        def.indexOf(`\\"${s}\\":`),
+      );
+      expect(order.every((i, n) => i >= 0 && (n === 0 || i > order[n - 1]!))).toBe(true);
+      expect(def).toContain('\\"StartAt\\":\\"StopAgent\\"');
+      const q = '\\"';
+      const stopAnyway = `${q}ErrorEquals${q}:[${q}States.ALL${q}],${q}ResultPath${q}:${q}$.agentStopError${q},${q}Next${q}:${q}StopInstance${q}`;
+      expect(def.split(stopAnyway)).toHaveLength(3); // StopAgent and WaitForAgentStop
+    });
+
+    it('only runs the stop-agent document, and only on Hearth instances of this environment', () => {
+      const send = statementsOf('WorkflowsPowerTasks').filter((s) => s.Action === 'ssm:SendCommand');
+      expect(send).toHaveLength(2);
+      const onDocument = send.find((s) => JSON.stringify(s.Resource).includes(':document/'));
+      expect(onDocument?.Condition).toBeUndefined();
+      const onInstances = send.find((s) => JSON.stringify(s.Resource).includes('instance/*'));
+      expect(onInstances?.Condition).toEqual({ StringEquals: { 'ssm:resourceTag/app': 'hearth', 'ssm:resourceTag/env': 'dev' } });
+    });
+
     it('only starts and stops Hearth instances of this environment', () => {
       const power = statementsOf('WorkflowsPowerTasks').find((s) => JSON.stringify(s.Action).includes('StartInstances'));
       expect(power?.Condition).toEqual({ StringEquals: { 'aws:ResourceTag/app': 'hearth', 'aws:ResourceTag/env': 'dev' } });

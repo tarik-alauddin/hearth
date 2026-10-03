@@ -2,6 +2,7 @@
 // permissions they need; each only dispatches the tasks it's allowed to run.
 import { createServersStore } from '@hearth/core';
 import { sdkEc2 } from './ec2.js';
+import { sdkSsm } from './ssm.js';
 import { workflowTasks, type GameInfra, type TaskContext, type WorkflowState } from './tasks.js';
 
 function requireEnv(name: string): string {
@@ -14,6 +15,7 @@ const tasks = workflowTasks({
   env: requireEnv('HEARTH_ENV'),
   store: createServersStore(requireEnv('SERVERS_TABLE')),
   ec2: sdkEc2(),
+  ssm: sdkSsm(),
   gameInfra: JSON.parse(process.env.GAME_INFRA ?? '{}') as GameInfra,
 });
 
@@ -29,5 +31,5 @@ function dispatcher(allowed: readonly TaskName[]) {
 }
 
 export const launchHandler = dispatcher(['launchInstance', 'recordVolume']);
-export const powerHandler = dispatcher(['startInstance', 'stopInstance', 'waitForStopped', 'stopAfterFailure']);
+export const powerHandler = dispatcher(['startInstance', 'stopAgent', 'waitForAgentStop', 'stopInstance', 'waitForStopped', 'stopAfterFailure']);
 export const statusHandler = dispatcher(['waitForAgent', 'markRunning', 'markStopped', 'markFailed']);
