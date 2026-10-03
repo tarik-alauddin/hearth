@@ -69,7 +69,8 @@ interface Retry {
 // Waits are task retries on NotReady; these bound how long each wait may take.
 const RETRY_VOLUME: Retry = { error: 'NotReady', interval: Duration.seconds(10), maxAttempts: 30 }; // 5 min
 const RETRY_AGENT: Retry = { error: 'NotReady', interval: Duration.seconds(15), maxAttempts: 60 }; // 15 min
-const RETRY_AGENT_STOP: Retry = { error: 'NotReady', interval: Duration.seconds(10), maxAttempts: 90 }; // 15 min
+// The agent gets 5 minutes to stop; past that something is wrong, and the instance is stopped anyway.
+const RETRY_AGENT_STOP: Retry = { error: 'NotReady', interval: Duration.seconds(10), maxAttempts: 36 }; // 6 min
 const RETRY_STOPPED: Retry = { error: 'NotReady', interval: Duration.seconds(15), maxAttempts: 40 }; // 10 min
 // Stopping a failed server's instance: retried on anything (e.g. the instance is still pending).
 const RETRY_CLEANUP: Retry = { error: 'States.ALL', interval: Duration.seconds(10), maxAttempts: 18 }; // 3 min

@@ -154,8 +154,9 @@ export class GameInfraStack extends HearthStack {
           {
             action: 'aws:runShellScript',
             name: 'stopAgent',
-            // Blocks until the agent has exited (bounded by the unit's TimeoutStopSec).
-            inputs: { runCommand: ['systemctl stop hearth-agent.service'], timeoutSeconds: '900' },
+            // Blocks until the agent has exited. systemd gives it at most 5 minutes (the unit's TimeoutStopSec);
+            // the extra 30 s lets systemctl return after systemd gives up.
+            inputs: { runCommand: ['systemctl stop hearth-agent.service'], timeoutSeconds: '330' },
           },
         ],
       },
