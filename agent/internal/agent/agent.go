@@ -6,10 +6,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
+	"os"
 	"time"
+	"unicode/utf8"
 
 	"github.com/tarik-alauddin/hearth/agent/internal/api"
+	"github.com/tarik-alauddin/hearth/agent/internal/backup"
 	"github.com/tarik-alauddin/hearth/agent/internal/container"
 	"github.com/tarik-alauddin/hearth/agent/internal/game"
 )
@@ -41,6 +45,11 @@ var (
 	ErrNeverHealthy = errors.New("agent never reached the API")
 )
 
+// Backups backs the world up (see package backup).
+type Backups interface {
+	Backup(ctx context.Context, spec game.BackupSpec) (backup.Result, error)
+}
+
 // Runtime runs the game container.
 type Runtime interface {
 	Start(ctx context.Context, spec container.Spec) error
@@ -57,8 +66,14 @@ type Options struct {
 	// DataDir is the root of the world data volume.
 	DataDir   string
 	MemoryMiB int
-	// StopTimeout bounds the graceful stop (save the world, stop the container) after shutdown is requested.
+	// StopTimeout bounds the graceful stop (save the world, stop the container, back up) after
+	// shutdown is requested.
 	StopTimeout time.Duration
+	// Backups, if set, backs the world up after the game stops, when BackupMarker exists then.
+	Backups Backups
+	// BackupMarker is the file the stop workflow's Run Command creates to ask for a backup. Other
+	// stops (an OS shutdown) don't create it: EC2 may not wait long enough for an upload.
+	BackupMarker string
 	// ReadyTimeout bounds how long the game may take to accept players. Defaults to 15 minutes,
 	// enough for a first start that downloads the server and generates a world.
 	ReadyTimeout time.Duration
@@ -105,6 +120,8 @@ func New(opts Options) *Agent {
 func (a *Agent) Run(ctx context.Context) error {
 	a.log.Info("agent starting")
 	a.started = time.Now()
+	// A marker left from an earlier stop that never got to use it isn't a request for this run.
+	a.takeBackupMarker()
 	notice := ""
 	if a.Updater != nil {
 		if failed := a.Updater.FailedVersion(); failed != "" && failed != a.Version {
@@ -153,7 +170,7 @@ func (a *Agent) Run(ctx context.Context) error {
 			a.fail(ctx, err.Error())
 			<-ctx.Done()
 		}
-		return a.shutdown(ctx, spec, adapter, false)
+		return a.shutdown(ctx, spec, adapter, false, nil)
 	}
 
 	waitCtx, stopWaiting := context.WithCancel(context.WithoutCancel(ctx))
@@ -169,6 +186,13 @@ func (a *Agent) Run(ctx context.Context) error {
 	}()
 
 	ready := a.waitReady(ctx, adapter, exited)
+	// Back up only a world the game got as far as loading; even if it later crashed, what's on
+	// disk is the newest copy there is.
+	var backupSpec *game.BackupSpec
+	if ready {
+		s := adapter.Backup(cfg)
+		backupSpec = &s
+	}
 	if ready {
 		a.log.Info("game ready")
 		a.report(ctx, "ready", "")
@@ -183,7 +207,7 @@ func (a *Agent) Run(ctx context.Context) error {
 		<-ctx.Done()
 	}
 	stopWaiting()
-	return a.shutdown(ctx, spec, adapter, ready)
+	return a.shutdown(ctx, spec, adapter, ready, backupSpec)
 }
 
 // fetchConfig retries until the API answers. Early failures are expected: IAM and the
@@ -252,10 +276,12 @@ func (a *Agent) waitReady(ctx context.Context, adapter game.Adapter, exited <-ch
 	}
 }
 
-// shutdown saves the world (if the game got far enough to have one loaded) and stops the container.
-// It runs on its own deadline: ctx is already cancelled, but the save must still finish.
-func (a *Agent) shutdown(ctx context.Context, spec container.Spec, adapter game.Adapter, save bool) error {
-	a.log.Info("shutdown requested")
+// shutdown saves the world (if the game is running with one loaded), stops the container, then
+// backs up backupSpec if the stop asked for it. It runs on its own deadline: ctx is already
+// cancelled, but the save and backup must still finish.
+func (a *Agent) shutdown(ctx context.Context, spec container.Spec, adapter game.Adapter, save bool, backupSpec *game.BackupSpec) error {
+	wantBackup := a.takeBackupMarker()
+	a.log.Info("shutdown requested", "backup", wantBackup)
 	stopCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), a.StopTimeout)
 	defer cancel()
 
@@ -279,9 +305,50 @@ func (a *Agent) shutdown(ctx context.Context, spec container.Spec, adapter game.
 		a.report(stopCtx, "error", err.Error())
 		return err
 	}
-	a.report(stopCtx, "stopped", "")
+
+	// The world is saved, so a failed backup is reported but doesn't make the stop an error.
+	msg := ""
+	if wantBackup && backupSpec != nil && a.Backups != nil {
+		if err := a.backup(stopCtx, *backupSpec); err != nil {
+			a.log.Error("backup failed", "err", err)
+			msg = "world saved, but the backup failed: " + err.Error()
+		}
+	}
+	a.report(stopCtx, "stopped", msg)
 	a.log.Info("agent stopped")
 	return nil
+}
+
+// reportReserve is kept back from the backup (up to a quarter of StopTimeout), so the stopped
+// report can still go out after it.
+const reportReserve = 15 * time.Second
+
+func (a *Agent) backup(ctx context.Context, spec game.BackupSpec) error {
+	a.report(ctx, "stopping", "backing up the world")
+	if deadline, ok := ctx.Deadline(); ok {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithDeadline(ctx, deadline.Add(-min(reportReserve, a.StopTimeout/4)))
+		defer cancel()
+	}
+	started := time.Now()
+	res, err := a.Backups.Backup(ctx, spec)
+	if err != nil {
+		return err
+	}
+	a.log.Info("world backed up", "key", res.Key, "bytes", res.Bytes, "took", time.Since(started).Round(time.Millisecond))
+	return nil
+}
+
+// takeBackupMarker reports whether a backup was asked for, removing the request.
+func (a *Agent) takeBackupMarker() bool {
+	if a.BackupMarker == "" {
+		return false
+	}
+	err := os.Remove(a.BackupMarker)
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		a.log.Warn("couldn't remove the backup marker", "path", a.BackupMarker, "err", err)
+	}
+	return err == nil
 }
 
 func (a *Agent) fail(ctx context.Context, msg string) {
@@ -292,7 +359,7 @@ func (a *Agent) fail(ctx context.Context, msg string) {
 // report sends a status report, retrying briefly. Reports are best effort: failing to report
 // never stops the game from running or saving.
 func (a *Agent) report(ctx context.Context, state, msg string) {
-	report := api.StatusReport{State: state, AgentVersion: a.Version, Message: msg}
+	report := api.StatusReport{State: state, AgentVersion: a.Version, Message: truncate(msg, maxMessageLength)}
 	for attempt := 1; attempt <= 3; attempt++ {
 		err := a.API.ReportStatus(ctx, report)
 		if err == nil {
@@ -304,6 +371,22 @@ func (a *Agent) report(ctx context.Context, state, msg string) {
 			return
 		}
 	}
+}
+
+// maxMessageLength is the longest message the API accepts (MAX_MESSAGE_LENGTH in services/api).
+const maxMessageLength = 500
+
+// truncate shortens s to at most n bytes, cutting between characters and ending with "...". The
+// API counts UTF-16 code units, and no character is longer in UTF-16 than in UTF-8.
+func truncate(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	cut := n - len("...")
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	return s[:cut] + "..."
 }
 
 // markHealthy records, once per run, that this version reached the API.

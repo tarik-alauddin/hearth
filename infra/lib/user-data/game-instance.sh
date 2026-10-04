@@ -141,9 +141,10 @@ EnvironmentFile=/etc/hearth/agent.env
 ExecStart=/usr/local/bin/hearth-bootstrap
 Restart=on-failure
 RestartSec=10
-# SIGTERM goes to the agent only; it stops the game itself. Longer than the agent's own 90s stop timeout.
+# SIGTERM goes to the agent only; it stops the game itself. Longer than the agent's own 270s stop
+# timeout (save, stop the game, back up); the stop-agent document allows 330s.
 KillMode=mixed
-TimeoutStopSec=120
+TimeoutStopSec=300
 
 [Install]
 WantedBy=multi-user.target

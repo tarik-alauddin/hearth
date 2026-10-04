@@ -312,11 +312,11 @@ export class LifecycleWorkflows extends Construct {
         conditions: { StringEquals: { 'ssm:resourceTag/app': 'hearth', 'ssm:resourceTag/env': env } },
       }),
     );
-    fn.addToRolePolicy(new PolicyStatement({ actions: ['ssm:GetCommandInvocation'], resources: ['*'] }));
+    fn.addToRolePolicy(new PolicyStatement({ actions: ['ssm:GetCommandInvocation', 'ssm:CancelCommand'], resources: ['*'] }));
     acknowledgeWildcards(
       fn,
       ['*', instances],
-      'Instances are chosen at runtime; limited to this environment by the app and env tag condition. DescribeInstances and GetCommandInvocation have no resource-level permissions.',
+      'Instances are chosen at runtime; limited to this environment by the app and env tag condition. DescribeInstances, GetCommandInvocation and CancelCommand have no resource-level permissions.',
     );
   }
 }

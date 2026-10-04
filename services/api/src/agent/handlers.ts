@@ -5,12 +5,15 @@ import type {
 import {
   DEFAULT_AGENT_CHANNEL,
   GAME_DEFINITIONS,
+  backupKey,
   isAgentState,
+  isBackupKey,
   type AgentConfig,
   type AgentStatusReport,
   type ServerRecord,
 } from '@hearth/shared';
 import type { ServersStore } from '@hearth/core';
+import type { BackupStorage } from './backups.js';
 import { callerInstanceId } from './caller.js';
 import type { AgentReleases } from './releases.js';
 
@@ -23,18 +26,19 @@ interface Caller {
 }
 
 export interface AgentHandlerDeps {
-  store: Pick<ServersStore, 'findByInstance' | 'recordAgentReport'>;
+  store: Pick<ServersStore, 'findByInstance' | 'recordAgentReport' | 'recordBackup'>;
   /** Names of the game instance roles allowed to call agent routes. */
   instanceRoleNames: readonly string[];
   /** Which agent release each channel points at. */
   releases: AgentReleases;
+  backups: BackupStorage;
   now?: () => Date;
 }
 
 const MAX_VERSION_LENGTH = 64;
 const MAX_MESSAGE_LENGTH = 500;
 
-export function agentHandlers({ store, instanceRoleNames, releases, now = () => new Date() }: AgentHandlerDeps) {
+export function agentHandlers({ store, instanceRoleNames, releases, backups, now = () => new Date() }: AgentHandlerDeps) {
   /** Resolves the calling instance's server, or the error response to send instead. */
   async function callerServer(event: Event): Promise<Caller | { error: Result }> {
     const instanceId = callerInstanceId(event.requestContext.authorizer.iam.userArn, instanceRoleNames);
@@ -76,11 +80,39 @@ export function agentHandlers({ store, instanceRoleNames, releases, now = () => 
     return { statusCode: 204 };
   }
 
-  return { config, status };
+  /** POST /agent/backup-credentials: where to upload a new backup, with credentials for that key only. */
+  async function backupCredentials(event: Event): Promise<Result> {
+    const caller = await callerServer(event);
+    if ('error' in caller) return caller.error;
+    const { serverId } = caller.server;
+    const target = await backups.target(serverId, backupKey(serverId, now()));
+    console.log(JSON.stringify({ msg: 'backup started', serverId, instanceId: caller.instanceId, key: target.key }));
+    return json(200, target);
+  }
+
+  /** POST /agent/backups: the agent finished uploading a backup; record it as the newest. */
+  async function backupDone(event: Event): Promise<Result> {
+    const body = parseJsonObject(event);
+    if (typeof body === 'string') return json(400, { message: body });
+    const caller = await callerServer(event);
+    if ('error' in caller) return caller.error;
+    const { instanceId, server } = caller;
+    const { key } = body;
+    if (typeof key !== 'string' || !isBackupKey(server.serverId, key)) return json(400, { message: 'Invalid key' });
+    const bytes = await backups.size(key);
+    if (bytes === undefined) return json(400, { message: `No backup at ${key}` });
+    if (!(await store.recordBackup(server.serverId, instanceId, { key, bytes }, now()))) {
+      return json(409, { message: `Server ${server.serverId} is no longer on instance ${instanceId}` });
+    }
+    console.log(JSON.stringify({ msg: 'backup done', serverId: server.serverId, instanceId, key, bytes }));
+    return { statusCode: 204 };
+  }
+
+  return { config, status, backupCredentials, backupDone };
 }
 
-/** The validated report, or an error message. */
-function parseStatusReport(event: Event): AgentStatusReport | string {
+/** The request body as a JSON object, or an error message. */
+function parseJsonObject(event: Event): Record<string, unknown> | string {
   let body: unknown;
   try {
     const raw = event.isBase64Encoded ? Buffer.from(event.body ?? '', 'base64').toString('utf8') : event.body;
@@ -89,7 +121,14 @@ function parseStatusReport(event: Event): AgentStatusReport | string {
     return 'Body must be JSON';
   }
   if (typeof body !== 'object' || body === null) return 'Body must be a JSON object';
-  const { state, agentVersion, message } = body as Record<string, unknown>;
+  return body as Record<string, unknown>;
+}
+
+/** The validated report, or an error message. */
+function parseStatusReport(event: Event): AgentStatusReport | string {
+  const body = parseJsonObject(event);
+  if (typeof body === 'string') return body;
+  const { state, agentVersion, message } = body;
   if (!isAgentState(state)) return 'Invalid state';
   if (typeof agentVersion !== 'string' || !agentVersion || agentVersion.length > MAX_VERSION_LENGTH) {
     return 'Invalid agentVersion';

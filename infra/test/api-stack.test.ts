@@ -34,6 +34,8 @@ describe('ApiStack', () => {
   it.each([
     ['GET /agent/config'],
     ['POST /agent/status'],
+    ['POST /agent/backup-credentials'],
+    ['POST /agent/backups'],
   ])('protects %s with IAM auth', (routeKey) => {
     template.hasResourceProperties('AWS::ApiGatewayV2::Route', { RouteKey: routeKey, AuthorizationType: 'AWS_IAM' });
   });
@@ -46,7 +48,12 @@ describe('ApiStack', () => {
   });
 
   it('runs the agent handlers on ARM Node 24 with the table and instance role names', () => {
-    for (const handler of ['index.configHandler', 'index.statusHandler']) {
+    for (const handler of [
+      'index.configHandler',
+      'index.statusHandler',
+      'index.backupCredentialsHandler',
+      'index.backupDoneHandler',
+    ]) {
       template.hasResourceProperties('AWS::Lambda::Function', {
         Handler: handler,
         Runtime: 'nodejs24.x',
@@ -94,8 +101,29 @@ describe('ApiStack', () => {
     const invoke = JSON.stringify(statements[0]?.Resource);
     expect(invoke).toContain('/$default/GET/agent/config');
     expect(invoke).toContain('/$default/POST/agent/status');
+    expect(invoke).toContain('/$default/POST/agent/backup-credentials');
+    expect(invoke).toContain('/$default/POST/agent/backups');
     expect(invoke).not.toMatch(/\/\*\//);
     expect(invoke).not.toContain('/admin');
+  });
+
+  it('has a backup writer role only the credentials function can assume, writing only server backups', () => {
+    const [id, role] = Object.entries(template.findResources('AWS::IAM::Role')).find(([key]) => key.startsWith('BackupWriter'))!;
+    const trust = (role as { Properties: { AssumeRolePolicyDocument: { Statement: { Principal: unknown }[] } } }).Properties
+      .AssumeRolePolicyDocument.Statement;
+    expect(trust).toHaveLength(1);
+    expect(JSON.stringify(trust[0]?.Principal)).toContain('AgentBackupCredentialsServiceRole');
+
+    const statements = policyStatements(`${id.replace(/[0-9A-F]{8}$/, '')}DefaultPolicy`) as { Action: unknown; Resource: unknown }[];
+    expect(statements).toHaveLength(1);
+    expect(statements[0]?.Action).toEqual(['s3:AbortMultipartUpload', 's3:PutObject']);
+    expect(JSON.stringify(statements[0]?.Resource)).toContain('/servers/*/*');
+  });
+
+  it('lets the backup-done function read server backups (HeadObject) and update items', () => {
+    const statements = policyStatements('AgentBackupDoneServiceRoleDefaultPolicy') as { Action: string; Resource: unknown }[];
+    expect(statements.map((s) => s.Action).sort()).toEqual(['dynamodb:Query', 'dynamodb:UpdateItem', 's3:GetObject']);
+    expect(JSON.stringify(statements.find((s) => s.Action === 's3:GetObject')?.Resource)).toContain('/servers/*/*');
   });
 
   it.each([

@@ -56,9 +56,22 @@ func (a *Adapter) Container(cfg game.Config) container.Spec {
 			{HostIP: "0.0.0.0", HostPort: cfg.Port, ContainerPort: cfg.Port, Protocol: "tcp"},
 			{HostIP: "127.0.0.1", HostPort: rconPort, ContainerPort: rconPort, Protocol: "tcp"},
 		},
-		Mounts:      []container.Mount{{Source: path.Join(cfg.DataDir, "minecraft"), Target: "/data"}},
+		Mounts:      []container.Mount{{Source: dataDir(cfg), Target: "/data"}},
 		StopTimeout: stopTimeout,
 	}
+}
+
+// Backup keeps the world, settings and player lists. The image downloads the server jar and its
+// libraries again for the configured version, and the rest is logs and per-run files.
+func (a *Adapter) Backup(cfg game.Config) game.BackupSpec {
+	return game.BackupSpec{
+		Dir:     dataDir(cfg),
+		Exclude: []string{"*.jar", "libraries", "versions", "logs", "crash-reports", "debug", ".rcon-cli.*"},
+	}
+}
+
+func dataDir(cfg game.Config) string {
+	return path.Join(cfg.DataDir, "minecraft")
 }
 
 // Ready succeeds once the server answers a server list ping, which is when players can join.

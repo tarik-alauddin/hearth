@@ -38,6 +38,8 @@ export interface ServersStore {
   findByStatus(status: ServerStatus, changedBefore?: Date): Promise<StatusIndexEntry[]>;
   /** Agent routes. Returns false if the server is no longer on this instance. */
   recordAgentReport(serverId: string, instanceId: string, report: AgentStatusReport, at: Date): Promise<boolean>;
+  /** Agent routes: records a finished backup. Returns false if the server is no longer on this instance. */
+  recordBackup(serverId: string, instanceId: string, backup: { key: string; bytes: number }, at: Date): Promise<boolean>;
   /**
    * State sync: records what EC2 says about the server's instance. Returns false if the server is
    * no longer on this instance, or a newer state is already recorded (events arrive out of order).
@@ -176,6 +178,15 @@ export function dynamoServersStore(
         // The index is eventually consistent; only write if the server is still on this instance.
         ConditionExpression: 'instanceId = :instanceId',
         ExpressionAttributeValues: values,
+      });
+    },
+
+    async recordBackup(serverId, instanceId, { key, bytes }, at) {
+      return conditionalUpdate({
+        Key: { serverId },
+        UpdateExpression: 'SET lastBackupKey = :key, lastBackupBytes = :bytes, lastBackupAt = :at',
+        ConditionExpression: 'instanceId = :instanceId',
+        ExpressionAttributeValues: { ':key': key, ':bytes': bytes, ':at': at.toISOString(), ':instanceId': instanceId },
       });
     },
 

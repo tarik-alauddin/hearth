@@ -1,15 +1,22 @@
-import { RemovalPolicy } from 'aws-cdk-lib';
+import { RemovalPolicy, Validations } from 'aws-cdk-lib';
 import { HttpApi, HttpMethod, HttpStage, LogGroupLogDestination } from 'aws-cdk-lib/aws-apigatewayv2';
 import { HttpIamAuthorizer } from 'aws-cdk-lib/aws-apigatewayv2-authorizers';
 import { HttpLambdaIntegration } from 'aws-cdk-lib/aws-apigatewayv2-integrations';
 import type { ITableV2 } from 'aws-cdk-lib/aws-dynamodb';
-import { Policy, PolicyStatement, type IRole } from 'aws-cdk-lib/aws-iam';
+import { Policy, PolicyStatement, Role, type IRole } from 'aws-cdk-lib/aws-iam';
 import { LogGroup, RetentionDays } from 'aws-cdk-lib/aws-logs';
 import { StringParameter } from 'aws-cdk-lib/aws-ssm';
 import type { IStateMachine } from 'aws-cdk-lib/aws-stepfunctions';
 import type { NodejsFunction } from 'aws-cdk-lib/aws-lambda-nodejs';
 import type { Construct } from 'constructs';
-import { AGENT_CHANNELS, SERVERS_BY_INSTANCE_INDEX, agentChannelParameter, agentReleasesBucket } from '@hearth/shared';
+import {
+  AGENT_CHANNELS,
+  SERVERS_BY_INSTANCE_INDEX,
+  agentChannelParameter,
+  agentReleasesBucket,
+  backupBucket,
+  backupPrefix,
+} from '@hearth/shared';
 import { hearthFunction } from '../hearth-function.js';
 import { HearthStack, type HearthStackProps } from '../hearth-stack.js';
 
@@ -33,6 +40,8 @@ export class ApiStack extends HearthStack {
   constructor(scope: Construct, props: ApiStackProps) {
     super(scope, 'Api', props);
     const { env, isProd } = props.config;
+    // DataStack's bucket, named rather than referenced: it's always in the home region, like this stack.
+    const backups = backupBucket(env, props.config.account, props.config.homeRegion);
     const removalPolicy = isProd ? RemovalPolicy.RETAIN : RemovalPolicy.DESTROY;
 
     this.api = new HttpApi(this, 'Api', { apiName: `hearth-${env}`, createDefaultStage: false });
@@ -59,6 +68,8 @@ export class ApiStack extends HearthStack {
           SERVERS_TABLE: props.serversTable.tableName,
           INSTANCE_ROLE_NAMES: props.instanceRoles.map((role) => role.roleName).join(','),
           AGENT_RELEASES_BUCKET: agentReleasesBucket(props.config.account),
+          BACKUP_BUCKET: backups,
+          BACKUP_BUCKET_REGION: props.config.homeRegion,
         },
       });
 
@@ -80,19 +91,52 @@ export class ApiStack extends HearthStack {
       new PolicyStatement({ actions: ['dynamodb:UpdateItem'], resources: [props.serversTable.tableArn] }),
     );
 
+    // Backups: instances have no S3 access of their own. This role can write any server's backups;
+    // the credentials handler narrows each session to one key (see services/api/src/agent/backups.ts).
+    const serverBackups = `arn:${this.partition}:s3:::${backups}/${backupPrefix('*')}*`;
+    const backupCredentialsFunction = agentFunction('AgentBackupCredentials', 'backupCredentialsHandler');
+    backupCredentialsFunction.addToRolePolicy(
+      new PolicyStatement({ actions: ['dynamodb:Query'], resources: [byInstanceIndexArn] }),
+    );
+    // Only the credentials function may assume the writer role.
+    const backupWriter = new Role(this, 'BackupWriter', {
+      assumedBy: backupCredentialsFunction.grantPrincipal,
+      description: `Hearth ${env}: writes world backups, one key per session`,
+    });
+    backupWriter.addToPolicy(
+      new PolicyStatement({ actions: ['s3:PutObject', 's3:AbortMultipartUpload'], resources: [serverBackups] }),
+    );
+    backupWriter.grantAssumeRole(backupCredentialsFunction.grantPrincipal);
+    backupCredentialsFunction.addEnvironment('BACKUP_WRITER_ROLE_ARN', backupWriter.roleArn);
+    const backupDoneFunction = agentFunction('AgentBackupDone', 'backupDoneHandler');
+    backupDoneFunction.addToRolePolicy(new PolicyStatement({ actions: ['dynamodb:Query'], resources: [byInstanceIndexArn] }));
+    backupDoneFunction.addToRolePolicy(
+      new PolicyStatement({ actions: ['dynamodb:UpdateItem'], resources: [props.serversTable.tableArn] }),
+    );
+    // HeadObject, to check the backup exists and read its size.
+    backupDoneFunction.addToRolePolicy(new PolicyStatement({ actions: ['s3:GetObject'], resources: [serverBackups] }));
+    for (const construct of [backupWriter, backupDoneFunction]) {
+      Validations.of(construct).acknowledge({
+        id: `AwsSolutions-IAM5[Resource::${serverBackups}]`,
+        reason: 'Every server has its own backup prefix; each writer session is narrowed to one key.',
+      });
+    }
+
     const authorizer = new HttpIamAuthorizer();
-    this.api.addRoutes({
-      path: '/agent/config',
-      methods: [HttpMethod.GET],
-      integration: new HttpLambdaIntegration('AgentConfigIntegration', configFunction),
-      authorizer,
-    });
-    this.api.addRoutes({
-      path: '/agent/status',
-      methods: [HttpMethod.POST],
-      integration: new HttpLambdaIntegration('AgentStatusIntegration', statusFunction),
-      authorizer,
-    });
+    const agentRoutes = [
+      ['/agent/config', HttpMethod.GET, configFunction],
+      ['/agent/status', HttpMethod.POST, statusFunction],
+      ['/agent/backup-credentials', HttpMethod.POST, backupCredentialsFunction],
+      ['/agent/backups', HttpMethod.POST, backupDoneFunction],
+    ] as const;
+    for (const [path, method, fn] of agentRoutes) {
+      this.api.addRoutes({
+        path,
+        methods: [method],
+        integration: new HttpLambdaIntegration(`${fn.node.id}Integration`, fn),
+        authorizer,
+      });
+    }
 
     // Admin routes: server operations for the hearth CLI, signed with your own AWS credentials.
     const admin = hearthFunction(this, 'Admin', {
@@ -121,7 +165,7 @@ export class ApiStack extends HearthStack {
         resources: Object.values(props.workflows).map((machine) => machine.stateMachineArn),
       }),
     );
-    this.functions = [configFunction, statusFunction, admin];
+    this.functions = [...agentRoutes.map(([, , fn]) => fn), admin];
     const adminIntegration = new HttpLambdaIntegration('AdminIntegration', admin);
     for (const [path, method] of [
       ['/admin/servers', HttpMethod.GET],
@@ -147,10 +191,7 @@ export class ApiStack extends HearthStack {
       statements: [
         new PolicyStatement({
           actions: ['execute-api:Invoke'],
-          resources: [
-            this.api.arnForExecuteApi('GET', '/agent/config', '$default'),
-            this.api.arnForExecuteApi('POST', '/agent/status', '$default'),
-          ],
+          resources: agentRoutes.map(([path, method]) => this.api.arnForExecuteApi(method, path, '$default')),
         }),
         new PolicyStatement({ actions: ['ssm:GetParameter'], resources: [this.apiUrlParameter.parameterArn] }),
       ],

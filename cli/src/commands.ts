@@ -49,7 +49,9 @@ export function commands({ api, fleetCheck, print, sleep = (ms) => new Promise((
     if (!wait) return;
     const server = await waitFor(result.serverId, target);
     if (target === 'RUNNING') print(`Ready. Join at ${address(server)}   (server ${server.serverId})`);
-    else print(`Stopped.${server.lastStopClean === false ? ' The agent did not report a clean stop; the world may not be saved.' : ' World saved.'}`);
+    else if (server.lastStopClean === false) print('Stopped. The agent did not report a clean stop; the world may not be saved.');
+    // A clean stop's message is a problem that didn't stop it, e.g. a failed backup.
+    else print(`Stopped. World saved.${server.agentMessage ? ` Agent: ${server.agentMessage}` : ''}`);
   }
 
   return {
@@ -72,7 +74,7 @@ export function commands({ api, fleetCheck, print, sleep = (ms) => new Promise((
 
     async stop(id: string, wait: boolean) {
       const result = await api.post<ServerOperationResult>(`/admin/servers/${encodeURIComponent(id)}/stop`);
-      print(result.unchanged ? `Already ${result.status.toLowerCase()}.` : `Stopping ${id}; the agent saves the world during shutdown.`);
+      print(result.unchanged ? `Already ${result.status.toLowerCase()}.` : `Stopping ${id}; the agent saves and backs up the world first.`);
       await followUp(result, 'STOPPED', wait);
     },
 
@@ -93,8 +95,9 @@ export function commands({ api, fleetCheck, print, sleep = (ms) => new Promise((
         ['instance', s.instanceId && `${s.instanceId} (${s.instanceState ?? 'unknown'})`],
         ['join at', s.publicIp && address(s)],
         ['last stop', s.lastStoppedAt && `${s.lastStoppedAt}${s.lastStopClean === false ? ' (not clean)' : ''}`],
+        ['last backup', s.lastBackupAt && `${s.lastBackupAt} (${mebibytes(s.lastBackupBytes ?? 0)})`],
       ];
-      for (const [k, v] of rows) if (v) print(`${k.padEnd(10)} ${v}`);
+      for (const [k, v] of rows) if (v) print(`${k.padEnd(11)} ${v}`);
     },
 
     /** Runs the fleet check now and prints what it found. */
@@ -133,4 +136,8 @@ export function commands({ api, fleetCheck, print, sleep = (ms) => new Promise((
       for (const r of rows) print(r.map((cell, i) => cell.padEnd(widths[i]!)).join('  ').trimEnd());
     },
   };
+}
+
+function mebibytes(bytes: number): string {
+  return `${(bytes / 2 ** 20).toFixed(1)} MiB`;
 }

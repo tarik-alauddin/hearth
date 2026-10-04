@@ -75,6 +75,39 @@ describe('dynamoServersStore', () => {
   });
 });
 
+describe('recordBackup', () => {
+  it('records the newest backup only while the server is on the calling instance', async () => {
+    const { client, sent } = fakeClient();
+    const ok = await dynamoServersStore(client, 't').recordBackup(
+      's1',
+      'i-1',
+      { key: 'servers/s1/20261004T120000Z.tar.gz', bytes: 1234 },
+      new Date('2026-10-04T12:01:00Z'),
+    );
+
+    expect(ok).toBe(true);
+    expect((sent[0] as UpdateCommand).input).toMatchObject({
+      Key: { serverId: 's1' },
+      UpdateExpression: 'SET lastBackupKey = :key, lastBackupBytes = :bytes, lastBackupAt = :at',
+      ConditionExpression: 'instanceId = :instanceId',
+      ExpressionAttributeValues: {
+        ':key': 'servers/s1/20261004T120000Z.tar.gz',
+        ':bytes': 1234,
+        ':at': '2026-10-04T12:01:00.000Z',
+        ':instanceId': 'i-1',
+      },
+    });
+  });
+
+  it('returns false when the server moved', async () => {
+    const { client } = fakeClient(() => {
+      throw new ConditionalCheckFailedException({ message: 'no', $metadata: {} });
+    });
+    const ok = await dynamoServersStore(client, 't').recordBackup('s1', 'i-2', { key: 'k', bytes: 1 }, new Date());
+    expect(ok).toBe(false);
+  });
+});
+
 describe('recordInstanceState', () => {
   const at = new Date('2026-09-29T12:00:00Z');
 

@@ -150,17 +150,24 @@ describe('GameInfraStack', () => {
     it('installs the agent as a service ordered after Docker and the data volume', () => {
       expect(userData).toContain('Requires=docker.service');
       expect(userData).toContain('RequiresMountsFor=$DATA_MOUNT');
-      expect(userData).toContain('TimeoutStopSec=120');
+      expect(userData).toContain('TimeoutStopSec=300');
       expect(userData).toContain('systemctl enable --now --no-block hearth-agent.service');
     });
   });
 
-  it('has a Run Command document that stops the agent', () => {
+  it('has a Run Command document that asks for a backup, then stops the agent', () => {
     template.hasResourceProperties('AWS::SSM::Document', {
       Name: 'hearth-dev-stop-agent',
       DocumentType: 'Command',
       Content: Match.objectLike({
-        mainSteps: [Match.objectLike({ inputs: Match.objectLike({ runCommand: ['systemctl stop hearth-agent.service'] }) })],
+        mainSteps: [
+          Match.objectLike({
+            inputs: {
+              runCommand: ['mkdir -p /run/hearth', 'touch /run/hearth/backup-on-stop', 'systemctl stop hearth-agent.service'],
+              timeoutSeconds: '330',
+            },
+          }),
+        ],
       }),
     });
   });

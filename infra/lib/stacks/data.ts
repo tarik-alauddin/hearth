@@ -2,7 +2,7 @@ import { Duration, RemovalPolicy, Validations } from 'aws-cdk-lib';
 import { AttributeType, ProjectionType, TableV2 } from 'aws-cdk-lib/aws-dynamodb';
 import { BlockPublicAccess, Bucket, BucketEncryption, StorageClass } from 'aws-cdk-lib/aws-s3';
 import type { Construct } from 'constructs';
-import { SERVERS_BY_INSTANCE_INDEX, SERVERS_BY_STATUS_INDEX } from '@hearth/shared';
+import { SERVERS_BY_INSTANCE_INDEX, SERVERS_BY_STATUS_INDEX, backupBucket } from '@hearth/shared';
 import { HearthStack, type HearthStackProps } from '../hearth-stack.js';
 
 /** Stateful: DynamoDB tables and the S3 backup bucket. Retained with termination protection in prod. */
@@ -39,7 +39,7 @@ export class DataStack extends HearthStack {
 
     // Any backups. Versioned so an overwritten or deleted backup can be recovered.
     this.backupBucket = new Bucket(this, 'Backups', {
-      bucketName: `hearth-${env}-backups-${this.account}-${this.region}`,
+      bucketName: backupBucket(env, this.account, this.region),
       blockPublicAccess: BlockPublicAccess.BLOCK_ALL,
       encryption: BucketEncryption.S3_MANAGED,
       enforceSSL: true,
@@ -48,6 +48,8 @@ export class DataStack extends HearthStack {
       autoDeleteObjects: !isProd,
       lifecycleRules: [
         {
+          // Glacier IR bills a 90-day minimum: backups pruned by the newest-10 rule before day 90
+          // are still billed to day 90. Accepted at this scale.
           id: 'glacier-ir-after-30-days',
           transitions: [
             { storageClass: StorageClass.GLACIER_INSTANT_RETRIEVAL, transitionAfter: Duration.days(30) },

@@ -1,6 +1,7 @@
 export * from './admin-api.js';
 export * from './agent-api.js';
 export * from './agent-releases.js';
+export * from './backups.js';
 export * from './environments.js';
 export * from './fleet-check.js';
 export * from './games.js';

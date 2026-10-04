@@ -1,4 +1,4 @@
-import { GetCommandInvocationCommand, SSMClient, SendCommandCommand } from '@aws-sdk/client-ssm';
+import { CancelCommandCommand, GetCommandInvocationCommand, SSMClient, SendCommandCommand } from '@aws-sdk/client-ssm';
 import type { CommandStatus, Ssm } from './tasks.js';
 
 const FINISHED: Record<string, CommandStatus> = {
@@ -47,6 +47,10 @@ export function sdkSsm(): Ssm {
         if ((err as { name?: string }).name === 'InvocationDoesNotExist') return 'pending';
         throw err;
       }
+    },
+
+    async cancelCommand(region, { commandId, instanceId }) {
+      await client(region).send(new CancelCommandCommand({ CommandId: commandId, InstanceIds: [instanceId] }));
     },
   };
 }

@@ -81,6 +81,21 @@ describe('commands', () => {
     expect(out.at(-1)).toMatch(/did not report a clean stop/);
   });
 
+  it('stop passes on what went wrong in an otherwise clean stop', async () => {
+    const agentMessage = 'world saved, but the backup failed: upload: timeout';
+    const { api } = fakeApi([{ status: 'STOPPING' }, { status: 'STOPPED', lastStopClean: true, agentMessage }]);
+    const { out, cmd } = run(api);
+    await cmd.stop('s1', true);
+    expect(out.at(-1)).toBe(`Stopped. World saved. Agent: ${agentMessage}`);
+  });
+
+  it('status shows the last backup', async () => {
+    const { api } = fakeApi([{ status: 'STOPPED', lastBackupAt: '2026-10-04T12:01:00.000Z', lastBackupBytes: 3 * 2 ** 20 }]);
+    const { out, cmd } = run(api);
+    await cmd.status('s1');
+    expect(out).toContain('last backup 2026-10-04T12:01:00.000Z (3.0 MiB)');
+  });
+
   it('creates on a channel and moves servers between channels', async () => {
     const { api, posts } = fakeApi([{ status: 'RUNNING', publicIp: '1.2.3.4' }]);
     const { out, cmd } = run(api);
