@@ -1,4 +1,4 @@
-# Hearth
+# Hearth 
 
 Game server hosting on AWS: servers stay off unless someone is playing. Architecture lives in the
 "Hearth — Architecture" doc.
