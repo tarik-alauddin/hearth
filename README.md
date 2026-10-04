@@ -17,7 +17,7 @@ Stacks are named `hearth-<env>-<Stack>`, e.g. `hearth-dev-Data`, `hearth-prod-Ga
 
 ## Development
 
-Requires Node 24 and pnpm 10; Go 1.27+ for the agent.
+Requires Node 24 and pnpm 12 (pinned in `package.json`; pnpm switches to it automatically); Go 1.27+ for the agent.
 
 ```sh
 pnpm install
