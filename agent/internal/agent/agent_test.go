@@ -4,14 +4,19 @@ import (
 	"context"
 	"errors"
 	"io"
+	"io/fs"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/tarik-alauddin/hearth/agent/internal/api"
+	"github.com/tarik-alauddin/hearth/agent/internal/backup"
 	"github.com/tarik-alauddin/hearth/agent/internal/container"
 	"github.com/tarik-alauddin/hearth/agent/internal/game"
 )
@@ -129,6 +134,23 @@ func (g *fakeGame) Ready(context.Context) error {
 func (g *fakeGame) Save(context.Context) error {
 	g.rt.record("save")
 	return nil
+}
+
+func (g *fakeGame) Backup(cfg game.Config) game.BackupSpec {
+	return game.BackupSpec{Dir: cfg.DataDir + "/fake"}
+}
+
+type fakeBackups struct {
+	rt  *fakeRuntime
+	err error
+}
+
+func (f *fakeBackups) Backup(ctx context.Context, spec game.BackupSpec) (backup.Result, error) {
+	if ctx.Err() != nil {
+		return backup.Result{}, ctx.Err()
+	}
+	f.rt.record("backup " + spec.Dir)
+	return backup.Result{Key: "k"}, f.err
 }
 
 type harness struct {
@@ -287,6 +309,108 @@ func TestGameCrashesWhileRunning(t *testing.T) {
 	_ = h.stop(t)
 	if slices.Contains(h.rt.events, "save") {
 		t.Error("should not try to save over RCON after the game exited")
+	}
+}
+
+// withBackups gives the agent fake backups and a marker path in a temp dir, returning both.
+func withBackups(t *testing.T, h *harness, err error) (*fakeBackups, string) {
+	t.Helper()
+	b := &fakeBackups{rt: h.rt, err: err}
+	marker := filepath.Join(t.TempDir(), "backup-on-stop")
+	h.agent.Backups, h.agent.BackupMarker = b, marker
+	return b, marker
+}
+
+func touch(t *testing.T, path string) {
+	t.Helper()
+	if err := os.WriteFile(path, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestBacksUpAfterStoppingWhenTheStopAsksForIt(t *testing.T) {
+	var marker string
+	h := start(t, func(h *harness) { _, marker = withBackups(t, h, nil) })
+	eventually(t, "ready", func() bool { return slices.Contains(h.api.states(), "ready") })
+	touch(t, marker) // what the stop-agent Run Command does
+	if err := h.stop(t); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := h.rt.events, []string{"start", "save", "stop hearth-game 7s", "backup /srv/hearth/fake"}; !slices.Equal(got, want) {
+		t.Errorf("events %v, want %v (back up after the game stops)", got, want)
+	}
+	if got, want := h.api.states(), []string{"starting", "ready", "stopping", "stopping", "stopped"}; !slices.Equal(got, want) {
+		t.Errorf("reported %v, want %v", got, want)
+	}
+	if h.api.lastMessage() != "" {
+		t.Errorf("message %q", h.api.lastMessage())
+	}
+	if _, err := os.Stat(marker); !errors.Is(err, fs.ErrNotExist) {
+		t.Error("the marker should be removed once used")
+	}
+}
+
+func TestNoBackupWithoutTheMarker(t *testing.T) {
+	h := start(t, func(h *harness) { withBackups(t, h, nil) })
+	eventually(t, "ready", func() bool { return slices.Contains(h.api.states(), "ready") })
+	_ = h.stop(t) // an OS shutdown: SIGTERM with no marker
+	if slices.ContainsFunc(h.rt.events, func(e string) bool { return strings.HasPrefix(e, "backup") }) {
+		t.Errorf("should not back up: %v", h.rt.events)
+	}
+}
+
+func TestIgnoresAMarkerLeftFromBeforeItStarted(t *testing.T) {
+	var marker string
+	h := start(t, func(h *harness) {
+		_, marker = withBackups(t, h, nil)
+		touch(t, marker)
+	})
+	eventually(t, "ready", func() bool { return slices.Contains(h.api.states(), "ready") })
+	_ = h.stop(t)
+	if slices.ContainsFunc(h.rt.events, func(e string) bool { return strings.HasPrefix(e, "backup") }) {
+		t.Errorf("a stale marker should not cause a backup: %v", h.rt.events)
+	}
+}
+
+func TestFailedBackupStillStopsCleanly(t *testing.T) {
+	var marker string
+	h := start(t, func(h *harness) { _, marker = withBackups(t, h, errors.New("S3 said no")) })
+	eventually(t, "ready", func() bool { return slices.Contains(h.api.states(), "ready") })
+	touch(t, marker)
+	if err := h.stop(t); err != nil {
+		t.Fatalf("a failed backup should not fail the stop: %v", err)
+	}
+	if states := h.api.states(); states[len(states)-1] != "stopped" {
+		t.Errorf("reported %v; the world is saved, so the stop is clean", states)
+	}
+	if msg := h.api.lastMessage(); !strings.Contains(msg, "backup failed: S3 said no") {
+		t.Errorf("message %q should say the backup failed", msg)
+	}
+}
+
+func TestNoBackupOfAGameThatNeverBecameReady(t *testing.T) {
+	var marker string
+	h := start(t, func(h *harness) {
+		_, marker = withBackups(t, h, nil)
+		h.game.neverReady = true
+		h.agent.ReadyTimeout = 50 * time.Millisecond
+	})
+	eventually(t, "error report", func() bool { return slices.Contains(h.api.states(), "error") })
+	touch(t, marker)
+	_ = h.stop(t)
+	if slices.ContainsFunc(h.rt.events, func(e string) bool { return strings.HasPrefix(e, "backup") }) {
+		t.Errorf("should not back up: %v", h.rt.events)
+	}
+}
+
+func TestTruncate(t *testing.T) {
+	if got := truncate("short", 500); got != "short" {
+		t.Errorf("got %q", got)
+	}
+	long := strings.Repeat("é", 300) // 600 bytes
+	got := truncate(long, 500)
+	if len(got) > 500 || !utf8.ValidString(got) || !strings.HasSuffix(got, "...") {
+		t.Errorf("got %d bytes, valid %t: %q", len(got), utf8.ValidString(got), got[len(got)-10:])
 	}
 }
 

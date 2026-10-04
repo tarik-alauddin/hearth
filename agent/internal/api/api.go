@@ -25,6 +25,20 @@ type StatusReport struct {
 	Message      string `json:"message,omitempty"`
 }
 
+// BackupTarget mirrors BackupTarget in packages/shared: where to upload one backup, with
+// short-lived credentials that can write only that key.
+type BackupTarget struct {
+	Bucket      string `json:"bucket"`
+	Key         string `json:"key"`
+	Region      string `json:"region"`
+	Credentials struct {
+		AccessKeyID     string    `json:"accessKeyId"`
+		SecretAccessKey string    `json:"secretAccessKey"`
+		SessionToken    string    `json:"sessionToken"`
+		Expiration      time.Time `json:"expiration"`
+	} `json:"credentials"`
+}
+
 // Error is a non-2xx response.
 type Error struct {
 	Status int
@@ -68,6 +82,22 @@ func (c *Client) ReportStatus(ctx context.Context, report StatusReport) error {
 		return err
 	}
 	return c.do(ctx, http.MethodPost, "/agent/status", body, nil)
+}
+
+// BackupCredentials asks where to upload a new backup (POST /agent/backup-credentials).
+func (c *Client) BackupCredentials(ctx context.Context) (BackupTarget, error) {
+	var target BackupTarget
+	err := c.do(ctx, http.MethodPost, "/agent/backup-credentials", nil, &target)
+	return target, err
+}
+
+// BackupDone records a finished upload as the server's newest backup (POST /agent/backups).
+func (c *Client) BackupDone(ctx context.Context, key string) error {
+	body, err := json.Marshal(map[string]string{"key": key})
+	if err != nil {
+		return err
+	}
+	return c.do(ctx, http.MethodPost, "/agent/backups", body, nil)
 }
 
 func (c *Client) do(ctx context.Context, method, path string, body []byte, out any) error {

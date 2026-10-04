@@ -1,7 +1,7 @@
 # Game server check
 
-End-to-end check that a server can be created, joined from a Minecraft client, stopped and started
-with its world intact, through the real API and lifecycle workflows. Rerun after changes to the
+End-to-end check that a server can be created, joined from a Minecraft client, stopped (with a
+backup) and started with its world intact, through the real API and lifecycle workflows. Rerun after changes to the
 agent, the API, the workflows, the startup script or the launch template.
 
 **Where to run:** locally (`pnpm hearth …`, with AWS credentials for the account) or in AWS CloudShell
@@ -33,7 +33,16 @@ Expect `PROVISIONING` → `STARTING · agent starting` → `RUNNING · agent rea
 hearth stop <serverId>              # ends with "Stopped. World saved."
 ```
 
-"Not clean" instead means the agent didn't report saving before the instance powered off.
+"Not clean" instead means the agent didn't report saving before the instance powered off. A clean
+stop whose backup failed ends with `Agent: world saved, but the backup failed: …`.
+
+Check the backup (the bucket is `hearth-<env>-backups-<account>-us-west-2`):
+
+```bash
+hearth status <serverId>            # "last backup  <time> (<size> MiB)"
+aws s3 ls s3://<bucket>/servers/<serverId>/            # one <yyyymmdd>T<hhmmss>Z.tar.gz per stop
+aws s3 cp s3://<bucket>/<key> - | tar tz | head        # world/…, server.properties; no logs/ or *.jar
+```
 
 ## 4. Start again
 
@@ -70,3 +79,4 @@ bash scripts/dev-server.sh destroy <serverId> --yes
 | `API 403` | Your credentials lack `execute-api:Invoke`, or you're using a game instance's role |
 | `API 409` | The server is mid-operation (e.g. stop while starting); wait and retry |
 | Can't connect from the client | Version mismatch, or an old IP after a start |
+| Backup failed, or no `last backup` | `journalctl -u hearth-agent` (`backup failed`); the `AgentBackupCredentials`/`AgentBackupDone` Lambda logs |

@@ -251,6 +251,10 @@ func (g *fakeGame) Ready(ctx context.Context) error {
 
 func (g *fakeGame) Save(context.Context) error { return nil }
 
+func (g *fakeGame) Backup(cfg game.Config) game.BackupSpec {
+	return game.BackupSpec{Dir: filepath.Join(cfg.DataDir, "fake")}
+}
+
 func TestAnyGame(t *testing.T) {
 	registry := map[string]game.Factory{"fake": func() game.Adapter { return &fakeGame{} }}
 	image := buildFakeGameImage(t)

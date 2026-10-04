@@ -65,6 +65,39 @@ func TestReportStatus(t *testing.T) {
 	}
 }
 
+func TestBackupRoutes(t *testing.T) {
+	var done map[string]string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method + " " + r.URL.Path {
+		case "POST /agent/backup-credentials":
+			_, _ = io.WriteString(w, `{"bucket":"b","key":"servers/s1/20261004T120000Z.tar.gz","region":"us-west-2",`+
+				`"credentials":{"accessKeyId":"AKID","secretAccessKey":"s","sessionToken":"t","expiration":"2026-10-04T12:15:00.000Z"}}`)
+		case "POST /agent/backups":
+			_ = json.NewDecoder(r.Body).Decode(&done)
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			t.Errorf("%s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+	c := New(srv.URL, "us-west-2", testCreds)
+
+	target, err := c.BackupCredentials(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if target.Bucket != "b" || target.Key != "servers/s1/20261004T120000Z.tar.gz" || target.Region != "us-west-2" ||
+		target.Credentials.SessionToken != "t" || target.Credentials.Expiration.Minute() != 15 {
+		t.Errorf("target %+v", target)
+	}
+	if err := c.BackupDone(context.Background(), target.Key); err != nil {
+		t.Fatal(err)
+	}
+	if done["key"] != target.Key {
+		t.Errorf("sent %v", done)
+	}
+}
+
 func TestErrorResponses(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNotFound)

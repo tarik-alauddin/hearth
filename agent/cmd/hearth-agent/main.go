@@ -16,10 +16,12 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/ssm"
 	"github.com/tarik-alauddin/hearth/agent/internal/agent"
 	"github.com/tarik-alauddin/hearth/agent/internal/api"
+	"github.com/tarik-alauddin/hearth/agent/internal/backup"
 	"github.com/tarik-alauddin/hearth/agent/internal/container"
 	"github.com/tarik-alauddin/hearth/agent/internal/games"
 	"github.com/tarik-alauddin/hearth/agent/internal/update"
@@ -41,7 +43,9 @@ func run(args []string, stdout, stderr io.Writer) int {
 	flags.SetOutput(stderr)
 	showVersion := flags.Bool("version", false, "print the version and exit")
 	logLevel := flags.String("log-level", envOr("HEARTH_LOG_LEVEL", "info"), "debug, info, warn or error")
-	stopTimeout := flags.Duration("stop-timeout", 90*time.Second, "how long a graceful stop may take")
+	// Inside systemd's TimeoutStopSec (300s), which is inside the stop-agent document's 330s.
+	stopTimeout := flags.Duration("stop-timeout", 270*time.Second, "how long a graceful stop (save, stop, back up) may take")
+	backupMarker := flags.String("backup-marker", "/run/hearth/backup-on-stop", "file the stop workflow creates to ask for a backup on stop")
 	env := flags.String("env", os.Getenv("HEARTH_ENV"), "environment (dev, stage or prod); used to find the API")
 	homeRegion := flags.String("home-region", envOr("HEARTH_HOME_REGION", "us-west-2"), "region of the Hearth API")
 	apiURL := flags.String("api-url", os.Getenv("HEARTH_API_URL"), "API endpoint; read from SSM /hearth/<env>/api-url if empty")
@@ -103,16 +107,31 @@ func run(args []string, stdout, stderr io.Writer) int {
 		},
 	}
 
+	apiClient := api.New(*apiURL, *homeRegion, awsCfg.Credentials)
+	backups := &backup.Backuper{
+		API: apiClient,
+		// The instance role has no S3 write access; each backup uses the API's one-key credentials.
+		NewS3: func(target api.BackupTarget) backup.S3 {
+			c := target.Credentials
+			return s3.NewFromConfig(awsCfg, func(o *s3.Options) {
+				o.Region = target.Region
+				o.Credentials = credentials.NewStaticCredentialsProvider(c.AccessKeyID, c.SecretAccessKey, c.SessionToken)
+			})
+		},
+	}
+
 	a := agent.New(agent.Options{
-		Logger:      logger,
-		Version:     version,
-		API:         api.New(*apiURL, *homeRegion, awsCfg.Credentials),
-		Runtime:     container.NewDocker(),
-		Games:       games.Registry(),
-		DataDir:     *dataDir,
-		MemoryMiB:   agent.HostMemoryMiB(),
-		StopTimeout: *stopTimeout,
-		Updater:     updater,
+		Logger:       logger,
+		Version:      version,
+		API:          apiClient,
+		Runtime:      container.NewDocker(),
+		Games:        games.Registry(),
+		DataDir:      *dataDir,
+		MemoryMiB:    agent.HostMemoryMiB(),
+		StopTimeout:  *stopTimeout,
+		Backups:      backups,
+		BackupMarker: *backupMarker,
+		Updater:      updater,
 	})
 	switch err := a.Run(ctx); {
 	case errors.Is(err, agent.ErrUpdateStaged):

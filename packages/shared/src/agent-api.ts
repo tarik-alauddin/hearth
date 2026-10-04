@@ -27,6 +27,27 @@ export interface AgentStatusReport {
   message?: string;
 }
 
+/**
+ * `POST /agent/backup-credentials` response: where to upload one backup, and short-lived
+ * credentials that can write only that key.
+ */
+export interface BackupTarget {
+  bucket: string;
+  key: string;
+  region: string;
+  credentials: {
+    accessKeyId: string;
+    secretAccessKey: string;
+    sessionToken: string;
+    expiration: string; // ISO 8601 UTC
+  };
+}
+
+/** `POST /agent/backups` request body: a backup the agent finished uploading. */
+export interface BackupDoneReport {
+  key: string;
+}
+
 export function isAgentState(value: unknown): value is AgentState {
   return typeof value === 'string' && (AGENT_STATES as readonly string[]).includes(value);
 }

@@ -4,6 +4,7 @@ package game
 
 import (
 	"context"
+	"path"
 
 	"github.com/tarik-alauddin/hearth/agent/internal/container"
 )
@@ -32,8 +33,26 @@ type AgentTarget struct {
 	SHA256  string `json:"sha256"`
 }
 
+// BackupSpec says what a backup holds: everything under Dir except paths matching Exclude.
+type BackupSpec struct {
+	Dir string
+	// Exclude holds path.Match patterns for paths relative to Dir, with forward slashes, e.g.
+	// "logs" or "*.jar" (both top level only). An excluded directory is skipped with its contents.
+	Exclude []string
+}
+
+// Excludes reports whether name (relative to Dir, with forward slashes) matches an Exclude pattern.
+func (s BackupSpec) Excludes(name string) bool {
+	for _, pattern := range s.Exclude {
+		if ok, _ := path.Match(pattern, name); ok {
+			return true
+		}
+	}
+	return false
+}
+
 // Adapter is everything game-specific the agent needs. It grows with the milestones:
-// backups and version resolution arrive in M5, player counts in M6.
+// version resolution arrives in M5, player counts in M6.
 type Adapter interface {
 	// Container describes the container to run. Image and port come from cfg (the shared game
 	// definition); the adapter adds game settings, mounts under cfg.DataDir and any secrets.
@@ -43,6 +62,9 @@ type Adapter interface {
 	Ready(ctx context.Context) error
 	// Save flushes the world to disk. The agent calls it before stopping the container.
 	Save(ctx context.Context) error
+	// Backup says what to back up. The agent archives it after the container has stopped, so
+	// nothing is writing to it.
+	Backup(cfg Config) BackupSpec
 }
 
 // Factory creates a fresh adapter for one run of the game.

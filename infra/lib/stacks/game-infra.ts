@@ -44,6 +44,8 @@ function userDataScript(vars: Record<string, string>): string {
 
 /** Device name the startup script looks for; see user-data/game-instance.sh. */
 export const DATA_DEVICE_NAME = '/dev/sdf';
+/** Where the stop-agent document leaves the agent's backup-on-stop marker (the agent's -backup-marker). */
+const BACKUP_MARKER_DIR = '/run/hearth';
 const ROOT_VOLUME_GIB = 16;
 
 export interface GameInfraStackProps extends HearthStackProps {
@@ -143,20 +145,28 @@ export class GameInfraStack extends HearthStack {
 
     // The stop workflow stops the agent this way while the instance is still fully up: the agent
     // saves the world and stops the game (the same path as an OS shutdown), with time to spare.
+    // The marker file asks the agent to back the world up too, which only this path does.
     this.stopAgentDocument = new CfnDocument(this, 'StopAgentDocument', {
       name: `hearth-${env}-stop-agent`,
       documentType: 'Command',
       updateMethod: 'NewVersion',
       content: {
         schemaVersion: '2.2',
-        description: 'Hearth: stop the game agent, which saves the world and stops the game.',
+        description: 'Hearth: stop the game agent, which saves the world, stops the game and backs the world up.',
         mainSteps: [
           {
             action: 'aws:runShellScript',
             name: 'stopAgent',
             // Blocks until the agent has exited. systemd gives it at most 5 minutes (the unit's TimeoutStopSec);
             // the extra 30 s lets systemctl return after systemd gives up.
-            inputs: { runCommand: ['systemctl stop hearth-agent.service'], timeoutSeconds: '330' },
+            inputs: {
+              runCommand: [
+                `mkdir -p ${BACKUP_MARKER_DIR}`,
+                `touch ${BACKUP_MARKER_DIR}/backup-on-stop`,
+                'systemctl stop hearth-agent.service',
+              ],
+              timeoutSeconds: '330',
+            },
           },
         ],
       },

@@ -8,6 +8,7 @@ import (
 	"errors"
 	"io"
 	"net"
+	"path"
 	"testing"
 
 	"github.com/tarik-alauddin/hearth/agent/internal/game"
@@ -49,6 +50,28 @@ func TestContainer(t *testing.T) {
 	}
 	if New().Container(game.Config{}).Env["RCON_PASSWORD"] == spec.Env["RCON_PASSWORD"] {
 		t.Error("each run should get a new RCON password")
+	}
+}
+
+func TestBackupKeepsTheWorldNotTheServerFiles(t *testing.T) {
+	spec := New().Backup(game.Config{DataDir: "/srv/hearth"})
+	if spec.Dir != "/srv/hearth/minecraft" {
+		t.Errorf("dir %q should be the container's data mount", spec.Dir)
+	}
+	for _, pattern := range spec.Exclude {
+		if _, err := path.Match(pattern, ""); err != nil {
+			t.Errorf("bad pattern %q: %v", pattern, err)
+		}
+	}
+	for _, kept := range []string{"world", "world/region/r.0.0.mca", "server.properties", "ops.json", "whitelist.json", "mods/x.jar"} {
+		if spec.Excludes(kept) {
+			t.Errorf("%s should be backed up", kept)
+		}
+	}
+	for _, skipped := range []string{"minecraft_server.1.21.4.jar", "libraries", "versions", "logs", ".rcon-cli.env"} {
+		if !spec.Excludes(skipped) {
+			t.Errorf("%s should be excluded", skipped)
+		}
 	}
 }
 
