@@ -2,6 +2,7 @@ import type { APIGatewayProxyEventV2WithIAMAuthorizer } from 'aws-lambda';
 import { beforeEach, describe, expect, it } from 'vitest';
 import type { AgentStatusReport, ServerRecord } from '@hearth/shared';
 import type { BackupStorage } from '../backups.js';
+import { OperationError } from '../servers/operations.js';
 import { agentHandlers, type AgentHandlerDeps } from './handlers.js';
 import type { AgentReleases } from './releases.js';
 
@@ -78,7 +79,16 @@ function fakeStore(servers: ServerRecord[]) {
 describe('agent handlers', () => {
   let store: ReturnType<typeof fakeStore>;
   let handlers: ReturnType<typeof agentHandlers>;
-  const deps = { instanceRoleNames: [ROLE], releases: noReleases, backups: fakeBackups(), now: () => NOW };
+  const idleStops: string[] = [];
+  const operations: AgentHandlerDeps['operations'] = {
+    idleStop: async (serverId, instanceId, minutes) => {
+      if (serverId === 'stopped') return { serverId, status: 'STOPPED', unchanged: true };
+      if (serverId === 'starting') throw new OperationError(409, 'Server starting is STARTING');
+      idleStops.push(`${serverId} ${instanceId} ${minutes}`);
+      return { serverId, status: 'STOPPING' };
+    },
+  };
+  const deps = { instanceRoleNames: [ROLE], releases: noReleases, backups: fakeBackups(), operations, now: () => NOW };
 
   beforeEach(() => {
     store = fakeStore([server]);
@@ -267,6 +277,50 @@ describe('agent handlers', () => {
 
     it('rejects callers that are not game instances', async () => {
       expect((await handlers.restored(event({ role: 'github-deploy', body: '{}' }))).statusCode).toBe(403);
+    });
+  });
+
+  describe('POST /agent/idle', () => {
+    const idle = (body: unknown) => event({ body: JSON.stringify(body) });
+    const onServer = (serverId: string) =>
+      agentHandlers({ ...deps, store: fakeStore([{ ...server, serverId }]).store });
+
+    beforeEach(() => {
+      idleStops.length = 0;
+    });
+
+    it("stops the calling instance's own server, answering 202", async () => {
+      const res = await handlers.idle(idle({ idleMinutes: 30 }));
+      expect(res.statusCode).toBe(202);
+      expect(JSON.parse(res.body!)).toEqual({ serverId: server.serverId, status: 'STOPPING' });
+      expect(idleStops).toEqual([`${server.serverId} ${INSTANCE} 30`]);
+    });
+
+    it('answers 200 when the server is already stopping or stopped', async () => {
+      expect((await onServer('stopped').idle(idle({ idleMinutes: 30 }))).statusCode).toBe(200);
+    });
+
+    it("passes on the operation's refusal", async () => {
+      const res = await onServer('starting').idle(idle({ idleMinutes: 30 }));
+      expect(res.statusCode).toBe(409);
+      expect(JSON.parse(res.body!).message).toMatch(/STARTING/);
+    });
+
+    it.each([
+      ['no idleMinutes', {}],
+      ['zero', { idleMinutes: 0 }],
+      ['a fraction', { idleMinutes: 1.5 }],
+      ['over a day', { idleMinutes: 1441 }],
+      ['a string', { idleMinutes: '30' }],
+    ])('returns 400 for %s', async (_, body) => {
+      expect((await handlers.idle(idle(body))).statusCode).toBe(400);
+      expect(idleStops).toEqual([]);
+    });
+
+    it('rejects callers that are not game instances', async () => {
+      const res = await handlers.idle(event({ role: 'github-deploy', body: '{"idleMinutes":30}' }));
+      expect(res.statusCode).toBe(403);
+      expect(idleStops).toEqual([]);
     });
   });
 });

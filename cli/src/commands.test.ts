@@ -143,6 +143,15 @@ describe('commands', () => {
     expect(out).toEqual(['s1 runs minecraft-java 26.3 from its next start.']);
   });
 
+  it('status shows why the server last stopped', async () => {
+    const { api } = fakeApi([
+      { status: 'STOPPED', lastStoppedAt: '2026-10-05T12:00:00Z', stopReason: 'no players for 30 minutes' },
+    ]);
+    const { out, cmd } = run(api);
+    await cmd.status('s1');
+    expect(out).toContain('last stop   2026-10-05T12:00:00Z: no players for 30 minutes');
+  });
+
   it('status shows a pending restore', async () => {
     const { api } = fakeApi([{ status: 'STOPPED', restoreKey: 'servers/s1/20261004T120000Z.tar.gz' }]);
     const { out, cmd } = run(api);

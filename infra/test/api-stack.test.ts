@@ -37,6 +37,7 @@ describe('ApiStack', () => {
     ['POST /agent/backup-credentials'],
     ['POST /agent/backups'],
     ['POST /agent/restored'],
+    ['POST /agent/idle'],
   ])('protects %s with IAM auth', (routeKey) => {
     template.hasResourceProperties('AWS::ApiGatewayV2::Route', { RouteKey: routeKey, AuthorizationType: 'AWS_IAM' });
   });
@@ -55,6 +56,7 @@ describe('ApiStack', () => {
       'index.backupCredentialsHandler',
       'index.backupDoneHandler',
       'index.restoredHandler',
+      'index.idleHandler',
     ]) {
       template.hasResourceProperties('AWS::Lambda::Function', {
         Handler: handler,
@@ -106,6 +108,7 @@ describe('ApiStack', () => {
     expect(invoke).toContain('/$default/POST/agent/backup-credentials');
     expect(invoke).toContain('/$default/POST/agent/backups');
     expect(invoke).toContain('/$default/POST/agent/restored');
+    expect(invoke).toContain('/$default/POST/agent/idle');
     expect(invoke).not.toMatch(/\/\*\//);
     expect(invoke).not.toContain('/admin');
   });
@@ -128,6 +131,22 @@ describe('ApiStack', () => {
     const s3 = statements.filter((s) => JSON.stringify(s.Action).includes('s3:'));
     expect(s3.map((s) => s.Action)).toEqual(['s3:GetObject']);
     expect(JSON.stringify(s3[0]?.Resource)).toContain('/servers/*/*');
+  });
+
+  it('lets the idle handler start only the stop workflow, and no other workflow', () => {
+    const statements = policyStatements('AgentIdleServiceRoleDefaultPolicy') as { Action: unknown; Resource: unknown }[];
+    expect(statements.flatMap((s) => s.Action).sort()).toEqual([
+      'dynamodb:GetItem',
+      'dynamodb:Query',
+      'dynamodb:UpdateItem',
+      'states:StartExecution',
+    ]);
+    // Exactly the workflow the admin function starts for a stop.
+    const admin = Object.values(template.findResources('AWS::Lambda::Function')).find(
+      (fn) => (fn as { Properties: { Handler: string } }).Properties.Handler === 'index.handler',
+    ) as { Properties: { Environment: { Variables: Record<string, unknown> } } };
+    const start = statements.find((s) => s.Action === 'states:StartExecution');
+    expect(start?.Resource).toEqual(admin.Properties.Environment.Variables.STOP_WORKFLOW_ARN);
   });
 
   it('lets the restored handler query the index and update items, nothing else', () => {

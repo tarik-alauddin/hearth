@@ -1,4 +1,4 @@
-import { InvalidCursor, newId as defaultNewId, type ServersStore } from '@hearth/core';
+import { InvalidCursor, newId as defaultNewId, type ServersStore, type Transition } from '@hearth/core';
 import {
   AGENT_CHANNELS,
   DEFAULT_AGENT_CHANNEL,
@@ -80,13 +80,15 @@ export function serverOperations({
     workflow: WorkflowName,
     from: readonly ServerStatus[],
     to: ServerStatus,
+    change: Pick<Transition, 'set' | 'remove'> = {},
   ): Promise<ServerOperationResult> {
     const operationId = newId(now());
     const claimed = await store.transition(server.serverId, {
       from,
       to,
       ...(server.instanceId ? { instanceId: server.instanceId } : {}),
-      set: { lastOperationId: operationId },
+      set: { ...change.set, lastOperationId: operationId },
+      ...(change.remove ? { remove: change.remove } : {}),
     });
     if (!claimed) {
       // Lost a race: if another request already made the same claim, this one is a no-op.
@@ -180,9 +182,28 @@ export function serverOperations({
         return { serverId, status: server.status, unchanged: true };
       }
       if (server.status === 'RUNNING' || (server.status === 'FAILED' && server.instanceId)) {
-        return claimAndRun(server, 'stop', ['RUNNING', 'FAILED'], 'STOPPING');
+        return claimAndRun(server, 'stop', ['RUNNING', 'FAILED'], 'STOPPING', { remove: ['stopReason'] });
       }
       throw new OperationError(409, `Server ${serverId} is ${server.status} and can't be stopped`);
+    },
+
+    /**
+     * The agent on `instanceId` found nobody playing for `idleMinutes`: RUNNING → STOPPING, through
+     * the same stop workflow (so the world is still saved and backed up), recording why.
+     */
+    async idleStop(serverId: string, instanceId: string, idleMinutes: number): Promise<ServerOperationResult> {
+      const server = await requireServer(serverId);
+      if (server.instanceId !== instanceId) {
+        throw new OperationError(409, `Server ${serverId} is no longer on instance ${instanceId}`);
+      }
+      if (server.status === 'STOPPED' || server.status === 'STOPPING') {
+        return { serverId, status: server.status, unchanged: true };
+      }
+      if (server.status !== 'RUNNING') {
+        throw new OperationError(409, `Server ${serverId} is ${server.status}; only a running server is stopped for being idle`);
+      }
+      const minutes = idleMinutes === 1 ? '1 minute' : `${idleMinutes} minutes`;
+      return claimAndRun(server, 'stop', ['RUNNING'], 'STOPPING', { set: { stopReason: `no players for ${minutes}` } });
     },
 
     /**

@@ -15,6 +15,7 @@ import {
 } from '@hearth/shared';
 import type { ServersStore } from '@hearth/core';
 import type { BackupStorage } from '../backups.js';
+import { OperationError, type serverOperations } from '../servers/operations.js';
 import { callerInstanceId } from './caller.js';
 import type { AgentReleases } from './releases.js';
 
@@ -33,13 +34,23 @@ export interface AgentHandlerDeps {
   /** Which agent release each channel points at. */
   releases: AgentReleases;
   backups: BackupStorage;
+  /** Server operations an agent may trigger for its own server. */
+  operations: Pick<ReturnType<typeof serverOperations>, 'idleStop'>;
   now?: () => Date;
 }
 
 const MAX_VERSION_LENGTH = 64;
 const MAX_MESSAGE_LENGTH = 500;
+const MAX_IDLE_MINUTES = 24 * 60;
 
-export function agentHandlers({ store, instanceRoleNames, releases, backups, now = () => new Date() }: AgentHandlerDeps) {
+export function agentHandlers({
+  store,
+  instanceRoleNames,
+  releases,
+  backups,
+  operations,
+  now = () => new Date(),
+}: AgentHandlerDeps) {
   /** Resolves the calling instance's server, or the error response to send instead. */
   async function callerServer(event: Event): Promise<Caller | { error: Result }> {
     const instanceId = callerInstanceId(event.requestContext.authorizer.iam.userArn, instanceRoleNames);
@@ -68,6 +79,27 @@ export function agentHandlers({ store, instanceRoleNames, releases, backups, now
       ...(restore ? { restore } : {}),
     };
     return json(200, body);
+  }
+
+  /** POST /agent/idle: nobody has played for a while; stop this agent's server the usual way. */
+  async function idle(event: Event): Promise<Result> {
+    const body = parseJsonObject(event);
+    if (typeof body === 'string') return json(400, { message: body });
+    const { idleMinutes } = body;
+    if (typeof idleMinutes !== 'number' || !Number.isInteger(idleMinutes) || idleMinutes < 1 || idleMinutes > MAX_IDLE_MINUTES) {
+      return json(400, { message: `idleMinutes must be a whole number from 1 to ${MAX_IDLE_MINUTES}` });
+    }
+    const caller = await callerServer(event);
+    if ('error' in caller) return caller.error;
+    const { instanceId, server } = caller;
+    try {
+      const result = await operations.idleStop(server.serverId, instanceId, idleMinutes);
+      console.log(JSON.stringify({ msg: 'idle stop', instanceId, idleMinutes, ...result }));
+      return json(result.unchanged ? 200 : 202, result);
+    } catch (err) {
+      if (err instanceof OperationError) return json(err.statusCode, { message: err.message });
+      throw err;
+    }
   }
 
   /** POST /agent/restored: the world now holds the requested backup; clear the request. */
@@ -136,7 +168,7 @@ export function agentHandlers({ store, instanceRoleNames, releases, backups, now
     return { statusCode: 204 };
   }
 
-  return { config, status, backupCredentials, backupDone, restored };
+  return { config, status, backupCredentials, backupDone, restored, idle };
 }
 
 /** The request body as a JSON object, or an error message. */
