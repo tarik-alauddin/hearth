@@ -3,7 +3,7 @@ import type {
   APIGatewayProxyStructuredResultV2,
 } from 'aws-lambda';
 import type { ListBackupsResponse, ListServersResponse } from '@hearth/shared';
-import type { BackupStorage } from '../agent/backups.js';
+import type { BackupStorage } from '../backups.js';
 import { callerInstanceId } from '../agent/caller.js';
 import { OperationError, type serverOperations } from '../servers/operations.js';
 

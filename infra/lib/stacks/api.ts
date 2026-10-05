@@ -92,7 +92,7 @@ export class ApiStack extends HearthStack {
     );
 
     // Backups: instances have no S3 access of their own. This role can write any server's backups;
-    // the credentials handler narrows each session to one key (see services/api/src/agent/backups.ts).
+    // the credentials handler narrows each session to one key (see services/api/src/backups.ts).
     const serverBackups = `arn:${this.partition}:s3:::${backups}/${backupPrefix('*')}*`;
     const backupCredentialsFunction = agentFunction('AgentBackupCredentials', 'backupCredentialsHandler');
     backupCredentialsFunction.addToRolePolicy(

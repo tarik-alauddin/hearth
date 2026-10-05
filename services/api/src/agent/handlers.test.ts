@@ -1,7 +1,7 @@
 import type { APIGatewayProxyEventV2WithIAMAuthorizer } from 'aws-lambda';
 import { beforeEach, describe, expect, it } from 'vitest';
 import type { AgentStatusReport, ServerRecord } from '@hearth/shared';
-import type { BackupStorage } from './backups.js';
+import type { BackupStorage } from '../backups.js';
 import { agentHandlers, type AgentHandlerDeps } from './handlers.js';
 import type { AgentReleases } from './releases.js';
 

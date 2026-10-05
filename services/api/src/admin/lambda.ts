@@ -1,6 +1,6 @@
 // Lambda entry point for the /admin routes.
 import { createServersStore } from '@hearth/core';
-import { s3BackupStorage } from '../agent/backups.js';
+import { s3BackupStorage } from '../backups.js';
 import { serverOperations } from '../servers/operations.js';
 import { stepFunctionsWorkflows } from '../servers/workflows.js';
 import { adminHandler } from './handlers.js';
