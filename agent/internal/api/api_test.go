@@ -105,6 +105,24 @@ func TestBackupRoutes(t *testing.T) {
 	}
 }
 
+func TestIdle(t *testing.T) {
+	var got map[string]int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/agent/idle" {
+			t.Errorf("%s %s", r.Method, r.URL.Path)
+		}
+		_ = json.NewDecoder(r.Body).Decode(&got)
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	defer srv.Close()
+	if err := New(srv.URL, "us-west-2", testCreds).Idle(context.Background(), 30); err != nil {
+		t.Fatal(err)
+	}
+	if got["idleMinutes"] != 30 {
+		t.Errorf("sent %v", got)
+	}
+}
+
 func TestErrorResponses(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNotFound)

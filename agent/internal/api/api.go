@@ -91,6 +91,15 @@ func (c *Client) BackupCredentials(ctx context.Context) (BackupTarget, error) {
 	return target, err
 }
 
+// Idle asks the API to stop this server, nobody having played for idleMinutes (POST /agent/idle).
+func (c *Client) Idle(ctx context.Context, idleMinutes int) error {
+	body, err := json.Marshal(map[string]int{"idleMinutes": idleMinutes})
+	if err != nil {
+		return err
+	}
+	return c.do(ctx, http.MethodPost, "/agent/idle", body, nil)
+}
+
 // Restored clears the server's requested restore of key, now in place (POST /agent/restored).
 func (c *Client) Restored(ctx context.Context, key string) error {
 	body, err := json.Marshal(map[string]string{"key": key})
