@@ -88,8 +88,9 @@ type Options struct {
 	// 15 seconds: short enough to catch a brief visit (logging in alone takes several seconds), and
 	// the check is a ping on loopback.
 	PlayerInterval time.Duration
-	// IdleAfter is how long the game may run with nobody playing before the agent asks for a stop.
-	// Defaults to 30 minutes; negative never stops.
+	// IdleAfter is how long the game may run with nobody playing before the agent asks for a stop,
+	// when the config doesn't say (the server's own setting wins). Defaults to 30 minutes; negative
+	// never stops.
 	IdleAfter time.Duration
 	// MaxBackoff caps the wait between retries of API calls and container starts. Defaults to 30 seconds.
 	MaxBackoff time.Duration
@@ -230,7 +231,7 @@ func (a *Agent) Run(ctx context.Context) error {
 	if ready {
 		a.log.Info("game ready")
 		a.report(ctx, "ready", "")
-		if msg := a.whileReady(ctx, adapter, exited); msg != "" {
+		if msg := a.whileReady(ctx, adapter, exited, a.idleAfter(cfg)); msg != "" {
 			a.fail(ctx, msg)
 			ready = false
 			<-ctx.Done()
@@ -355,13 +356,31 @@ func (a *Agent) waitReady(ctx context.Context, adapter game.Adapter, exited <-ch
 	}
 }
 
+// idleAfter is the server's idle limit from its config (0 there = never), or IdleAfter when the
+// API doesn't send one.
+func (a *Agent) idleAfter(cfg game.Config) time.Duration {
+	if cfg.IdleStopMinutes == nil {
+		return a.IdleAfter
+	}
+	if *cfg.IdleStopMinutes <= 0 {
+		return -1
+	}
+	return time.Duration(*cfg.IdleStopMinutes) * time.Minute
+}
+
 // whileReady watches the running game until shutdown is requested (returning "") or the game
-// exits (returning why), checking the player count every PlayerInterval.
-func (a *Agent) whileReady(ctx context.Context, adapter game.Adapter, exited <-chan string) string {
+// exits (returning why), checking the player count every PlayerInterval and asking for a stop
+// once nobody has played for idleAfter (negative: never).
+func (a *Agent) whileReady(ctx context.Context, adapter game.Adapter, exited <-chan string, idleAfter time.Duration) string {
 	ticker := time.NewTicker(a.PlayerInterval)
 	defer ticker.Stop()
 	var players playerCount
-	idle := idleTimer{after: a.IdleAfter, lastSeen: time.Now()}
+	idle := idleTimer{after: idleAfter, lastSeen: time.Now()}
+	if idleAfter > 0 {
+		a.log.Info("will ask to stop after this long with nobody playing", "idleAfter", idleAfter)
+	} else {
+		a.log.Info("idle stop is off for this server")
+	}
 	for {
 		select {
 		case <-ctx.Done():

@@ -33,7 +33,7 @@ as part of each PR. The repo layout and commands are in [README.md](README.md).
 | --- | --- |
 | M0–M4: foundation, infra, agent, lifecycle workflows, agent releases; plus monitoring | Done |
 | M5 Game updates and backups | Done (PR1–PR9; follow-ups under Deferred) |
-| M6 Idle shutdown | In progress: PR1–PR2 merged; PR3 (idle timer) in review |
+| M6 Idle shutdown | In progress: PR1–PR3 merged; PR4 (idle setting) in review |
 | M7 Move your world | Not started |
 
 **M6 plan** (stop servers nobody is playing on; detection runs on the instance, no heartbeats):
@@ -42,10 +42,12 @@ as part of each PR. The repo layout and commands are in [README.md](README.md).
 - PR2, merged: `POST /agent/idle` lets an agent stop its own `RUNNING` server through the normal
   stop workflow (so it still backs up), recording `stopReason`; `hearth status` shows it. Its
   Lambda may start only the stop workflow.
-- PR3, in review: the agent's idle timer. Idle = the latest check worked and saw nobody, and no
+- PR3, merged: the agent's idle timer. Idle = the latest check worked and saw nobody, and no
   check has seen anyone for `IdleAfter` (30 min; `-idle-after` / `HEARTH_IDLE_AFTER` override).
   A failed check neither counts nor resets. Asks once; after a refused request, waits 5 min.
-- PR4: per-server `idleStopMinutes` (default 30, 0 = never) in the agent config; `hearth set-idle`.
+- PR4, in review: per-server `idleStopMinutes` (default 30, 0 = never) through the settings route;
+  the agent config always carries it, and it wins over the agent's `-idle-after` fallback.
+  `hearth set-idle <id> <minutes|off>`; `hearth status` shows it. Applies from the next start.
 
 **M5 plan:**
 - PR1, done: the stop workflow stops the agent through SSM Run Command before stopping the instance.

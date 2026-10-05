@@ -105,7 +105,15 @@ describe('agent handlers', () => {
         version: '1.21.4',
         image: 'docker.io/itzg/minecraft-server',
         port: 25565,
+        idleStopMinutes: 30, // the default
       });
+    });
+
+    it("sends the server's own idle limit, 0 included", async () => {
+      for (const idleStopMinutes of [5, 0]) {
+        const h = agentHandlers({ ...deps, store: fakeStore([{ ...server, idleStopMinutes }]).store });
+        expect(JSON.parse((await h.config(event())).body!).idleStopMinutes).toBe(idleStopMinutes);
+      }
     });
 
     it('rejects callers that are not game instances', async () => {

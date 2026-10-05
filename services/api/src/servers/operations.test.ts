@@ -202,10 +202,21 @@ describe('server operations', () => {
       expect((await ops(store).updateSettings('s1', { agentChannel: 'canary' })).agentChannel).toBe('canary');
     });
 
+    it('changes the idle limit, alone or with the channel, 0 meaning never', async () => {
+      const { store, servers } = fakeStore([server({})]);
+      expect((await ops(store).updateSettings('s1', { idleStopMinutes: 45 })).idleStopMinutes).toBe(45);
+      await ops(store).updateSettings('s1', { idleStopMinutes: 0, agentChannel: 'canary' });
+      expect(servers.get('s1')).toMatchObject({ idleStopMinutes: 0, agentChannel: 'canary' });
+    });
+
     it.each([
       ['no settings', {}],
       ['an unknown setting', { agentChannel: 'canary', difficulty: 'hard' }],
       ['an unknown channel', { agentChannel: 'nightly' }],
+      ['a negative idle limit', { idleStopMinutes: -1 }],
+      ['a fractional idle limit', { idleStopMinutes: 2.5 }],
+      ['an idle limit over a day', { idleStopMinutes: 1441 }],
+      ['an idle limit as a string', { idleStopMinutes: '30' }],
     ])('rejects %s with 400', async (_, body) => {
       await expect(ops(fakeStore([server({})]).store).updateSettings('s1', body)).rejects.toMatchObject({ statusCode: 400 });
     });

@@ -143,6 +143,33 @@ describe('commands', () => {
     expect(out).toEqual(['s1 runs minecraft-java 26.3 from its next start.']);
   });
 
+  it('sets the idle limit in minutes, or off', async () => {
+    const posts: string[] = [];
+    const api = {
+      post: async (path: string, body?: { idleStopMinutes: number }) => {
+        posts.push(`${path} ${JSON.stringify(body)}`);
+        return { serverId: 's1', idleStopMinutes: body?.idleStopMinutes };
+      },
+    } as unknown as Api;
+    const { out, cmd } = run(api);
+    await cmd.setIdle('s1', '45');
+    await cmd.setIdle('s1', 'off');
+    expect(posts).toEqual(['/admin/servers/s1/settings {"idleStopMinutes":45}', '/admin/servers/s1/settings {"idleStopMinutes":0}']);
+    expect(out).toEqual([
+      's1 stops after 45 minutes with nobody playing, from its next start.',
+      's1 never stops for being idle, from its next start.',
+    ]);
+    await expect(cmd.setIdle('s1', 'soon')).rejects.toBeInstanceOf(CommandError);
+    await expect(cmd.setIdle('s1', '-5')).rejects.toBeInstanceOf(CommandError);
+  });
+
+  it('status shows the idle limit, defaulting to 30 minutes', async () => {
+    const { api } = fakeApi([{ status: 'RUNNING' }]);
+    const { out, cmd } = run(api);
+    await cmd.status('s1');
+    expect(out).toContain('idle stop   stops after 30 minutes with nobody playing');
+  });
+
   it('status shows why the server last stopped', async () => {
     const { api } = fakeApi([
       { status: 'STOPPED', lastStoppedAt: '2026-10-05T12:00:00Z', stopReason: 'no players for 30 minutes' },

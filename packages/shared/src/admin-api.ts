@@ -18,6 +18,8 @@ export interface CreateServerRequest {
 /** `POST /admin/servers/{id}/settings`: the settings to change. */
 export interface UpdateSettingsRequest {
   agentChannel?: AgentChannel;
+  /** Stop after this many minutes with nobody playing (1–1440); 0 = never. */
+  idleStopMinutes?: number;
 }
 
 /** Response to create, start and stop. */

@@ -23,6 +23,9 @@ type Config struct {
 	// Restore is a requested restore (RestoreTarget in packages/shared): replace the world with
 	// this backup before starting the game. Nil when none is pending.
 	Restore *RestoreTarget `json:"restore,omitempty"`
+	// IdleStopMinutes is how long the game may run with nobody playing before the agent asks for a
+	// stop; 0 = never. Nil from an API that doesn't send it yet.
+	IdleStopMinutes *int `json:"idleStopMinutes,omitempty"`
 
 	// Filled in by the agent, not the API.
 	DataDir   string `json:"-"` // root of the world data volume, e.g. /srv/hearth

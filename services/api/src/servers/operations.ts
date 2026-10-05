@@ -3,6 +3,7 @@ import {
   AGENT_CHANNELS,
   DEFAULT_AGENT_CHANNEL,
   GAMES,
+  MAX_IDLE_STOP_MINUTES,
   backupPrefix,
   isAgentChannel,
   type CreateServerRequest,
@@ -351,10 +352,24 @@ function validateCreate(request: unknown): CreateServerRequest {
 
 function validateSettings(request: unknown): UpdateSettingsRequest {
   if (typeof request !== 'object' || request === null) throw new OperationError(400, 'Body must be a JSON object');
-  const { agentChannel, ...rest } = request as Record<string, unknown>;
+  const { agentChannel, idleStopMinutes, ...rest } = request as Record<string, unknown>;
   const unknown = Object.keys(rest);
   if (unknown.length) throw new OperationError(400, `Unknown settings: ${unknown.join(', ')}`);
-  if (agentChannel === undefined) throw new OperationError(400, 'No settings given');
-  if (!isAgentChannel(agentChannel)) throw new OperationError(400, `agentChannel must be one of ${AGENT_CHANNELS.join(', ')}`);
-  return { agentChannel };
+  if (agentChannel === undefined && idleStopMinutes === undefined) throw new OperationError(400, 'No settings given');
+  if (agentChannel !== undefined && !isAgentChannel(agentChannel)) {
+    throw new OperationError(400, `agentChannel must be one of ${AGENT_CHANNELS.join(', ')}`);
+  }
+  if (
+    idleStopMinutes !== undefined &&
+    (typeof idleStopMinutes !== 'number' ||
+      !Number.isInteger(idleStopMinutes) ||
+      idleStopMinutes < 0 ||
+      idleStopMinutes > MAX_IDLE_STOP_MINUTES)
+  ) {
+    throw new OperationError(400, `idleStopMinutes must be a whole number from 0 (never) to ${MAX_IDLE_STOP_MINUTES}`);
+  }
+  return {
+    ...(agentChannel !== undefined ? { agentChannel } : {}),
+    ...(idleStopMinutes !== undefined ? { idleStopMinutes: idleStopMinutes as number } : {}),
+  };
 }
