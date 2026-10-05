@@ -14,7 +14,7 @@ import {
   type ServerRecord,
 } from '@hearth/shared';
 import type { ServersStore } from '@hearth/core';
-import type { BackupStorage } from './backups.js';
+import type { BackupStorage } from '../backups.js';
 import { callerInstanceId } from './caller.js';
 import type { AgentReleases } from './releases.js';
 

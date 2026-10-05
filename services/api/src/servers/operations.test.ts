@@ -4,6 +4,12 @@ import { InvalidCursor } from '@hearth/core';
 import { OperationError, serverOperations, type OperationDeps, type WorkflowName } from './operations.js';
 
 const NOW = new Date('2026-09-29T12:00:00Z');
+const NEWEST = 'servers/s1/20261005T120000Z.tar.gz';
+const OLDER = 'servers/s1/20261004T120000Z.tar.gz';
+const BACKUPS = [
+  { key: NEWEST, takenAt: '2026-10-05T12:00:10.000Z', bytes: 2048 },
+  { key: OLDER, takenAt: '2026-10-04T12:00:10.000Z', bytes: 1024 },
+];
 
 function fakeStore(initial: ServerRecord[] = []) {
   const servers = new Map(initial.map((s) => [s.serverId, { ...s }]));
@@ -23,10 +29,11 @@ function fakeStore(initial: ServerRecord[] = []) {
       Object.assign(s, settings);
       return true;
     },
-    transition: async (id, { from, to, instanceId, set = {} }) => {
+    transition: async (id, { from, to, instanceId, set = {}, remove = [] }) => {
       const s = servers.get(id);
       if (!s || !from.includes(s.status) || (instanceId !== undefined && s.instanceId !== instanceId)) return false;
       Object.assign(s, set, { status: to });
+      for (const field of remove) delete s[field];
       return true;
     },
   };
@@ -61,6 +68,7 @@ describe('server operations', () => {
           started.push({ workflow, serverId, operationId });
         },
       },
+      backups: { list: async (id) => (id === 's1' ? BACKUPS : []) },
       homeRegion: 'us-west-2',
       gameRegions: ['us-west-2'],
       now: () => NOW,
@@ -224,6 +232,75 @@ describe('server operations', () => {
     it('refuses to stop a server that is still starting', async () => {
       const { store } = fakeStore([server({ status: 'STARTING' })]);
       await expect(ops(store).stopServer('s1')).rejects.toMatchObject({ statusCode: 409 });
+    });
+  });
+
+  describe('backups', () => {
+    it('lists backups, or 404 for an unknown server', async () => {
+      const { store } = fakeStore([server({})]);
+      expect(await ops(store).listBackups('s1')).toEqual({ backups: BACKUPS });
+      await expect(ops(store).listBackups('nope')).rejects.toMatchObject({ statusCode: 404 });
+    });
+  });
+
+  describe('restore', () => {
+    it('defaults to the newest backup and records when it was asked for', async () => {
+      const { store, servers } = fakeStore([server({ lastStopClean: true })]);
+      const result = await ops(store).requestRestore('s1', {});
+      expect(result).toMatchObject({ status: 'STOPPED', restoreKey: NEWEST, restoreRequestedAt: NOW.toISOString() });
+      expect(servers.get('s1')?.restoreKey).toBe(NEWEST);
+      expect(started).toEqual([]); // nothing runs until the next start
+    });
+
+    it.each([OLDER, '20261004T120000Z.tar.gz'])('takes a chosen backup by key or file name (%s)', async (key) => {
+      const { store } = fakeStore([server({})]);
+      expect((await ops(store).requestRestore('s1', { key })).restoreKey).toBe(OLDER);
+    });
+
+    it('returns 404 for a backup the server does not have', async () => {
+      const { store } = fakeStore([server({})]);
+      await expect(ops(store).requestRestore('s1', { key: 'servers/s2/20261005T120000Z.tar.gz' })).rejects.toMatchObject({
+        statusCode: 404,
+      });
+    });
+
+    it.each(['RUNNING', 'STARTING', 'STOPPING'] as const)('refuses while %s', async (status) => {
+      const { store } = fakeStore([server({ status })]);
+      await expect(ops(store).requestRestore('s1', {})).rejects.toMatchObject({ statusCode: 409 });
+    });
+
+    it('refuses after an unclean stop unless forced', async () => {
+      const { store } = fakeStore([server({ lastStopClean: false })]);
+      await expect(ops(store).requestRestore('s1', {})).rejects.toThrow(/wasn't clean/);
+      expect((await ops(store).requestRestore('s1', { force: true })).restoreKey).toBe(NEWEST);
+    });
+
+    it('refuses when there are no backups', async () => {
+      const { store } = fakeStore([server({ serverId: 's2' })]);
+      await expect(ops(store).requestRestore('s2', {})).rejects.toThrow(/no backups/);
+    });
+
+    it.each([
+      ['an unknown field', { key: NEWEST, keep: 1 }],
+      ['a non-string key', { key: 5 }],
+      ['a non-boolean force', { force: 'yes' }],
+      ['a non-object body', 'newest'],
+    ])('returns 400 for %s', async (_, body) => {
+      const { store } = fakeStore([server({})]);
+      await expect(ops(store).requestRestore('s1', body)).rejects.toMatchObject({ statusCode: 400 });
+    });
+
+    it('cancels a pending restore, and cancelling none is a no-op', async () => {
+      const { store, servers } = fakeStore([server({ restoreKey: NEWEST, restoreRequestedAt: NOW.toISOString() })]);
+      const result = await ops(store).cancelRestore('s1');
+      expect(result.restoreKey).toBeUndefined();
+      expect(servers.get('s1')).not.toHaveProperty('restoreRequestedAt');
+      expect((await ops(store).cancelRestore('s1')).restoreKey).toBeUndefined();
+    });
+
+    it('refuses to cancel once the server is starting', async () => {
+      const { store } = fakeStore([server({ status: 'STARTING', restoreKey: NEWEST })]);
+      await expect(ops(store).cancelRestore('s1')).rejects.toMatchObject({ statusCode: 409 });
     });
   });
 });

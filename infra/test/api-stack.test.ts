@@ -144,6 +144,8 @@ describe('ApiStack', () => {
     ['POST /admin/servers'],
     ['GET /admin/servers/{id}'],
     ['GET /admin/servers/{id}/backups'],
+    ['POST /admin/servers/{id}/restore'],
+    ['POST /admin/servers/{id}/restore/cancel'],
     ['POST /admin/servers/{id}/start'],
     ['POST /admin/servers/{id}/stop'],
     ['POST /admin/servers/{id}/settings'],

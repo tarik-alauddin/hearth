@@ -32,7 +32,7 @@ as part of each PR. The repo layout and commands are in [README.md](README.md).
 | Milestone | Status |
 | --- | --- |
 | M0–M4: foundation, infra, agent, lifecycle workflows, agent releases; plus monitoring | Done |
-| M5 Game updates and backups | In progress: PR1–PR3 merged; PR4 (list backups) in review |
+| M5 Game updates and backups | In progress: PR1–PR4 merged; PR6 (request a restore) in review |
 | M6 Idle shutdown, M7 Move your world | Not started |
 
 **M5 plan:**
@@ -40,9 +40,12 @@ as part of each PR. The repo layout and commands are in [README.md](README.md).
 - PR2, done: on that stop, the agent backs the world up to S3 and the API records it (tested on dev:
   about 10s for a small world).
 - PR3, done: keep the newest 10 backups per server (tested on dev).
-- PR4, in review: `hearth backups <id>` lists a server's backups (`GET /admin/servers/{id}/backups`).
-- Next: ask for a restore (`hearth restore`, stopped servers only), the agent restoring on start,
-  then `hearth set-version` (forward only, needs a backup).
+- PR4, done: `hearth backups <id>` lists a server's backups (`GET /admin/servers/{id}/backups`).
+- PR6, in review: `hearth restore <id> [<key>] [--force]` and `--cancel` record or clear
+  `restoreKey` on a stopped server. Nothing acts on it yet. Also moves the backup storage code to
+  `services/api/src/backups.ts`, shared by agent and admin routes.
+- Next: the agent restores on start (presigned download, clears `restoreKey`; the backup may have
+  been pruned since the request), then `hearth set-version` (forward only, needs a backup).
 
 ## Decisions and why
 

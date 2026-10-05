@@ -3,15 +3,19 @@ import {
   AGENT_CHANNELS,
   DEFAULT_AGENT_CHANNEL,
   GAMES,
+  backupPrefix,
   isAgentChannel,
   type CreateServerRequest,
   type GameId,
+  type ListBackupsResponse,
   type ListServersResponse,
+  type RestoreRequest,
   type ServerOperationResult,
   type ServerRecord,
   type ServerStatus,
   type UpdateSettingsRequest,
 } from '@hearth/shared';
+import type { BackupStorage } from '../backups.js';
 
 // The one implementation of create, start and stop. The admin routes use it now; the UI and
 // Discord bot routes will call the same functions, so every caller behaves the same.
@@ -36,6 +40,7 @@ export class OperationError extends Error {
 export interface OperationDeps {
   store: Pick<ServersStore, 'getServer' | 'listServers' | 'createServer' | 'transition' | 'updateSettings'>;
   workflows: Workflows;
+  backups: Pick<BackupStorage, 'list'>;
   homeRegion: string;
   /** Regions with game infrastructure. */
   gameRegions: readonly string[];
@@ -50,6 +55,7 @@ const MAX_PAGE = 100;
 export function serverOperations({
   store,
   workflows,
+  backups,
   homeRegion,
   gameRegions,
   now = () => new Date(),
@@ -174,7 +180,66 @@ export function serverOperations({
       }
       throw new OperationError(409, `Server ${serverId} is ${server.status} and can't be stopped`);
     },
+
+    /** The server's backups, newest first. */
+    async listBackups(serverId: string): Promise<ListBackupsResponse> {
+      await requireServer(serverId); // 404 for an unknown server, not an empty list
+      return { backups: await backups.list(serverId) };
+    },
+
+    /**
+     * Asks for a backup (default: the newest) to replace the world on the next start. Only while
+     * STOPPED, and not after an unclean stop unless forced: that world may be in no backup.
+     */
+    async requestRestore(serverId: string, request: unknown): Promise<ServerRecord> {
+      const { key, force } = validateRestore(request);
+      const server = await requireServer(serverId);
+      if (server.status !== 'STOPPED') {
+        throw new OperationError(409, `Server ${serverId} is ${server.status}; stop it before restoring`);
+      }
+      if (server.lastStopClean === false && !force) {
+        throw new OperationError(
+          409,
+          `Server ${serverId}'s last stop wasn't clean, so its current world may be in no backup; force to restore anyway`,
+        );
+      }
+      const available = await backups.list(serverId);
+      if (available.length === 0) throw new OperationError(409, `Server ${serverId} has no backups`);
+      const wanted = key === undefined ? available[0]!.key : key.includes('/') ? key : `${backupPrefix(serverId)}${key}`;
+      if (!available.some((b) => b.key === wanted)) throw new OperationError(404, `No backup ${wanted}`);
+
+      const ok = await store.transition(serverId, {
+        from: ['STOPPED'],
+        to: 'STOPPED',
+        set: { restoreKey: wanted, restoreRequestedAt: now().toISOString() },
+      });
+      if (!ok) throw new OperationError(409, `Server ${serverId} changed state; try again`);
+      return requireServer(serverId);
+    },
+
+    /** Clears a requested restore. Only while STOPPED: once starting, the restore may be under way. */
+    async cancelRestore(serverId: string): Promise<ServerRecord> {
+      const server = await requireServer(serverId);
+      if (!server.restoreKey) return server;
+      const ok = await store.transition(serverId, {
+        from: ['STOPPED'],
+        to: 'STOPPED',
+        remove: ['restoreKey', 'restoreRequestedAt'],
+      });
+      if (!ok) throw new OperationError(409, `Server ${serverId} is no longer stopped; the restore can't be cancelled`);
+      return requireServer(serverId);
+    },
   };
+}
+
+function validateRestore(request: unknown): RestoreRequest {
+  if (typeof request !== 'object' || request === null) throw new OperationError(400, 'Body must be a JSON object');
+  const { key, force, ...rest } = request as Record<string, unknown>;
+  const unknown = Object.keys(rest);
+  if (unknown.length) throw new OperationError(400, `Unknown fields: ${unknown.join(', ')}`);
+  if (key !== undefined && (typeof key !== 'string' || !key)) throw new OperationError(400, 'Invalid key');
+  if (force !== undefined && typeof force !== 'boolean') throw new OperationError(400, 'force must be true or false');
+  return { ...(key !== undefined ? { key } : {}), ...(force ? { force } : {}) };
 }
 
 function validateCreate(request: unknown): CreateServerRequest {

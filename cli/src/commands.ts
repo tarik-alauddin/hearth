@@ -3,6 +3,7 @@ import {
   type FleetReport,
   type ListBackupsResponse,
   type ListServersResponse,
+  type RestoreRequest,
   type ServerOperationResult,
   type ServerRecord,
   type ServerStatus,
@@ -97,6 +98,7 @@ export function commands({ api, fleetCheck, print, sleep = (ms) => new Promise((
         ['join at', s.publicIp && address(s)],
         ['last stop', s.lastStoppedAt && `${s.lastStoppedAt}${s.lastStopClean === false ? ' (not clean)' : ''}`],
         ['last backup', s.lastBackupAt && `${s.lastBackupAt} (${mebibytes(s.lastBackupBytes ?? 0)})`],
+        ['restore', s.restoreKey && `${s.restoreKey} on the next start`],
       ];
       for (const [k, v] of rows) if (v) print(`${k.padEnd(11)} ${v}`);
     },
@@ -139,6 +141,19 @@ export function commands({ api, fleetCheck, print, sleep = (ms) => new Promise((
       const { backups } = await api.get<ListBackupsResponse>(`/admin/servers/${encodeURIComponent(id)}/backups`);
       if (backups.length === 0) return print('No backups yet. One is taken each time the server stops.');
       table([['TAKEN', 'SIZE', 'KEY'], ...backups.map((b) => [b.takenAt, mebibytes(b.bytes), b.key])]);
+    },
+
+    /** Asks for a backup to replace the world on the next start; nothing happens until then. */
+    async restore(id: string, key: string | undefined, force: boolean) {
+      const body: RestoreRequest = { ...(key ? { key } : {}), ...(force ? { force } : {}) };
+      const server = await api.post<ServerRecord>(`/admin/servers/${encodeURIComponent(id)}/restore`, body);
+      print(`${server.serverId} will restore ${server.restoreKey} on its next start, replacing the current world.`);
+      print(`Start it with \`hearth start ${server.serverId}\`, or cancel with \`hearth restore ${server.serverId} --cancel\`.`);
+    },
+
+    async cancelRestore(id: string) {
+      await api.post<ServerRecord>(`/admin/servers/${encodeURIComponent(id)}/restore/cancel`);
+      print(`No restore pending for ${id}.`);
     },
   };
 

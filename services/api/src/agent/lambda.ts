@@ -1,6 +1,6 @@
 // Lambda entry points for the agent routes; ApiStack points one function at each export.
 import { createServersStore } from '@hearth/core';
-import { s3BackupStorage } from './backups.js';
+import { s3BackupStorage } from '../backups.js';
 import { agentHandlers } from './handlers.js';
 import { ssmAgentReleases } from './releases.js';
 

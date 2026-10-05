@@ -71,4 +71,7 @@ export interface ServerRecord {
   lastBackupKey?: string;
   lastBackupAt?: string; // ISO 8601 UTC
   lastBackupBytes?: number;
+  // A requested restore: this backup replaces the world on the next start.
+  restoreKey?: string;
+  restoreRequestedAt?: string; // ISO 8601 UTC
 }
