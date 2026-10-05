@@ -75,6 +75,27 @@ describe('dynamoServersStore', () => {
   });
 });
 
+describe('clearRestore', () => {
+  it('clears only the same restore, only while the server is on the calling instance', async () => {
+    const { client, sent } = fakeClient();
+    const key = 'servers/s1/20261004T120000Z.tar.gz';
+    expect(await dynamoServersStore(client, 't').clearRestore('s1', 'i-1', key)).toBe(true);
+    expect((sent[0] as UpdateCommand).input).toMatchObject({
+      Key: { serverId: 's1' },
+      UpdateExpression: 'REMOVE restoreKey, restoreRequestedAt',
+      ConditionExpression: 'instanceId = :instanceId AND restoreKey = :key',
+      ExpressionAttributeValues: { ':instanceId': 'i-1', ':key': key },
+    });
+  });
+
+  it('returns false when the condition fails', async () => {
+    const { client } = fakeClient(() => {
+      throw new ConditionalCheckFailedException({ message: 'no', $metadata: {} });
+    });
+    expect(await dynamoServersStore(client, 't').clearRestore('s1', 'i-1', 'k')).toBe(false);
+  });
+});
+
 describe('recordBackup', () => {
   it('records the newest backup only while the server is on the calling instance', async () => {
     const { client, sent } = fakeClient();

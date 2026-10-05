@@ -298,6 +298,20 @@ describe('server operations', () => {
       expect((await ops(store).cancelRestore('s1')).restoreKey).toBeUndefined();
     });
 
+    it('works on a FAILED server whose instance is stopped, keeping it FAILED', async () => {
+      const { store, servers } = fakeStore([server({ status: 'FAILED', instanceState: 'stopped', restoreKey: OLDER })]);
+      expect(await ops(store).requestRestore('s1', { key: NEWEST })).toMatchObject({ status: 'FAILED', restoreKey: NEWEST });
+      await ops(store).cancelRestore('s1');
+      expect(servers.get('s1')).toMatchObject({ status: 'FAILED' });
+      expect(servers.get('s1')?.restoreKey).toBeUndefined();
+    });
+
+    it('refuses a FAILED server whose instance is still running', async () => {
+      const { store } = fakeStore([server({ status: 'FAILED', instanceState: 'running', restoreKey: OLDER })]);
+      await expect(ops(store).requestRestore('s1', {})).rejects.toMatchObject({ statusCode: 409 });
+      await expect(ops(store).cancelRestore('s1')).rejects.toMatchObject({ statusCode: 409 });
+    });
+
     it('refuses to cancel once the server is starting', async () => {
       const { store } = fakeStore([server({ status: 'STARTING', restoreKey: NEWEST })]);
       await expect(ops(store).cancelRestore('s1')).rejects.toMatchObject({ statusCode: 409 });

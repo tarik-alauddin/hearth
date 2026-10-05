@@ -13,6 +13,19 @@ export interface AgentConfig {
   port: number;
   /** The agent release this server's channel points at; absent until the channel has one. */
   agent?: AgentTarget;
+  /** A requested restore: replace the world with this backup before starting the game. */
+  restore?: RestoreTarget;
+}
+
+export interface RestoreTarget {
+  key: string;
+  /** Presigned download link for `key`, valid for 15 minutes. */
+  url: string;
+}
+
+/** `POST /agent/restored` request body: the world now holds this backup. */
+export interface RestoreDoneReport {
+  key: string;
 }
 
 export const AGENT_STATES = ['starting', 'ready', 'stopping', 'stopped', 'error'] as const;

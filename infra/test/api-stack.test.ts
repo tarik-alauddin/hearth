@@ -36,6 +36,7 @@ describe('ApiStack', () => {
     ['POST /agent/status'],
     ['POST /agent/backup-credentials'],
     ['POST /agent/backups'],
+    ['POST /agent/restored'],
   ])('protects %s with IAM auth', (routeKey) => {
     template.hasResourceProperties('AWS::ApiGatewayV2::Route', { RouteKey: routeKey, AuthorizationType: 'AWS_IAM' });
   });
@@ -53,6 +54,7 @@ describe('ApiStack', () => {
       'index.statusHandler',
       'index.backupCredentialsHandler',
       'index.backupDoneHandler',
+      'index.restoredHandler',
     ]) {
       template.hasResourceProperties('AWS::Lambda::Function', {
         Handler: handler,
@@ -103,6 +105,7 @@ describe('ApiStack', () => {
     expect(invoke).toContain('/$default/POST/agent/status');
     expect(invoke).toContain('/$default/POST/agent/backup-credentials');
     expect(invoke).toContain('/$default/POST/agent/backups');
+    expect(invoke).toContain('/$default/POST/agent/restored');
     expect(invoke).not.toMatch(/\/\*\//);
     expect(invoke).not.toContain('/admin');
   });
@@ -118,6 +121,18 @@ describe('ApiStack', () => {
     expect(statements).toHaveLength(1);
     expect(statements[0]?.Action).toEqual(['s3:AbortMultipartUpload', 's3:PutObject']);
     expect(JSON.stringify(statements[0]?.Resource)).toContain('/servers/*/*');
+  });
+
+  it('lets the config handler read server backups, for the restore links it presigns, and nothing else in S3', () => {
+    const statements = policyStatements('AgentConfigServiceRoleDefaultPolicy') as { Action: string; Resource: unknown }[];
+    const s3 = statements.filter((s) => JSON.stringify(s.Action).includes('s3:'));
+    expect(s3.map((s) => s.Action)).toEqual(['s3:GetObject']);
+    expect(JSON.stringify(s3[0]?.Resource)).toContain('/servers/*/*');
+  });
+
+  it('lets the restored handler query the index and update items, nothing else', () => {
+    const actions = policyStatements('AgentRestoredServiceRoleDefaultPolicy').map((s) => (s as { Action: string }).Action);
+    expect(actions.sort()).toEqual(['dynamodb:Query', 'dynamodb:UpdateItem']);
   });
 
   it('lets the backup-done function read, list and delete only server backups, and update items', () => {

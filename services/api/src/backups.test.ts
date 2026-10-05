@@ -54,6 +54,21 @@ describe('s3BackupStorage', () => {
     expect(await storage.size('servers/s1/missing.tar.gz')).toBeUndefined();
   });
 
+  it('presigns a 15-minute download of exactly the key', async () => {
+    // Real presigning, offline: it only needs credentials to sign with.
+    const env = { ...process.env };
+    Object.assign(process.env, { AWS_ACCESS_KEY_ID: 'AKIDTEST', AWS_SECRET_ACCESS_KEY: 'secret' });
+    try {
+      const storage = s3BackupStorage({ bucket: 'hearth-dev-backups', region: 'us-west-2', writerRoleArn: '' });
+      const url = new URL(await storage.downloadUrl(KEY));
+      expect(url.hostname).toBe('hearth-dev-backups.s3.us-west-2.amazonaws.com');
+      expect(url.pathname).toBe(`/${KEY}`);
+      expect(url.searchParams.get('X-Amz-Expires')).toBe('900');
+    } finally {
+      process.env = env;
+    }
+  });
+
   describe('prune', () => {
     const key = (i: number) => `servers/s1/202610${String(i).padStart(2, '0')}T120000Z.tar.gz`;
 
