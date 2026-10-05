@@ -40,13 +40,23 @@ Check the backup (the bucket is `hearth-<env>-backups-<account>-us-west-2`):
 
 ```bash
 hearth status <serverId>            # "last backup  <time> (<size> MiB)"
+hearth backups <serverId>           # newest first; the top one matches "last backup"
 aws s3 ls s3://<bucket>/servers/<serverId>/            # one <yyyymmdd>T<hhmmss>Z.tar.gz per stop
 aws s3 cp s3://<bucket>/<key> - | tar tz | head        # world/…, server.properties; no logs/ or *.jar
 ```
 
-Retention keeps the newest 10 per server. Start and stop 11 times (or copy an existing backup to
-older-named keys, e.g. `…/20200101T000000Z.tar.gz`, and stop once): the listing never shows more
-than 10, and the oldest names are the ones gone.
+Retention keeps the newest 10 per server. Rather than stopping 11 times, copy an existing backup to
+older names (PowerShell), then start and stop once:
+
+```powershell
+$B = "<bucket>"; $P = "servers/<serverId>"
+foreach ($day in 1..11) {
+  $d = "202001{0:D2}" -f $day
+  aws s3 cp "s3://$B/$P/<existing key>" "s3://$B/$P/${d}T000000Z.tar.gz"
+}
+```
+
+After the stop, `aws s3 ls "s3://$B/$P/"` shows exactly 10, with the oldest 2020 names gone.
 
 ## 4. Start again
 

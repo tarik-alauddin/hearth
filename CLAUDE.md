@@ -32,15 +32,17 @@ as part of each PR. The repo layout and commands are in [README.md](README.md).
 | Milestone | Status |
 | --- | --- |
 | M0–M4: foundation, infra, agent, lifecycle workflows, agent releases; plus monitoring | Done |
-| M5 Game updates and backups | In progress: PR1–PR2 merged; PR3 (retention) in review |
+| M5 Game updates and backups | In progress: PR1–PR3 merged; PR4 (list backups) in review |
 | M6 Idle shutdown, M7 Move your world | Not started |
 
 **M5 plan:**
 - PR1, done: the stop workflow stops the agent through SSM Run Command before stopping the instance.
 - PR2, done: on that stop, the agent backs the world up to S3 and the API records it (tested on dev:
   about 10s for a small world).
-- PR3, in review: keep the newest 10 backups per server.
-- Then: restore, and `hearth set-version` (forward only, needs a backup).
+- PR3, done: keep the newest 10 backups per server (tested on dev).
+- PR4, in review: `hearth backups <id>` lists a server's backups (`GET /admin/servers/{id}/backups`).
+- Next: ask for a restore (`hearth restore`, stopped servers only), the agent restoring on start,
+  then `hearth set-version` (forward only, needs a backup).
 
 ## Decisions and why
 
@@ -78,6 +80,13 @@ as part of each PR. The repo layout and commands are in [README.md](README.md).
   versioned, so a pruned backup stays recoverable for 30 days. Known cost: the bucket moves backups
   to Glacier IR after 30 days, which bills a 90-day minimum, so backups the count rule deletes early
   are still billed to day 90. Accepted at this scale.
+- **Restores download through a presigned S3 URL** for the one backup (read-only, short-lived), not
+  STS credentials.
+- **A restore replaces the current world** and is refused after an unclean last stop (that world may
+  not be in any backup) unless forced.
+- **Restore happens in the start workflow, not a workflow of its own:** a restore always needs the
+  game stopped and then started. A pending restore arrives in the agent's config, so ordinary starts
+  pay nothing; only a start with a restore pending downloads and unpacks a backup first.
 - **Backup rules live in each game's adapter** (`Backup()` with an exclude list), not in the agent core.
 - **The fleet check reports and never fixes** (stuck, failed and mismatched servers, untracked instances).
   It is scheduled in prod only; `hearth fleet-check` runs it anywhere.

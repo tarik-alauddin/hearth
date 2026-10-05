@@ -52,8 +52,18 @@ function fakeOperations(): { calls: string[]; ops: ReturnType<typeof serverOpera
   return { calls, ops };
 }
 
+const BACKUPS = [
+  { key: 'servers/s1/20261005T120000Z.tar.gz', takenAt: '2026-10-05T12:00:10.000Z', bytes: 2048 },
+  { key: 'servers/s1/20261004T120000Z.tar.gz', takenAt: '2026-10-04T12:00:10.000Z', bytes: 1024 },
+];
+
 const handle = (ops: ReturnType<typeof serverOperations>) =>
-  adminHandler({ operations: ops, instanceRoleNames: ['hearth-dev-InstanceRole'], log: () => {} });
+  adminHandler({
+    operations: ops,
+    backups: { list: async (id) => (id === 's1' ? BACKUPS : []) },
+    instanceRoleNames: ['hearth-dev-InstanceRole'],
+    log: () => {},
+  });
 
 describe('admin routes', () => {
   it('creates a server owned by the caller and answers 202', async () => {
@@ -94,6 +104,19 @@ describe('admin routes', () => {
     const res = await handle(ops)(event('GET /admin/servers/{id}', { id: 'missing' }));
     expect(res.statusCode).toBe(404);
     expect(JSON.parse(res.body!)).toEqual({ message: 'No server missing' });
+  });
+
+  it("lists a server's backups, newest first", async () => {
+    const { ops } = fakeOperations();
+    const res = await handle(ops)(event('GET /admin/servers/{id}/backups', { id: 's1' }));
+    expect(res.statusCode).toBe(200);
+    expect(JSON.parse(res.body!)).toEqual({ backups: BACKUPS });
+  });
+
+  it('answers 404 for the backups of an unknown server', async () => {
+    const { ops } = fakeOperations();
+    const res = await handle(ops)(event('GET /admin/servers/{id}/backups', { id: 'missing' }));
+    expect(res.statusCode).toBe(404);
   });
 
   it('rejects a body that is not JSON', async () => {

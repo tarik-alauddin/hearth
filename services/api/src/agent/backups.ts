@@ -1,13 +1,15 @@
 import { DeleteObjectsCommand, HeadObjectCommand, ListObjectsV2Command, NotFound, S3Client } from '@aws-sdk/client-s3';
 import { AssumeRoleCommand, STSClient } from '@aws-sdk/client-sts';
-import { backupPrefix, isBackupKey, type BackupTarget } from '@hearth/shared';
+import { backupPrefix, isBackupKey, type BackupSummary, type BackupTarget } from '@hearth/shared';
 
-/** The backup bucket, as the agent routes see it. */
+/** The backup bucket, as the agent and admin routes see it. */
 export interface BackupStorage {
   /** Where to upload `key`, with credentials that can write that one key and nothing else. */
   target(serverId: string, key: string): Promise<BackupTarget>;
   /** The size of the object at `key`, or undefined if there isn't one. */
   size(key: string): Promise<number | undefined>;
+  /** A server's backups, newest first. */
+  list(serverId: string): Promise<BackupSummary[]>;
   /** Deletes all but the newest `keep` of a server's backups; returns the deleted keys. */
   prune(serverId: string, keep: number): Promise<string[]>;
 }
@@ -29,6 +31,23 @@ export function s3BackupStorage(opts: {
   const { bucket, region, writerRoleArn } = opts;
   const sts = opts.sts ?? new STSClient({});
   const s3 = opts.s3 ?? new S3Client({ region });
+
+  async function list(serverId: string): Promise<BackupSummary[]> {
+    const backups: BackupSummary[] = [];
+    let token: string | undefined;
+    do {
+      const page = await s3.send(
+        new ListObjectsV2Command({ Bucket: bucket, Prefix: backupPrefix(serverId), ContinuationToken: token }),
+      );
+      for (const { Key, LastModified, Size } of page.Contents ?? []) {
+        if (!Key || !isBackupKey(serverId, Key)) continue;
+        backups.push({ key: Key, takenAt: LastModified?.toISOString() ?? '', bytes: Size ?? 0 });
+      }
+      token = page.NextContinuationToken;
+    } while (token);
+    // Keys are named by time, so reverse key order is newest first.
+    return backups.sort((a, b) => b.key.localeCompare(a.key));
+  }
 
   return {
     async target(serverId, key) {
@@ -75,20 +94,11 @@ export function s3BackupStorage(opts: {
       }
     },
 
-    async prune(serverId, keep) {
-      const keys: string[] = [];
-      let token: string | undefined;
-      do {
-        const page = await s3.send(
-          new ListObjectsV2Command({ Bucket: bucket, Prefix: backupPrefix(serverId), ContinuationToken: token }),
-        );
-        for (const { Key } of page.Contents ?? []) if (Key && isBackupKey(serverId, Key)) keys.push(Key);
-        token = page.NextContinuationToken;
-      } while (token);
+    list,
 
-      // Keys are named by time, so the newest sort last. The bucket is versioned: a delete hides
-      // the object, and the hidden copy expires after 30 days.
-      const old = keys.sort().slice(0, Math.max(keys.length - keep, 0));
+    async prune(serverId, keep) {
+      // The bucket is versioned: a delete hides the object, and the hidden copy expires after 30 days.
+      const old = (await list(serverId)).slice(keep).map((b) => b.key);
       if (old.length === 0) return [];
       const out = await s3.send(
         new DeleteObjectsCommand({ Bucket: bucket, Delete: { Objects: old.map((Key) => ({ Key })), Quiet: true } }),

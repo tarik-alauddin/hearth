@@ -2,7 +2,8 @@ import type {
   APIGatewayProxyEventV2WithIAMAuthorizer,
   APIGatewayProxyStructuredResultV2,
 } from 'aws-lambda';
-import type { ListServersResponse } from '@hearth/shared';
+import type { ListBackupsResponse, ListServersResponse } from '@hearth/shared';
+import type { BackupStorage } from '../agent/backups.js';
 import { callerInstanceId } from '../agent/caller.js';
 import { OperationError, type serverOperations } from '../servers/operations.js';
 
@@ -11,13 +12,14 @@ type Result = APIGatewayProxyStructuredResultV2;
 
 export interface AdminHandlerDeps {
   operations: ReturnType<typeof serverOperations>;
+  backups: Pick<BackupStorage, 'list'>;
   /** Game instances must never use admin routes, even if IAM were misconfigured. */
   instanceRoleNames: readonly string[];
   log?: (entry: Record<string, unknown>) => void;
 }
 
 /** One Lambda for every /admin route (IAM auth), dispatched by route key. */
-export function adminHandler({ operations, instanceRoleNames, log = defaultLog }: AdminHandlerDeps) {
+export function adminHandler({ operations, backups, instanceRoleNames, log = defaultLog }: AdminHandlerDeps) {
   return async function handle(event: Event): Promise<Result> {
     const caller = event.requestContext.authorizer.iam.userArn;
     if (callerInstanceId(caller, instanceRoleNames)) return json(403, { message: 'Game instances cannot use admin routes' });
@@ -37,6 +39,11 @@ export function adminHandler({ operations, instanceRoleNames, log = defaultLog }
         }
         case 'GET /admin/servers/{id}':
           return json(200, await operations.getServer(serverId));
+        case 'GET /admin/servers/{id}/backups': {
+          await operations.getServer(serverId); // 404 for an unknown server, not an empty list
+          const body: ListBackupsResponse = { backups: await backups.list(serverId) };
+          return json(200, body);
+        }
         case 'POST /admin/servers/{id}/start': {
           const result = await operations.startServer(serverId);
           log({ msg: 'start requested', caller, ...result });

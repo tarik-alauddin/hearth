@@ -10,6 +10,7 @@ const USAGE = `Usage: hearth <command> [options]
   create --version <v> [--game minecraft-java] [--game-region <region>] [--channel canary|stable]
   list
   status <serverId>
+  backups <serverId>                       the server's backups, newest first
   start  <serverId>
   stop   <serverId>
   set-channel <serverId> <canary|stable>   agent releases to follow, from the next start
@@ -64,6 +65,9 @@ async function main(argv: string[]): Promise<number> {
       return 0;
     case 'status':
       await run.status(needId());
+      return 0;
+    case 'backups':
+      await run.backups(needId());
       return 0;
     case 'start':
       await run.start(needId(), wait);

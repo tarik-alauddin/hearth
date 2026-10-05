@@ -143,6 +143,7 @@ describe('ApiStack', () => {
     ['GET /admin/servers'],
     ['POST /admin/servers'],
     ['GET /admin/servers/{id}'],
+    ['GET /admin/servers/{id}/backups'],
     ['POST /admin/servers/{id}/start'],
     ['POST /admin/servers/{id}/stop'],
     ['POST /admin/servers/{id}/settings'],
@@ -163,5 +164,12 @@ describe('ApiStack', () => {
       'dynamodb:UpdateItem',
     ]);
     expect(JSON.stringify(statements)).not.toMatch(/ec2:|DeleteItem/);
+  });
+
+  it('lets the admin function list server backups and nothing else in the bucket', () => {
+    const statements = policyStatements('AdminServiceRoleDefaultPolicy') as { Action: unknown; Condition?: unknown }[];
+    const s3 = statements.filter((s) => JSON.stringify(s.Action).includes('s3:'));
+    expect(s3.map((s) => s.Action)).toEqual(['s3:ListBucket']);
+    expect(s3[0]?.Condition).toEqual({ StringLike: { 's3:prefix': 'servers/*/*' } });
   });
 });
