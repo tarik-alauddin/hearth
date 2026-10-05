@@ -104,6 +104,29 @@ func TestReadyPingsTheGamePort(t *testing.T) {
 	}
 }
 
+func TestPlayersComesFromTheServerListPing(t *testing.T) {
+	a := New()
+	a.Container(game.Config{Port: 25599})
+	var pinged string
+	a.ping = func(_ context.Context, addr string) (Status, error) {
+		pinged = addr
+		var s Status
+		s.Players.Online, s.Players.Max = 3, 20
+		return s, nil
+	}
+	if n, err := a.Players(context.Background()); err != nil || n != 3 {
+		t.Fatalf("got %d, %v", n, err)
+	}
+	if pinged != "127.0.0.1:25599" {
+		t.Errorf("pinged %s", pinged)
+	}
+
+	a.ping = func(context.Context, string) (Status, error) { return Status{}, errors.New("refused") }
+	if _, err := a.Players(context.Background()); err == nil {
+		t.Error("a failed ping must be an error, not zero players")
+	}
+}
+
 func TestSaveFlushesOverRCON(t *testing.T) {
 	a := New()
 	spec := a.Container(game.Config{Port: 25565})

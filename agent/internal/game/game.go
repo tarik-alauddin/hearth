@@ -60,8 +60,7 @@ func (s BackupSpec) Excludes(name string) bool {
 	return false
 }
 
-// Adapter is everything game-specific the agent needs. It grows with the milestones:
-// version resolution arrives in M5, player counts in M6.
+// Adapter is everything game-specific the agent needs.
 type Adapter interface {
 	// Container describes the container to run. Image and port come from cfg (the shared game
 	// definition); the adapter adds game settings, mounts under cfg.DataDir and any secrets.
@@ -71,6 +70,9 @@ type Adapter interface {
 	Ready(ctx context.Context) error
 	// Save flushes the world to disk. The agent calls it before stopping the container.
 	Save(ctx context.Context) error
+	// Players returns how many players are connected. The agent calls it periodically while the
+	// game is ready, to tell when nobody is playing.
+	Players(ctx context.Context) (int, error)
 	// Backup says what to back up. The agent archives it after the container has stopped, so
 	// nothing is writing to it.
 	Backup(cfg Config) BackupSpec

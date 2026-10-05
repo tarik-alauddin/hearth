@@ -251,6 +251,9 @@ func (g *fakeGame) Ready(ctx context.Context) error {
 
 func (g *fakeGame) Save(context.Context) error { return nil }
 
+// Players: a plain web server has no players.
+func (g *fakeGame) Players(context.Context) (int, error) { return 0, nil }
+
 func (g *fakeGame) Backup(cfg game.Config) game.BackupSpec {
 	return game.BackupSpec{Dir: filepath.Join(cfg.DataDir, "fake")}
 }

@@ -32,8 +32,18 @@ as part of each PR. The repo layout and commands are in [README.md](README.md).
 | Milestone | Status |
 | --- | --- |
 | M0–M4: foundation, infra, agent, lifecycle workflows, agent releases; plus monitoring | Done |
-| M5 Game updates and backups | In progress: PR1–PR8 merged; PR9 (set-version) in review |
-| M6 Idle shutdown, M7 Move your world | Not started |
+| M5 Game updates and backups | Done (PR1–PR9; follow-ups under Deferred) |
+| M6 Idle shutdown | In progress: PR1 (player count) in review |
+| M7 Move your world | Not started |
+
+**M6 plan** (stop servers nobody is playing on; detection runs on the instance, no heartbeats):
+- PR1, in review: adapters gain `Players()` (Minecraft: the server list ping); the agent checks
+  every 15 seconds while the game is ready and logs changes. Nothing acts on it.
+- PR2: `POST /agent/idle` lets an agent stop its own server through the normal stop workflow (so it
+  still backs up), recording why.
+- PR3: the agent's idle timer: minutes with zero players since ready; past the limit, call PR2. A
+  failed player check counts as not idle.
+- PR4: per-server `idleStopMinutes` (default 30, 0 = never) in the agent config; `hearth set-idle`.
 
 **M5 plan:**
 - PR1, done: the stop workflow stops the agent through SSM Run Command before stopping the instance.
@@ -50,7 +60,7 @@ as part of each PR. The repo layout and commands are in [README.md](README.md).
 - PR8 (R3b, agent), done (tested on dev): before starting the game, the agent downloads and unpacks
   the backup beside the world (refusing paths and symlinks outside it), swaps it in, then clears the
   request. Any failure fails the start with the world untouched.
-- PR9, in review: `hearth set-version <id> <version>` (`POST /admin/servers/{id}/version`): stopped
+- PR9, done (tested on dev, 26.2 → 26.3): `hearth set-version <id> <version>` (`POST /admin/servers/{id}/version`): stopped
   servers only; the version must be a full release in the game's version list (Mojang's manifest,
   cached 10 min, ordered by release date) and newer than the current one; needs a clean last stop
   with a backup since the server last ran. Applies on the next start.
@@ -128,6 +138,17 @@ as part of each PR. The repo layout and commands are in [README.md](README.md).
   backups don't record their game version, so the old world would just be upgraded again. To roll
   back properly: record the version on each backup (S3 metadata at upload), have restore set it, and
   show it in `hearth backups`. Until then, rolling back is manual.
+- **Snapshot versions** (the group may want them). Do rollback (above) first: snapshots are where
+  worlds break, and forward-only can't step back. Then one small PR: keep snapshots in the version
+  list, marked as such (release-date ordering already spans both), opt in with
+  `hearth set-version … --snapshot` (maybe `create --snapshot`), and confirm on a test server that
+  the Minecraft image takes snapshot IDs in `VERSION`. Players switch their launcher to match.
+- **Join/leave events from the game's log** (M6 follow-up). Polling every 15s can miss a visit of a
+  few seconds, which shouldn't count as idle. The agent can follow the container's output through
+  Docker's API on its local socket (no extra process, unlike `docker logs -f`; a few lines a minute,
+  negligible CPU), with the adapter recognising join lines (Minecraft: `… joined the game`). Joins
+  reset the idle timer instantly; the poll stays the source of truth for the count, correcting
+  anything the log missed or reworded.
 - **Agent logs in CloudWatch.** Today they're only in journald (Session Manager:
   `journalctl -u hearth-agent`); CloudWatch has the status reports and Lambda logs. If needed: the
   agent sends its own `info` logs with `PutLogEvents` (no CloudWatch agent daemon, which costs game

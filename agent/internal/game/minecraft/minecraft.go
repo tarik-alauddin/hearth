@@ -80,6 +80,16 @@ func (a *Adapter) Ready(ctx context.Context) error {
 	return err
 }
 
+// Players reads the online count from a server list ping: the same check as Ready, so it needs
+// no RCON and works however players connect.
+func (a *Adapter) Players(ctx context.Context) (int, error) {
+	status, err := a.ping(ctx, fmt.Sprintf("127.0.0.1:%d", a.port))
+	if err != nil {
+		return 0, err
+	}
+	return status.Players.Online, nil
+}
+
 // Save writes all chunks to disk. Stopping the container afterwards makes the server save again
 // and exit cleanly; saving first means the world is safe even if that stop is cut short.
 func (a *Adapter) Save(ctx context.Context) error {
