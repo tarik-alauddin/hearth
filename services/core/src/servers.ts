@@ -38,6 +38,11 @@ export interface ServersStore {
   findByStatus(status: ServerStatus, changedBefore?: Date): Promise<StatusIndexEntry[]>;
   /** Agent routes. Returns false if the server is no longer on this instance. */
   recordAgentReport(serverId: string, instanceId: string, report: AgentStatusReport, at: Date): Promise<boolean>;
+  /**
+   * Agent routes: the restore of `key` is done, so the request is cleared. Returns false if the
+   * server is no longer on this instance, or a different restore (or none) is pending.
+   */
+  clearRestore(serverId: string, instanceId: string, key: string): Promise<boolean>;
   /** Agent routes: records a finished backup. Returns false if the server is no longer on this instance. */
   recordBackup(serverId: string, instanceId: string, backup: { key: string; bytes: number }, at: Date): Promise<boolean>;
   /**
@@ -178,6 +183,15 @@ export function dynamoServersStore(
         // The index is eventually consistent; only write if the server is still on this instance.
         ConditionExpression: 'instanceId = :instanceId',
         ExpressionAttributeValues: values,
+      });
+    },
+
+    async clearRestore(serverId, instanceId, key) {
+      return conditionalUpdate({
+        Key: { serverId },
+        UpdateExpression: 'REMOVE restoreKey, restoreRequestedAt',
+        ConditionExpression: 'instanceId = :instanceId AND restoreKey = :key',
+        ExpressionAttributeValues: { ':instanceId': instanceId, ':key': key },
       });
     },
 

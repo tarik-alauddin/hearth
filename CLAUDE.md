@@ -32,7 +32,7 @@ as part of each PR. The repo layout and commands are in [README.md](README.md).
 | Milestone | Status |
 | --- | --- |
 | M0–M4: foundation, infra, agent, lifecycle workflows, agent releases; plus monitoring | Done |
-| M5 Game updates and backups | In progress: PR1–PR4 merged; PR6 (request a restore) in review |
+| M5 Game updates and backups | In progress: PR1–PR6 merged; PR7 (R3a, restore: API side) in review |
 | M6 Idle shutdown, M7 Move your world | Not started |
 
 **M5 plan:**
@@ -41,11 +41,14 @@ as part of each PR. The repo layout and commands are in [README.md](README.md).
   about 10s for a small world).
 - PR3, done: keep the newest 10 backups per server (tested on dev).
 - PR4, done: `hearth backups <id>` lists a server's backups (`GET /admin/servers/{id}/backups`).
-- PR6, in review: `hearth restore <id> [<key>] [--force]` and `--cancel` record or clear
+- PR6, done: `hearth restore <id> [<key>] [--force]` and `--cancel` record or clear
   `restoreKey` on a stopped server. Nothing acts on it yet. Also moves the backup storage code to
   `services/api/src/backups.ts`, shared by agent and admin routes.
-- Next: the agent restores on start (presigned download, clears `restoreKey`; the backup may have
-  been pruned since the request), then `hearth set-version` (forward only, needs a backup).
+- PR7 (R3a, API), in review: agent config carries `restore: { key, url }` (presigned, 15 min) while a restore
+  is pending; `POST /agent/restored` clears it; restore/cancel accept a stopped `FAILED` server.
+- Then R3b (agent): download, unpack beside the world (refusing paths outside it), swap, report;
+  a missing backup (404) fails the start. Ships on canary first.
+- Then `hearth set-version` (forward only, needs a backup).
 
 ## Decisions and why
 
@@ -90,6 +93,10 @@ as part of each PR. The repo layout and commands are in [README.md](README.md).
 - **Restore happens in the start workflow, not a workflow of its own:** a restore always needs the
   game stopped and then started. A pending restore arrives in the agent's config, so ordinary starts
   pay nothing; only a start with a restore pending downloads and unpacks a backup first.
+- **A restore whose backup is gone fails the start** (the server ends `FAILED`, world untouched) rather
+  than starting without it, so the gap is visible. This can happen when a start fails before
+  restoring and the next stop's backup prunes the oldest. `hearth restore` and `--cancel` also accept
+  a `FAILED` server whose instance is stopped, so another backup can be chosen.
 - **Backup rules live in each game's adapter** (`Backup()` with an exclude list), not in the agent core.
 - **The fleet check reports and never fixes** (stuck, failed and mismatched servers, untracked instances).
   It is scheduled in prod only; `hearth fleet-check` runs it anywhere.

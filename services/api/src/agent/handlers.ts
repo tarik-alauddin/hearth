@@ -27,7 +27,7 @@ interface Caller {
 }
 
 export interface AgentHandlerDeps {
-  store: Pick<ServersStore, 'findByInstance' | 'recordAgentReport' | 'recordBackup'>;
+  store: Pick<ServersStore, 'findByInstance' | 'recordAgentReport' | 'recordBackup' | 'clearRestore'>;
   /** Names of the game instance roles allowed to call agent routes. */
   instanceRoleNames: readonly string[];
   /** Which agent release each channel points at. */
@@ -56,6 +56,8 @@ export function agentHandlers({ store, instanceRoleNames, releases, backups, now
     const { server } = caller;
     const game = GAME_DEFINITIONS[server.game];
     const agent = await releases.target(server.agentChannel ?? DEFAULT_AGENT_CHANNEL);
+    // Not checked here: if the backup is gone, the agent's download fails and so does the start.
+    const restore = server.restoreKey && { key: server.restoreKey, url: await backups.downloadUrl(server.restoreKey) };
     const body: AgentConfig = {
       serverId: server.serverId,
       game: server.game,
@@ -63,8 +65,25 @@ export function agentHandlers({ store, instanceRoleNames, releases, backups, now
       image: game.image,
       port: game.port,
       ...(agent ? { agent } : {}),
+      ...(restore ? { restore } : {}),
     };
     return json(200, body);
+  }
+
+  /** POST /agent/restored: the world now holds the requested backup; clear the request. */
+  async function restored(event: Event): Promise<Result> {
+    const body = parseJsonObject(event);
+    if (typeof body === 'string') return json(400, { message: body });
+    const caller = await callerServer(event);
+    if ('error' in caller) return caller.error;
+    const { instanceId, server } = caller;
+    const { key } = body;
+    if (typeof key !== 'string' || !isBackupKey(server.serverId, key)) return json(400, { message: 'Invalid key' });
+    if (!(await store.clearRestore(server.serverId, instanceId, key))) {
+      return json(409, { message: `No restore of ${key} pending for server ${server.serverId} on instance ${instanceId}` });
+    }
+    console.log(JSON.stringify({ msg: 'restore done', serverId: server.serverId, instanceId, key }));
+    return { statusCode: 204 };
   }
 
   /** POST /agent/status */
@@ -117,7 +136,7 @@ export function agentHandlers({ store, instanceRoleNames, releases, backups, now
     return { statusCode: 204 };
   }
 
-  return { config, status, backupCredentials, backupDone };
+  return { config, status, backupCredentials, backupDone, restored };
 }
 
 /** The request body as a JSON object, or an error message. */

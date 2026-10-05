@@ -20,6 +20,7 @@ function fakeBackups(objects: Record<string, number> = {}): BackupStorage {
       region: 'us-west-2',
       credentials: { accessKeyId: 'AKID', secretAccessKey: 's', sessionToken: 't', expiration: '2026-09-28T12:15:00.000Z' },
     }),
+    downloadUrl: async (key) => `https://backups.example/${key}?signed`,
     size: async (key) => objects[key],
     list: async () => [],
     prune: async () => [],
@@ -52,6 +53,13 @@ function fakeStore(servers: ServerRecord[]) {
   const onInstance = (serverId: string, instanceId: string) =>
     servers.find((s) => s.serverId === serverId)?.instanceId === instanceId;
   const store: AgentHandlerDeps['store'] = {
+    clearRestore: async (serverId, instanceId, key) => {
+      const s = servers.find((x) => x.serverId === serverId);
+      if (!s || s.instanceId !== instanceId || s.restoreKey !== key) return false;
+      delete s.restoreKey;
+      delete s.restoreRequestedAt;
+      return true;
+    },
     findByInstance: async (instanceId) => servers.find((s) => s.instanceId === instanceId),
     recordAgentReport: async (serverId, instanceId, report, at) => {
       if (!onInstance(serverId, instanceId)) return false;
@@ -218,6 +226,47 @@ describe('agent handlers', () => {
       moved.store.recordBackup = async () => false;
       const h = agentHandlers({ ...deps, store: moved.store, backups: fakeBackups({ [BACKUP_KEY]: 1 }) });
       expect((await h.backupDone(done(BACKUP_KEY))).statusCode).toBe(409);
+    });
+  });
+
+  describe('restores', () => {
+    const pending = { ...server, status: 'STARTING' as const, restoreKey: BACKUP_KEY, restoreRequestedAt: NOW.toISOString() };
+    const restored = (key: unknown) => event({ body: JSON.stringify({ key }) });
+
+    it('puts a pending restore in the config, with a download link for that backup', async () => {
+      const h = agentHandlers({ ...deps, store: fakeStore([pending]).store });
+      const res = await h.config(event());
+      expect(JSON.parse(res.body!).restore).toEqual({ key: BACKUP_KEY, url: `https://backups.example/${BACKUP_KEY}?signed` });
+    });
+
+    it('leaves restore out of the config when none is pending', async () => {
+      expect(JSON.parse((await handlers.config(event())).body!)).not.toHaveProperty('restore');
+    });
+
+    it('clears the request once the agent has restored it', async () => {
+      const servers = [{ ...pending }];
+      const h = agentHandlers({ ...deps, store: fakeStore(servers).store });
+      expect((await h.restored(restored(BACKUP_KEY))).statusCode).toBe(204);
+      expect(servers[0]).not.toHaveProperty('restoreKey');
+      expect(servers[0]).not.toHaveProperty('restoreRequestedAt');
+    });
+
+    it('returns 409 when a different restore, or none, is pending', async () => {
+      const other = 'servers/01K6ABCDEF0123456789ABCDEF/20260927T120000Z.tar.gz';
+      const h = agentHandlers({ ...deps, store: fakeStore([{ ...pending }]).store });
+      expect((await h.restored(restored(other))).statusCode).toBe(409);
+      expect((await handlers.restored(restored(BACKUP_KEY))).statusCode).toBe(409);
+    });
+
+    it.each([
+      ['a missing key', undefined],
+      ["another server's key", 'servers/01OTHER/20260928T120000Z.tar.gz'],
+    ])('returns 400 for %s', async (_, key) => {
+      expect((await handlers.restored(restored(key))).statusCode).toBe(400);
+    });
+
+    it('rejects callers that are not game instances', async () => {
+      expect((await handlers.restored(event({ role: 'github-deploy', body: '{}' }))).statusCode).toBe(403);
     });
   });
 });

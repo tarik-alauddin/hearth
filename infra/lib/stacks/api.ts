@@ -123,10 +123,19 @@ export class ApiStack extends HearthStack {
       conditions: { StringLike: { 's3:prefix': `${backupPrefix('*')}*` } },
     });
     backupDoneFunction.addToRolePolicy(listServerBackups);
-    for (const construct of [backupWriter, backupDoneFunction]) {
+
+    // Restores: the config handler presigns the download, so the link reads with this role.
+    configFunction.addToRolePolicy(new PolicyStatement({ actions: ['s3:GetObject'], resources: [serverBackups] }));
+    const restoredFunction = agentFunction('AgentRestored', 'restoredHandler');
+    restoredFunction.addToRolePolicy(new PolicyStatement({ actions: ['dynamodb:Query'], resources: [byInstanceIndexArn] }));
+    restoredFunction.addToRolePolicy(
+      new PolicyStatement({ actions: ['dynamodb:UpdateItem'], resources: [props.serversTable.tableArn] }),
+    );
+
+    for (const construct of [backupWriter, backupDoneFunction, configFunction]) {
       Validations.of(construct).acknowledge({
         id: `AwsSolutions-IAM5[Resource::${serverBackups}]`,
-        reason: 'Every server has its own backup prefix; each writer session is narrowed to one key.',
+        reason: 'Every server has its own backup prefix; each upload session and download link covers one key.',
       });
     }
 
@@ -136,6 +145,7 @@ export class ApiStack extends HearthStack {
       ['/agent/status', HttpMethod.POST, statusFunction],
       ['/agent/backup-credentials', HttpMethod.POST, backupCredentialsFunction],
       ['/agent/backups', HttpMethod.POST, backupDoneFunction],
+      ['/agent/restored', HttpMethod.POST, restoredFunction],
     ] as const;
     for (const [path, method, fn] of agentRoutes) {
       this.api.addRoutes({

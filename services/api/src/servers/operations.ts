@@ -189,12 +189,13 @@ export function serverOperations({
 
     /**
      * Asks for a backup (default: the newest) to replace the world on the next start. Only while
-     * STOPPED, and not after an unclean stop unless forced: that world may be in no backup.
+     * stopped (see `restorable`), and not after an unclean stop unless forced: that world may be in
+     * no backup.
      */
     async requestRestore(serverId: string, request: unknown): Promise<ServerRecord> {
       const { key, force } = validateRestore(request);
       const server = await requireServer(serverId);
-      if (server.status !== 'STOPPED') {
+      if (!restorable(server)) {
         throw new OperationError(409, `Server ${serverId} is ${server.status}; stop it before restoring`);
       }
       if (server.lastStopClean === false && !force) {
@@ -208,28 +209,41 @@ export function serverOperations({
       const wanted = key === undefined ? available[0]!.key : key.includes('/') ? key : `${backupPrefix(serverId)}${key}`;
       if (!available.some((b) => b.key === wanted)) throw new OperationError(404, `No backup ${wanted}`);
 
+      // A same-status write: it only lands if no start or stop got in first.
       const ok = await store.transition(serverId, {
-        from: ['STOPPED'],
-        to: 'STOPPED',
+        from: [server.status],
+        to: server.status,
         set: { restoreKey: wanted, restoreRequestedAt: now().toISOString() },
       });
       if (!ok) throw new OperationError(409, `Server ${serverId} changed state; try again`);
       return requireServer(serverId);
     },
 
-    /** Clears a requested restore. Only while STOPPED: once starting, the restore may be under way. */
+    /** Clears a requested restore. Only while stopped: once starting, the restore may be under way. */
     async cancelRestore(serverId: string): Promise<ServerRecord> {
       const server = await requireServer(serverId);
       if (!server.restoreKey) return server;
+      if (!restorable(server)) {
+        throw new OperationError(409, `Server ${serverId} is ${server.status}; the restore can't be cancelled now`);
+      }
       const ok = await store.transition(serverId, {
-        from: ['STOPPED'],
-        to: 'STOPPED',
+        from: [server.status],
+        to: server.status,
         remove: ['restoreKey', 'restoreRequestedAt'],
       });
       if (!ok) throw new OperationError(409, `Server ${serverId} is no longer stopped; the restore can't be cancelled`);
       return requireServer(serverId);
     },
   };
+}
+
+/**
+ * Whether a restore may be requested or cancelled: the server is STOPPED, or FAILED with its
+ * instance stopped (a failed start, e.g. one whose backup was gone) or never launched.
+ */
+function restorable(server: ServerRecord): boolean {
+  if (server.status === 'STOPPED') return true;
+  return server.status === 'FAILED' && (!server.instanceId || server.instanceState === 'stopped');
 }
 
 function validateRestore(request: unknown): RestoreRequest {

@@ -26,3 +26,4 @@ export const configHandler = handlers.config;
 export const statusHandler = handlers.status;
 export const backupCredentialsHandler = handlers.backupCredentials;
 export const backupDoneHandler = handlers.backupDone;
+export const restoredHandler = handlers.restored;

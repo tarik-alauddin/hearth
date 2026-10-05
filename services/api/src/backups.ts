@@ -1,11 +1,21 @@
-import { DeleteObjectsCommand, HeadObjectCommand, ListObjectsV2Command, NotFound, S3Client } from '@aws-sdk/client-s3';
+import {
+  DeleteObjectsCommand,
+  GetObjectCommand,
+  HeadObjectCommand,
+  ListObjectsV2Command,
+  NotFound,
+  S3Client,
+} from '@aws-sdk/client-s3';
 import { AssumeRoleCommand, STSClient } from '@aws-sdk/client-sts';
+import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { backupPrefix, isBackupKey, type BackupSummary, type BackupTarget } from '@hearth/shared';
 
 /** The backup bucket, as the agent and admin routes see it. */
 export interface BackupStorage {
   /** Where to upload `key`, with credentials that can write that one key and nothing else. */
   target(serverId: string, key: string): Promise<BackupTarget>;
+  /** A short-lived link that downloads `key` and nothing else. It doesn't check `key` exists. */
+  downloadUrl(key: string): Promise<string>;
   /** The size of the object at `key`, or undefined if there isn't one. */
   size(key: string): Promise<number | undefined>;
   /** A server's backups, newest first. */
@@ -16,6 +26,8 @@ export interface BackupStorage {
 
 // The shortest session STS allows; the agent's whole stop takes less than 5 minutes.
 const CREDENTIALS_SECONDS = 900;
+// The agent downloads right after fetching its config.
+const DOWNLOAD_SECONDS = 900;
 
 /**
  * Credentials come from the backup writer role, narrowed by a session policy to one key, so an
@@ -27,10 +39,16 @@ export function s3BackupStorage(opts: {
   writerRoleArn: string;
   sts?: Pick<STSClient, 'send'>;
   s3?: Pick<S3Client, 'send'>;
+  presign?: (key: string) => Promise<string>;
 }): BackupStorage {
   const { bucket, region, writerRoleArn } = opts;
   const sts = opts.sts ?? new STSClient({});
-  const s3 = opts.s3 ?? new S3Client({ region });
+  const client = new S3Client({ region });
+  const s3 = opts.s3 ?? client;
+  // Signed with the caller's (the config Lambda's) role, which may read server backups.
+  const presign =
+    opts.presign ??
+    ((key: string) => getSignedUrl(client, new GetObjectCommand({ Bucket: bucket, Key: key }), { expiresIn: DOWNLOAD_SECONDS }));
 
   async function list(serverId: string): Promise<BackupSummary[]> {
     const backups: BackupSummary[] = [];
@@ -83,6 +101,8 @@ export function s3BackupStorage(opts: {
         },
       };
     },
+
+    downloadUrl: presign,
 
     async size(key) {
       try {
