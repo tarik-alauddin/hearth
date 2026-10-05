@@ -132,6 +132,17 @@ export class ApiStack extends HearthStack {
       new PolicyStatement({ actions: ['dynamodb:UpdateItem'], resources: [props.serversTable.tableArn] }),
     );
 
+    // Idle stops: an agent stops its own server through the same stop workflow as the admin route.
+    const idleFunction = agentFunction('AgentIdle', 'idleHandler');
+    idleFunction.addEnvironment('STOP_WORKFLOW_ARN', props.workflows.stop.stateMachineArn);
+    idleFunction.addToRolePolicy(new PolicyStatement({ actions: ['dynamodb:Query'], resources: [byInstanceIndexArn] }));
+    idleFunction.addToRolePolicy(
+      new PolicyStatement({ actions: ['dynamodb:GetItem', 'dynamodb:UpdateItem'], resources: [props.serversTable.tableArn] }),
+    );
+    idleFunction.addToRolePolicy(
+      new PolicyStatement({ actions: ['states:StartExecution'], resources: [props.workflows.stop.stateMachineArn] }),
+    );
+
     for (const construct of [backupWriter, backupDoneFunction, configFunction]) {
       Validations.of(construct).acknowledge({
         id: `AwsSolutions-IAM5[Resource::${serverBackups}]`,
@@ -146,6 +157,7 @@ export class ApiStack extends HearthStack {
       ['/agent/backup-credentials', HttpMethod.POST, backupCredentialsFunction],
       ['/agent/backups', HttpMethod.POST, backupDoneFunction],
       ['/agent/restored', HttpMethod.POST, restoredFunction],
+      ['/agent/idle', HttpMethod.POST, idleFunction],
     ] as const;
     for (const [path, method, fn] of agentRoutes) {
       this.api.addRoutes({

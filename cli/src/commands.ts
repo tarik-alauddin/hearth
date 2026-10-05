@@ -104,7 +104,11 @@ export function commands({ api, fleetCheck, print, sleep = (ms) => new Promise((
         ['channel', s.agentChannel ?? 'stable'],
         ['instance', s.instanceId && `${s.instanceId} (${s.instanceState ?? 'unknown'})`],
         ['join at', s.publicIp && address(s)],
-        ['last stop', s.lastStoppedAt && `${s.lastStoppedAt}${s.lastStopClean === false ? ' (not clean)' : ''}`],
+        [
+          'last stop',
+          s.lastStoppedAt &&
+            `${s.lastStoppedAt}${s.stopReason ? `: ${s.stopReason}` : ''}${s.lastStopClean === false ? ' (not clean)' : ''}`,
+        ],
         ['last backup', s.lastBackupAt && `${s.lastBackupAt} (${mebibytes(s.lastBackupBytes ?? 0)})`],
         ['restore', s.restoreKey && `${s.restoreKey} on the next start`],
       ];

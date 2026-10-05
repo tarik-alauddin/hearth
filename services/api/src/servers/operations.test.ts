@@ -219,9 +219,10 @@ describe('server operations', () => {
 
   describe('stop', () => {
     it('claims RUNNING → STOPPING and starts the stop workflow', async () => {
-      const { store, servers } = fakeStore([server({ status: 'RUNNING' })]);
+      const { store, servers } = fakeStore([server({ status: 'RUNNING', stopReason: 'no players for 30 minutes' })]);
       expect(await ops(store).stopServer('s1')).toEqual({ serverId: 's1', status: 'STOPPING' });
       expect(servers.get('s1')?.status).toBe('STOPPING');
+      expect(servers.get('s1')).not.toHaveProperty('stopReason'); // an asked-for stop has no reason
       expect(started[0]?.workflow).toBe('stop');
     });
 
@@ -233,6 +234,38 @@ describe('server operations', () => {
     it('refuses to stop a server that is still starting', async () => {
       const { store } = fakeStore([server({ status: 'STARTING' })]);
       await expect(ops(store).stopServer('s1')).rejects.toMatchObject({ statusCode: 409 });
+    });
+  });
+
+  describe('idle stop', () => {
+    it('stops a running server through the stop workflow, recording why', async () => {
+      const { store, servers } = fakeStore([server({ status: 'RUNNING' })]);
+      expect(await ops(store).idleStop('s1', 'i-1', 30)).toEqual({ serverId: 's1', status: 'STOPPING' });
+      expect(servers.get('s1')).toMatchObject({ status: 'STOPPING', stopReason: 'no players for 30 minutes' });
+      expect(started[0]?.workflow).toBe('stop');
+    });
+
+    it('says "1 minute"', async () => {
+      const { store, servers } = fakeStore([server({ status: 'RUNNING' })]);
+      await ops(store).idleStop('s1', 'i-1', 1);
+      expect(servers.get('s1')?.stopReason).toBe('no players for 1 minute');
+    });
+
+    it.each(['STOPPED', 'STOPPING'] as const)('does nothing when already %s', async (status) => {
+      const { store } = fakeStore([server({ status })]);
+      expect((await ops(store).idleStop('s1', 'i-1', 30)).unchanged).toBe(true);
+      expect(started).toEqual([]);
+    });
+
+    it.each(['STARTING', 'FAILED', 'PROVISIONING'] as const)('refuses a %s server', async (status) => {
+      const { store } = fakeStore([server({ status })]);
+      await expect(ops(store).idleStop('s1', 'i-1', 30)).rejects.toMatchObject({ statusCode: 409 });
+    });
+
+    it('refuses when the server is on another instance', async () => {
+      const { store } = fakeStore([server({ status: 'RUNNING' })]);
+      await expect(ops(store).idleStop('s1', 'i-2', 30)).rejects.toThrow(/no longer on instance i-2/);
+      expect(started).toEqual([]);
     });
   });
 

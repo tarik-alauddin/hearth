@@ -67,6 +67,7 @@ export interface ServerRecord {
   // Written by the lifecycle workflows.
   statusMessage?: string; // why the server is FAILED
   lastStopClean?: boolean; // the agent reported a clean stop (world saved) during the last stop
+  stopReason?: string; // why the last stop happened, when not asked for (e.g. "no players for 30 minutes")
   // The newest backup, recorded when the agent finishes uploading it.
   lastBackupKey?: string;
   lastBackupAt?: string; // ISO 8601 UTC

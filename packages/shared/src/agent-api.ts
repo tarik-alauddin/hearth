@@ -23,6 +23,11 @@ export interface RestoreTarget {
   url: string;
 }
 
+/** `POST /agent/idle` request body: nobody has played for this long; stop the server. */
+export interface IdleReport {
+  idleMinutes: number;
+}
+
 /** `POST /agent/restored` request body: the world now holds this backup. */
 export interface RestoreDoneReport {
   key: string;
