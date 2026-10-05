@@ -83,6 +83,10 @@ type Options struct {
 	ReadyTimeout time.Duration
 	// PollInterval is how often readiness is checked. Defaults to 5 seconds.
 	PollInterval time.Duration
+	// PlayerInterval is how often the player count is checked while the game is ready. Defaults to
+	// 15 seconds: short enough to catch a brief visit (logging in alone takes several seconds), and
+	// the check is a ping on loopback.
+	PlayerInterval time.Duration
 	// MaxBackoff caps the wait between retries of API calls and container starts. Defaults to 30 seconds.
 	MaxBackoff time.Duration
 	// Updater, if set, keeps the agent on its channel's release. Nil disables self-update.
@@ -105,6 +109,9 @@ func New(opts Options) *Agent {
 	}
 	if opts.PollInterval == 0 {
 		opts.PollInterval = 5 * time.Second
+	}
+	if opts.PlayerInterval == 0 {
+		opts.PlayerInterval = 15 * time.Second
 	}
 	if opts.MaxBackoff == 0 {
 		opts.MaxBackoff = 30 * time.Second
@@ -216,9 +223,7 @@ func (a *Agent) Run(ctx context.Context) error {
 	if ready {
 		a.log.Info("game ready")
 		a.report(ctx, "ready", "")
-		select {
-		case <-ctx.Done():
-		case msg := <-exited:
+		if msg := a.whileReady(ctx, adapter, exited); msg != "" {
 			a.fail(ctx, msg)
 			ready = false
 			<-ctx.Done()
@@ -341,6 +346,49 @@ func (a *Agent) waitReady(ctx context.Context, adapter game.Adapter, exited <-ch
 		case <-time.After(a.PollInterval):
 		}
 	}
+}
+
+// whileReady watches the running game until shutdown is requested (returning "") or the game
+// exits (returning why), checking the player count every PlayerInterval.
+func (a *Agent) whileReady(ctx context.Context, adapter game.Adapter, exited <-chan string) string {
+	ticker := time.NewTicker(a.PlayerInterval)
+	defer ticker.Stop()
+	var players playerCount
+	for {
+		select {
+		case <-ctx.Done():
+			return ""
+		case msg := <-exited:
+			return msg
+		case <-ticker.C:
+			checkCtx, cancel := context.WithTimeout(ctx, a.PollInterval)
+			n, err := adapter.Players(checkCtx)
+			cancel()
+			players.record(a.log, n, err)
+		}
+	}
+}
+
+// playerCount logs the player count when it changes, and a failing check once per run of failures.
+type playerCount struct {
+	known   bool
+	n       int
+	failing bool
+}
+
+func (p *playerCount) record(log *slog.Logger, n int, err error) {
+	if err != nil {
+		if !p.failing {
+			log.Warn("couldn't check the player count", "err", err)
+		}
+		p.failing = true
+		return
+	}
+	p.failing = false
+	if !p.known || n != p.n {
+		log.Info("players online", "count", n)
+	}
+	p.known, p.n = true, n
 }
 
 // shutdown saves the world (if the game is running with one loaded), stops the container, then

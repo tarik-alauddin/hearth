@@ -148,6 +148,11 @@ func (g *fakeGame) Save(context.Context) error {
 	return nil
 }
 
+func (g *fakeGame) Players(context.Context) (int, error) {
+	g.rt.record("players")
+	return 0, nil
+}
+
 func (g *fakeGame) Backup(cfg game.Config) game.BackupSpec {
 	return game.BackupSpec{Dir: cfg.DataDir + "/fake"}
 }
@@ -182,17 +187,18 @@ func start(t *testing.T, configure func(h *harness)) *harness {
 	}
 	h.game = &fakeGame{rt: h.rt, readyAt: time.Now().Add(30 * time.Millisecond)}
 	h.agent = New(Options{
-		Logger:       slog.New(slog.NewTextHandler(io.Discard, nil)),
-		Version:      "0.1.0",
-		API:          h.api,
-		Runtime:      h.rt,
-		Games:        map[string]game.Factory{"fake": func() game.Adapter { return h.game }},
-		DataDir:      "/srv/hearth",
-		MemoryMiB:    4000,
-		StopTimeout:  time.Second,
-		ReadyTimeout: time.Second,
-		PollInterval: 10 * time.Millisecond,
-		MaxBackoff:   10 * time.Millisecond,
+		Logger:         slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Version:        "0.1.0",
+		API:            h.api,
+		Runtime:        h.rt,
+		Games:          map[string]game.Factory{"fake": func() game.Adapter { return h.game }},
+		DataDir:        "/srv/hearth",
+		MemoryMiB:      4000,
+		StopTimeout:    time.Second,
+		ReadyTimeout:   time.Second,
+		PollInterval:   10 * time.Millisecond,
+		PlayerInterval: time.Hour, // tests that want player checks shorten it
+		MaxBackoff:     10 * time.Millisecond,
 	})
 	if configure != nil {
 		configure(h)
@@ -480,6 +486,45 @@ func TestRestoreFailuresFailTheStartWithoutStartingTheGame(t *testing.T) {
 				t.Errorf("the game must not start after a failed restore: %v", h.rt.events)
 			}
 		})
+	}
+}
+
+func TestChecksPlayersWhileReady(t *testing.T) {
+	h := start(t, func(h *harness) { h.agent.PlayerInterval = 10 * time.Millisecond })
+	eventually(t, "a player check", func() bool {
+		h.rt.mu.Lock()
+		defer h.rt.mu.Unlock()
+		return slices.Contains(h.rt.events, "players")
+	})
+	_ = h.stop(t)
+	if first := slices.Index(h.rt.events, "players"); first < slices.Index(h.rt.events, "start") {
+		t.Errorf("players checked before the game started: %v", h.rt.events)
+	}
+}
+
+func TestLogsPlayerCountChangesAndFailuresOnce(t *testing.T) {
+	var buf strings.Builder
+	log := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{ReplaceAttr: func(_ []string, a slog.Attr) slog.Attr {
+		if a.Key == slog.TimeKey || a.Key == slog.LevelKey {
+			return slog.Attr{}
+		}
+		return a
+	}}))
+	var p playerCount
+	refused := errors.New("refused")
+	for _, c := range []struct {
+		n   int
+		err error
+	}{{0, nil}, {0, nil}, {2, nil}, {0, refused}, {0, refused}, {2, nil}, {0, nil}} {
+		p.record(log, c.n, c.err)
+	}
+	want := `msg="players online" count=0
+msg="players online" count=2
+msg="couldn't check the player count" err=refused
+msg="players online" count=0
+`
+	if buf.String() != want {
+		t.Errorf("logged:\n%s\nwant:\n%s", buf.String(), want)
 	}
 }
 
