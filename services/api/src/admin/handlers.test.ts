@@ -48,6 +48,18 @@ function fakeOperations(): { calls: string[]; ops: ReturnType<typeof serverOpera
     },
     startServer: async (id: string) => result(id, id === 'running'),
     stopServer: async (id: string) => result(id),
+    listBackups: async (id: string) => {
+      if (id === 'missing') throw new OperationError(404, 'No server missing');
+      return { backups: BACKUPS };
+    },
+    requestRestore: async (id: string, body: unknown) => {
+      calls.push(`restore ${id} ${JSON.stringify(body)}`);
+      return { serverId: id, restoreKey: BACKUPS[0]!.key };
+    },
+    cancelRestore: async (id: string) => {
+      calls.push(`cancel restore ${id}`);
+      return { serverId: id };
+    },
   } as unknown as ReturnType<typeof serverOperations>;
   return { calls, ops };
 }
@@ -58,12 +70,7 @@ const BACKUPS = [
 ];
 
 const handle = (ops: ReturnType<typeof serverOperations>) =>
-  adminHandler({
-    operations: ops,
-    backups: { list: async (id) => (id === 's1' ? BACKUPS : []) },
-    instanceRoleNames: ['hearth-dev-InstanceRole'],
-    log: () => {},
-  });
+  adminHandler({ operations: ops, instanceRoleNames: ['hearth-dev-InstanceRole'], log: () => {} });
 
 describe('admin routes', () => {
   it('creates a server owned by the caller and answers 202', async () => {
@@ -117,6 +124,16 @@ describe('admin routes', () => {
     const { ops } = fakeOperations();
     const res = await handle(ops)(event('GET /admin/servers/{id}/backups', { id: 'missing' }));
     expect(res.statusCode).toBe(404);
+  });
+
+  it('requests and cancels a restore, answering with the server', async () => {
+    const { calls, ops } = fakeOperations();
+    const res = await handle(ops)(event('POST /admin/servers/{id}/restore', { id: 's1', body: '{"force":true}' }));
+    expect(res.statusCode).toBe(200);
+    expect(JSON.parse(res.body!).restoreKey).toBe(BACKUPS[0]!.key);
+    const cancel = await handle(ops)(event('POST /admin/servers/{id}/restore/cancel', { id: 's1' }));
+    expect(cancel.statusCode).toBe(200);
+    expect(calls).toEqual(['restore s1 {"force":true}', 'cancel restore s1']);
   });
 
   it('rejects a body that is not JSON', async () => {

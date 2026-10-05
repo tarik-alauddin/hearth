@@ -108,6 +108,34 @@ describe('commands', () => {
     expect(empty.out).toEqual(['No backups yet. One is taken each time the server stops.']);
   });
 
+  it('requests a restore with an optional key and force, and cancels one', async () => {
+    const posts: string[] = [];
+    const api = {
+      post: async (path: string, body?: unknown) => {
+        posts.push(`${path} ${JSON.stringify(body ?? null)}`);
+        return { serverId: 's1', restoreKey: 'servers/s1/20261004T120000Z.tar.gz' };
+      },
+    } as unknown as Api;
+    const { out, cmd } = run(api);
+    await cmd.restore('s1', undefined, false);
+    await cmd.restore('s1', '20261004T120000Z.tar.gz', true);
+    await cmd.cancelRestore('s1');
+    expect(posts).toEqual([
+      '/admin/servers/s1/restore {}',
+      '/admin/servers/s1/restore {"key":"20261004T120000Z.tar.gz","force":true}',
+      '/admin/servers/s1/restore/cancel null',
+    ]);
+    expect(out[0]).toBe('s1 will restore servers/s1/20261004T120000Z.tar.gz on its next start, replacing the current world.');
+    expect(out.at(-1)).toBe('No restore pending for s1.');
+  });
+
+  it('status shows a pending restore', async () => {
+    const { api } = fakeApi([{ status: 'STOPPED', restoreKey: 'servers/s1/20261004T120000Z.tar.gz' }]);
+    const { out, cmd } = run(api);
+    await cmd.status('s1');
+    expect(out).toContain('restore     servers/s1/20261004T120000Z.tar.gz on the next start');
+  });
+
   it('status shows the last backup', async () => {
     const { api } = fakeApi([{ status: 'STOPPED', lastBackupAt: '2026-10-04T12:01:00.000Z', lastBackupBytes: 3 * 2 ** 20 }]);
     const { out, cmd } = run(api);

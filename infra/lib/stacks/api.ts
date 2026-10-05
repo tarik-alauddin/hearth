@@ -183,6 +183,8 @@ export class ApiStack extends HearthStack {
       ['/admin/servers', HttpMethod.POST],
       ['/admin/servers/{id}', HttpMethod.GET],
       ['/admin/servers/{id}/backups', HttpMethod.GET],
+      ['/admin/servers/{id}/restore', HttpMethod.POST],
+      ['/admin/servers/{id}/restore/cancel', HttpMethod.POST],
       ['/admin/servers/{id}/start', HttpMethod.POST],
       ['/admin/servers/{id}/stop', HttpMethod.POST],
       ['/admin/servers/{id}/settings', HttpMethod.POST],

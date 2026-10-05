@@ -28,6 +28,14 @@ export interface ServerOperationResult {
   unchanged?: boolean;
 }
 
+/** `POST /admin/servers/{id}/restore`: the backup to restore on the next start. */
+export interface RestoreRequest {
+  /** A key from the backups list, or just its file name; defaults to the newest backup. */
+  key?: string;
+  /** Restore even though the last stop wasn't clean (the current world may be in no backup). */
+  force?: boolean;
+}
+
 /** One of a server's backups. */
 export interface BackupSummary {
   key: string;

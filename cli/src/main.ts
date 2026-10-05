@@ -11,6 +11,8 @@ const USAGE = `Usage: hearth <command> [options]
   list
   status <serverId>
   backups <serverId>                       the server's backups, newest first
+  restore <serverId> [<key>] [--force]     replace the world with a backup (default: newest) on the next start
+  restore <serverId> --cancel              cancel a requested restore
   start  <serverId>
   stop   <serverId>
   set-channel <serverId> <canary|stable>   agent releases to follow, from the next start
@@ -34,6 +36,8 @@ async function main(argv: string[]): Promise<number> {
       'game-region': { type: 'string' },
       channel: { type: 'string' },
       'no-wait': { type: 'boolean', default: false },
+      force: { type: 'boolean', default: false },
+      cancel: { type: 'boolean', default: false },
       help: { type: 'boolean', short: 'h', default: false },
     },
   });
@@ -68,6 +72,10 @@ async function main(argv: string[]): Promise<number> {
       return 0;
     case 'backups':
       await run.backups(needId());
+      return 0;
+    case 'restore':
+      if (values.cancel) await run.cancelRestore(needId());
+      else await run.restore(needId(), arg, values.force);
       return 0;
     case 'start':
       await run.start(needId(), wait);
