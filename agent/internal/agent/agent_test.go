@@ -30,6 +30,21 @@ type fakeAPI struct {
 	reports     []api.StatusReport
 	restored    []string
 	restoredErr error
+	idle        []int
+	idleErr     error
+}
+
+func (f *fakeAPI) Idle(_ context.Context, minutes int) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.idle = append(f.idle, minutes)
+	return f.idleErr
+}
+
+func (f *fakeAPI) idleCalls() []int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return slices.Clone(f.idle)
 }
 
 func (f *fakeAPI) Restored(_ context.Context, key string) error {
@@ -129,6 +144,7 @@ type fakeGame struct {
 	cfg        game.Config
 	readyAt    time.Time // Ready succeeds from this time on
 	neverReady bool
+	online     int // what Players reports; set before the agent starts
 }
 
 func (g *fakeGame) Container(cfg game.Config) container.Spec {
@@ -150,7 +166,7 @@ func (g *fakeGame) Save(context.Context) error {
 
 func (g *fakeGame) Players(context.Context) (int, error) {
 	g.rt.record("players")
-	return 0, nil
+	return g.online, nil
 }
 
 func (g *fakeGame) Backup(cfg game.Config) game.BackupSpec {
@@ -525,6 +541,96 @@ msg="players online" count=0
 `
 	if buf.String() != want {
 		t.Errorf("logged:\n%s\nwant:\n%s", buf.String(), want)
+	}
+}
+
+func TestIdleTimer(t *testing.T) {
+	start := time.Date(2026, 10, 5, 12, 0, 0, 0, time.UTC)
+	at := func(minutes int) time.Time { return start.Add(time.Duration(minutes) * time.Minute) }
+	refused := errors.New("refused")
+	// check is one player check: minutes after the game became ready, players seen, error.
+	type check struct {
+		min, players int
+		err          error
+	}
+	for _, tc := range []struct {
+		name    string
+		checks  []check
+		retryAt int // minutes after start; 0 = none
+		want    bool
+	}{
+		{"not idle long enough", []check{{29, 0, nil}}, 0, false},
+		{"idle for the limit", []check{{30, 0, nil}}, 0, true},
+		{"a player resets the timer", []check{{20, 1, nil}, {45, 0, nil}}, 0, false},
+		{"after the player left long enough", []check{{20, 1, nil}, {50, 0, nil}}, 0, true},
+		{"a failed check is never idle", []check{{40, 0, refused}}, 0, false},
+		{"a failed check doesn't reset the timer", []check{{20, 0, refused}, {30, 0, nil}}, 0, true},
+		{"waits out a retry", []check{{34, 0, nil}}, 35, false},
+		{"asks again after the retry wait", []check{{35, 0, nil}}, 35, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			timer := idleTimer{after: 30 * time.Minute, lastSeen: start}
+			if tc.retryAt != 0 {
+				timer.retryAt = at(tc.retryAt)
+			}
+			var got bool
+			for _, c := range tc.checks {
+				got = timer.due(at(c.min), c.players, c.err)
+			}
+			if got != tc.want {
+				t.Errorf("due = %v, want %v", got, tc.want)
+			}
+		})
+	}
+
+	never := idleTimer{after: -1, lastSeen: start}
+	if never.due(at(600), 0, nil) {
+		t.Error("a negative limit should never stop")
+	}
+	asked := idleTimer{after: 30 * time.Minute, lastSeen: start, asked: true}
+	if asked.due(at(60), 0, nil) {
+		t.Error("should not ask again once the API accepted a stop")
+	}
+}
+
+func TestAsksToStopOnceWhenNobodyPlays(t *testing.T) {
+	h := start(t, func(h *harness) {
+		h.agent.PlayerInterval = 5 * time.Millisecond
+		h.agent.IdleAfter = 30 * time.Millisecond
+	})
+	eventually(t, "an idle stop request", func() bool { return len(h.api.idleCalls()) > 0 })
+	time.Sleep(50 * time.Millisecond) // more checks, still idle
+	_ = h.stop(t)
+	if got := h.api.idleCalls(); !slices.Equal(got, []int{1}) {
+		t.Errorf("idle calls %v, want exactly one (at least 1 minute)", got)
+	}
+}
+
+func TestDoesNotStopWhilePlayersAreOn(t *testing.T) {
+	h := start(t, func(h *harness) {
+		h.game.online = 2
+		h.agent.PlayerInterval = 5 * time.Millisecond
+		h.agent.IdleAfter = 20 * time.Millisecond
+	})
+	eventually(t, "ready", func() bool { return slices.Contains(h.api.states(), "ready") })
+	time.Sleep(80 * time.Millisecond)
+	_ = h.stop(t)
+	if got := h.api.idleCalls(); len(got) != 0 {
+		t.Errorf("asked to stop with players on: %v", got)
+	}
+}
+
+func TestWaitsBeforeAskingAgainWhenTheAPIRefuses(t *testing.T) {
+	h := start(t, func(h *harness) {
+		h.api.idleErr = errors.New("API returned 409")
+		h.agent.PlayerInterval = 5 * time.Millisecond
+		h.agent.IdleAfter = 20 * time.Millisecond
+	})
+	eventually(t, "an idle stop request", func() bool { return len(h.api.idleCalls()) > 0 })
+	time.Sleep(50 * time.Millisecond) // well within idleRetry
+	_ = h.stop(t)
+	if got := h.api.idleCalls(); len(got) != 1 {
+		t.Errorf("idle calls %v, want one: the next waits %s", got, idleRetry)
 	}
 }
 

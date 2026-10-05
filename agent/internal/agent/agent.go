@@ -27,6 +27,7 @@ type API interface {
 	Config(ctx context.Context) (game.Config, error)
 	ReportStatus(ctx context.Context, report api.StatusReport) error
 	Restored(ctx context.Context, key string) error
+	Idle(ctx context.Context, idleMinutes int) error
 }
 
 // Updater replaces the agent with its channel's release (see package update).
@@ -87,6 +88,9 @@ type Options struct {
 	// 15 seconds: short enough to catch a brief visit (logging in alone takes several seconds), and
 	// the check is a ping on loopback.
 	PlayerInterval time.Duration
+	// IdleAfter is how long the game may run with nobody playing before the agent asks for a stop.
+	// Defaults to 30 minutes; negative never stops.
+	IdleAfter time.Duration
 	// MaxBackoff caps the wait between retries of API calls and container starts. Defaults to 30 seconds.
 	MaxBackoff time.Duration
 	// Updater, if set, keeps the agent on its channel's release. Nil disables self-update.
@@ -112,6 +116,9 @@ func New(opts Options) *Agent {
 	}
 	if opts.PlayerInterval == 0 {
 		opts.PlayerInterval = 15 * time.Second
+	}
+	if opts.IdleAfter == 0 {
+		opts.IdleAfter = 30 * time.Minute
 	}
 	if opts.MaxBackoff == 0 {
 		opts.MaxBackoff = 30 * time.Second
@@ -354,6 +361,7 @@ func (a *Agent) whileReady(ctx context.Context, adapter game.Adapter, exited <-c
 	ticker := time.NewTicker(a.PlayerInterval)
 	defer ticker.Stop()
 	var players playerCount
+	idle := idleTimer{after: a.IdleAfter, lastSeen: time.Now()}
 	for {
 		select {
 		case <-ctx.Done():
@@ -365,8 +373,49 @@ func (a *Agent) whileReady(ctx context.Context, adapter game.Adapter, exited <-c
 			n, err := adapter.Players(checkCtx)
 			cancel()
 			players.record(a.log, n, err)
+			if idle.due(time.Now(), n, err) {
+				a.askToStop(ctx, &idle)
+			}
 		}
 	}
+}
+
+// idleRetry is how long to wait before asking again after the API refused an idle stop or
+// couldn't be reached.
+const idleRetry = 5 * time.Minute
+
+// askToStop asks the API to stop this server for being idle. On success the stop workflow stops
+// the agent (with a backup), as for any stop; until then, it doesn't ask again.
+func (a *Agent) askToStop(ctx context.Context, idle *idleTimer) {
+	minutes := max(int(idle.after.Round(time.Minute)/time.Minute), 1)
+	a.log.Info("nobody has played for a while; asking to stop", "idleMinutes", minutes)
+	if err := a.API.Idle(ctx, minutes); err != nil {
+		a.log.Warn("asking to stop failed; will ask again later", "err", err, "retryIn", idleRetry)
+		idle.retryAt = time.Now().Add(idleRetry)
+		return
+	}
+	idle.asked = true
+}
+
+// idleTimer decides when nobody has played for long enough. Only a check that worked counts: a
+// failed one neither resets the timer nor makes the server idle, so a glitch never stops a game.
+type idleTimer struct {
+	after    time.Duration // 0 = never stop
+	lastSeen time.Time     // when a check last saw players (or the game became ready)
+	retryAt  time.Time     // after a failed request, don't ask again before this
+	asked    bool          // the API accepted a stop
+}
+
+// due records a check's result and reports whether to ask for a stop now.
+func (t *idleTimer) due(now time.Time, players int, err error) bool {
+	if err != nil {
+		return false
+	}
+	if players > 0 {
+		t.lastSeen = now
+		return false
+	}
+	return t.after > 0 && !t.asked && now.Sub(t.lastSeen) >= t.after && !now.Before(t.retryAt)
 }
 
 // playerCount logs the player count when it changes, and a failing check once per run of failures.

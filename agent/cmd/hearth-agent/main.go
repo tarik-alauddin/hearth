@@ -45,6 +45,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 	logLevel := flags.String("log-level", envOr("HEARTH_LOG_LEVEL", "info"), "debug, info, warn or error")
 	// Inside systemd's TimeoutStopSec (300s), which is inside the stop-agent document's 330s.
 	stopTimeout := flags.Duration("stop-timeout", 270*time.Second, "how long a graceful stop (save, stop, back up) may take")
+	idleAfter := flags.Duration("idle-after", envDuration("HEARTH_IDLE_AFTER", 30*time.Minute),
+		"ask for a stop after this long with nobody playing; negative never stops")
 	backupMarker := flags.String("backup-marker", "/run/hearth/backup-on-stop", "file the stop workflow creates to ask for a backup on stop")
 	env := flags.String("env", os.Getenv("HEARTH_ENV"), "environment (dev, stage or prod); used to find the API")
 	homeRegion := flags.String("home-region", envOr("HEARTH_HOME_REGION", "us-west-2"), "region of the Hearth API")
@@ -129,6 +131,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 		DataDir:      *dataDir,
 		MemoryMiB:    agent.HostMemoryMiB(),
 		StopTimeout:  *stopTimeout,
+		IdleAfter:    *idleAfter,
 		Backups:      backups,
 		BackupMarker: *backupMarker,
 		Updater:      updater,
@@ -162,6 +165,14 @@ func lookupAPIURL(ctx context.Context, logger *slog.Logger, client *ssm.Client, 
 		case <-time.After(time.Duration(attempt) * 2 * time.Second):
 		}
 	}
+}
+
+// envDuration reads a duration like "30m" from the environment; an unset or invalid value gives fallback.
+func envDuration(key string, fallback time.Duration) time.Duration {
+	if d, err := time.ParseDuration(os.Getenv(key)); err == nil {
+		return d
+	}
+	return fallback
 }
 
 func envOr(key, fallback string) string {
