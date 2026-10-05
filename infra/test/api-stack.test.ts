@@ -120,10 +120,23 @@ describe('ApiStack', () => {
     expect(JSON.stringify(statements[0]?.Resource)).toContain('/servers/*/*');
   });
 
-  it('lets the backup-done function read server backups (HeadObject) and update items', () => {
-    const statements = policyStatements('AgentBackupDoneServiceRoleDefaultPolicy') as { Action: string; Resource: unknown }[];
-    expect(statements.map((s) => s.Action).sort()).toEqual(['dynamodb:Query', 'dynamodb:UpdateItem', 's3:GetObject']);
-    expect(JSON.stringify(statements.find((s) => s.Action === 's3:GetObject')?.Resource)).toContain('/servers/*/*');
+  it('lets the backup-done function read, list and delete only server backups, and update items', () => {
+    const statements = policyStatements('AgentBackupDoneServiceRoleDefaultPolicy') as {
+      Action: string | string[];
+      Resource: unknown;
+      Condition?: unknown;
+    }[];
+    expect(statements.flatMap((s) => s.Action).sort()).toEqual([
+      'dynamodb:Query',
+      'dynamodb:UpdateItem',
+      's3:DeleteObject',
+      's3:GetObject',
+      's3:ListBucket',
+    ]);
+    const objects = statements.find((s) => Array.isArray(s.Action) && s.Action.includes('s3:DeleteObject'));
+    expect(JSON.stringify(objects?.Resource)).toContain('/servers/*/*');
+    const list = statements.find((s) => s.Action === 's3:ListBucket');
+    expect(list?.Condition).toEqual({ StringLike: { 's3:prefix': 'servers/*/*' } });
   });
 
   it.each([

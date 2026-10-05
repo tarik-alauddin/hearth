@@ -1,5 +1,8 @@
 // World backups in the backup bucket: one gzipped tar per backup, under each server's own prefix.
 
+/** How many backups each server keeps; older ones are deleted when a new one is recorded. */
+export const BACKUPS_KEPT = 10;
+
 /** Each environment's backup bucket, in its home region. */
 export const backupBucket = (env: string, account: string, region: string) => `hearth-${env}-backups-${account}-${region}`;
 

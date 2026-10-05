@@ -32,13 +32,14 @@ as part of each PR. The repo layout and commands are in [README.md](README.md).
 | Milestone | Status |
 | --- | --- |
 | M0–M4: foundation, infra, agent, lifecycle workflows, agent releases; plus monitoring | Done |
-| M5 Game updates and backups | In progress: PR1 merged; PR2 (backup) in review; PR3 (retention) next |
+| M5 Game updates and backups | In progress: PR1–PR2 merged; PR3 (retention) in review |
 | M6 Idle shutdown, M7 Move your world | Not started |
 
 **M5 plan:**
 - PR1, done: the stop workflow stops the agent through SSM Run Command before stopping the instance.
-- PR2, in review: on that stop, the agent backs the world up to S3 and the API records it.
-- PR3: keep the newest 10 backups per server.
+- PR2, done: on that stop, the agent backs the world up to S3 and the API records it (tested on dev:
+  about 10s for a small world).
+- PR3, in review: keep the newest 10 backups per server.
 - Then: restore, and `hearth set-version` (forward only, needs a backup).
 
 ## Decisions and why
@@ -72,7 +73,9 @@ as part of each PR. The repo layout and commands are in [README.md](README.md).
 - **Stop timeouts are nested**, each a backstop for the one inside it: game container 60s, agent
   stop 270s (15s of it kept back for the final report), systemd `TimeoutStopSec` 300s, SSM command
   330s, workflow about 360s.
-- **Backup retention: the newest 10 per server** (count-based). Known cost: the bucket moves backups
+- **Backup retention: the newest 10 per server** (count-based), pruned by `POST /agent/backups` right
+  after it records a new one; a failed prune is logged and retried by the next backup. The bucket is
+  versioned, so a pruned backup stays recoverable for 30 days. Known cost: the bucket moves backups
   to Glacier IR after 30 days, which bills a 90-day minimum, so backups the count rule deletes early
   are still billed to day 90. Accepted at this scale.
 - **Backup rules live in each game's adapter** (`Backup()` with an exclude list), not in the agent core.

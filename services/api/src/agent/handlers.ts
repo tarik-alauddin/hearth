@@ -3,6 +3,7 @@ import type {
   APIGatewayProxyStructuredResultV2,
 } from 'aws-lambda';
 import {
+  BACKUPS_KEPT,
   DEFAULT_AGENT_CHANNEL,
   GAME_DEFINITIONS,
   backupKey,
@@ -105,6 +106,14 @@ export function agentHandlers({ store, instanceRoleNames, releases, backups, now
       return json(409, { message: `Server ${server.serverId} is no longer on instance ${instanceId}` });
     }
     console.log(JSON.stringify({ msg: 'backup done', serverId: server.serverId, instanceId, key, bytes }));
+
+    // The backup is recorded either way; a failed prune is retried by the next backup.
+    try {
+      const pruned = await backups.prune(server.serverId, BACKUPS_KEPT);
+      if (pruned.length) console.log(JSON.stringify({ msg: 'old backups pruned', serverId: server.serverId, pruned }));
+    } catch (err) {
+      console.error(JSON.stringify({ msg: 'pruning old backups failed', serverId: server.serverId, err: String(err) }));
+    }
     return { statusCode: 204 };
   }
 

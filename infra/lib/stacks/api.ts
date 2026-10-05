@@ -113,8 +113,17 @@ export class ApiStack extends HearthStack {
     backupDoneFunction.addToRolePolicy(
       new PolicyStatement({ actions: ['dynamodb:UpdateItem'], resources: [props.serversTable.tableArn] }),
     );
-    // HeadObject, to check the backup exists and read its size.
-    backupDoneFunction.addToRolePolicy(new PolicyStatement({ actions: ['s3:GetObject'], resources: [serverBackups] }));
+    // HeadObject, to check the backup exists and read its size; list and delete, to keep only the newest.
+    backupDoneFunction.addToRolePolicy(
+      new PolicyStatement({ actions: ['s3:GetObject', 's3:DeleteObject'], resources: [serverBackups] }),
+    );
+    backupDoneFunction.addToRolePolicy(
+      new PolicyStatement({
+        actions: ['s3:ListBucket'],
+        resources: [`arn:${this.partition}:s3:::${backups}`],
+        conditions: { StringLike: { 's3:prefix': `${backupPrefix('*')}*` } },
+      }),
+    );
     for (const construct of [backupWriter, backupDoneFunction]) {
       Validations.of(construct).acknowledge({
         id: `AwsSolutions-IAM5[Resource::${serverBackups}]`,
