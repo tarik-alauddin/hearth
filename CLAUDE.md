@@ -32,7 +32,7 @@ as part of each PR. The repo layout and commands are in [README.md](README.md).
 | Milestone | Status |
 | --- | --- |
 | M0–M4: foundation, infra, agent, lifecycle workflows, agent releases; plus monitoring | Done |
-| M5 Game updates and backups | In progress: PR1–PR7 merged; PR8 (R3b, restore: agent side) in review |
+| M5 Game updates and backups | In progress: PR1–PR8 merged; PR9 (set-version) in review |
 | M6 Idle shutdown, M7 Move your world | Not started |
 
 **M5 plan:**
@@ -47,10 +47,13 @@ as part of each PR. The repo layout and commands are in [README.md](README.md).
 - PR7 (R3a, API), done: agent config carries `restore: { key, url }` (presigned when the config is
   fetched, 15 min) while a restore is pending; `POST /agent/restored` clears it; restore/cancel
   accept a stopped `FAILED` server.
-- PR8 (R3b, agent), in review: before starting the game, the agent downloads and unpacks the backup
-  beside the world (refusing paths and symlinks outside it), swaps it in, then clears the request.
-  Any failure fails the start with the world untouched. Ships on canary first.
-- Then `hearth set-version` (forward only, needs a backup).
+- PR8 (R3b, agent), done (tested on dev): before starting the game, the agent downloads and unpacks
+  the backup beside the world (refusing paths and symlinks outside it), swaps it in, then clears the
+  request. Any failure fails the start with the world untouched.
+- PR9, in review: `hearth set-version <id> <version>` (`POST /admin/servers/{id}/version`): stopped
+  servers only; the version must be a full release in the game's version list (Mojang's manifest,
+  cached 10 min, ordered by release date) and newer than the current one; needs a clean last stop
+  with a backup since the server last ran. Applies on the next start.
 
 ## Decisions and why
 
@@ -117,3 +120,19 @@ as part of each PR. The repo layout and commands are in [README.md](README.md).
 - **Time-based expiry of agent releases or backups:** count-based retention instead.
 - **Manual semver tags for agent releases:** date tags are generated automatically.
 - **15-minute agent stop window:** 5 minutes; slower means something is wrong.
+
+## Deferred
+
+- **Version rollback.** Upgrades are one-way (the game converts the world), so `set-version` is
+  forward only. Restoring a pre-upgrade backup does *not* put the server back on the old version:
+  backups don't record their game version, so the old world would just be upgraded again. To roll
+  back properly: record the version on each backup (S3 metadata at upload), have restore set it, and
+  show it in `hearth backups`. Until then, rolling back is manual.
+- **Agent logs in CloudWatch.** Today they're only in journald (Session Manager:
+  `journalctl -u hearth-agent`); CloudWatch has the status reports and Lambda logs. If needed: the
+  agent sends its own `info` logs with `PutLogEvents` (no CloudWatch agent daemon, which costs game
+  RAM), 14-day retention; a few cents a month. Not the game's own logs (too chatty).
+- **Warn when restoring the newest backup after a clean stop:** it's the current world, so nothing
+  changes (this confused the first restore test on dev).
+- **Telling players about a version change** (their clients must match): a printed reminder or a
+  Discord announcement, later.

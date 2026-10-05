@@ -39,6 +39,11 @@ export function adminHandler({ operations, instanceRoleNames, log = defaultLog }
           return json(200, await operations.getServer(serverId));
         case 'GET /admin/servers/{id}/backups':
           return json(200, await operations.listBackups(serverId));
+        case 'POST /admin/servers/{id}/version': {
+          const server = await operations.setVersion(serverId, parseBody(event));
+          log({ msg: 'version set', caller, serverId, version: server.version });
+          return json(200, server);
+        }
         case 'POST /admin/servers/{id}/restore': {
           const server = await operations.requestRestore(serverId, parseBody(event));
           log({ msg: 'restore requested', caller, serverId, key: server.restoreKey });

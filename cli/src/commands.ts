@@ -7,6 +7,7 @@ import {
   type ServerOperationResult,
   type ServerRecord,
   type ServerStatus,
+  type SetVersionRequest,
 } from '@hearth/shared';
 import type { Api } from './client.js';
 
@@ -84,6 +85,13 @@ export function commands({ api, fleetCheck, print, sleep = (ms) => new Promise((
     async setChannel(id: string, channel: string) {
       const server = await api.post<ServerRecord>(`/admin/servers/${encodeURIComponent(id)}/settings`, { agentChannel: channel });
       print(`${server.serverId} is on the ${server.agentChannel} channel; it takes effect on the next start.`);
+    },
+
+    /** Moves a stopped server to a newer game release; it runs from the next start. */
+    async setVersion(id: string, version: string) {
+      const body: SetVersionRequest = { version };
+      const server = await api.post<ServerRecord>(`/admin/servers/${encodeURIComponent(id)}/version`, body);
+      print(`${server.serverId} runs ${server.game} ${server.version} from its next start.`);
     },
 
     async status(id: string) {

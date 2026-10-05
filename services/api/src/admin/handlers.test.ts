@@ -56,6 +56,10 @@ function fakeOperations(): { calls: string[]; ops: ReturnType<typeof serverOpera
       calls.push(`restore ${id} ${JSON.stringify(body)}`);
       return { serverId: id, restoreKey: BACKUPS[0]!.key };
     },
+    setVersion: async (id: string, body: unknown) => {
+      calls.push(`version ${id} ${JSON.stringify(body)}`);
+      return { serverId: id, version: '26.3' };
+    },
     cancelRestore: async (id: string) => {
       calls.push(`cancel restore ${id}`);
       return { serverId: id };
@@ -124,6 +128,14 @@ describe('admin routes', () => {
     const { ops } = fakeOperations();
     const res = await handle(ops)(event('GET /admin/servers/{id}/backups', { id: 'missing' }));
     expect(res.statusCode).toBe(404);
+  });
+
+  it('sets the version, answering with the server', async () => {
+    const { calls, ops } = fakeOperations();
+    const res = await handle(ops)(event('POST /admin/servers/{id}/version', { id: 's1', body: '{"version":"26.3"}' }));
+    expect(res.statusCode).toBe(200);
+    expect(JSON.parse(res.body!).version).toBe('26.3');
+    expect(calls).toEqual(['version s1 {"version":"26.3"}']);
   });
 
   it('requests and cancels a restore, answering with the server', async () => {

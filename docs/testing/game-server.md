@@ -86,14 +86,25 @@ A missing backup fails the start: copy A to a made-up name, ask for that, delete
 start. Expect `FAILED` with `backup … no longer exists` (or `… or S3 refused the link`), and the
 world untouched. `hearth restore <serverId> --cancel` (allowed while `FAILED`), then start.
 
-## 6. Check the rest
+## 6. Change version
+
+Needs a newer release than the server's (or create a test server on an older one, e.g. `1.21.4`).
+After a clean stop:
+
+```bash
+hearth set-version <serverId> <newer release>   # "… runs minecraft-java <version> from its next start."
+hearth set-version <serverId> <older release>   # refused: versions only move forward
+hearth start <serverId>                         # join with a client on the new version
+```
+
+## 7. Check the rest
 
 ```bash
 hearth list                         # one line per server
 hearth start <serverId>             # while RUNNING: "Already running.", nothing new starts
 ```
 
-## 7. Clean up
+## 8. Clean up
 
 There's no delete in the API until archiving exists (it would lose the world). Use the dev script
 (needs the AWS CLI; CloudShell has it):

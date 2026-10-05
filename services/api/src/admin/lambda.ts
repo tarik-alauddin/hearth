@@ -2,6 +2,7 @@
 import { createServersStore } from '@hearth/core';
 import { s3BackupStorage } from '../backups.js';
 import { serverOperations } from '../servers/operations.js';
+import { publishedVersions } from '../servers/versions.js';
 import { stepFunctionsWorkflows } from '../servers/workflows.js';
 import { adminHandler } from './handlers.js';
 
@@ -24,6 +25,7 @@ export const handler = adminHandler({
       region: requireEnv('BACKUP_BUCKET_REGION'),
       writerRoleArn: '', // admin routes only list backups
     }),
+    versions: publishedVersions(),
     homeRegion: requireEnv('HOME_REGION'),
     gameRegions: requireEnv('GAME_REGIONS').split(','),
   }),

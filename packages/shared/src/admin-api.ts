@@ -28,6 +28,11 @@ export interface ServerOperationResult {
   unchanged?: boolean;
 }
 
+/** `POST /admin/servers/{id}/version`: a newer game release to run from the next start. */
+export interface SetVersionRequest {
+  version: string;
+}
+
 /** `POST /admin/servers/{id}/restore`: the backup to restore on the next start. */
 export interface RestoreRequest {
   /** A key from the backups list, or just its file name; defaults to the newest backup. */

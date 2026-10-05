@@ -13,9 +13,11 @@ import {
   type ServerOperationResult,
   type ServerRecord,
   type ServerStatus,
+  type SetVersionRequest,
   type UpdateSettingsRequest,
 } from '@hearth/shared';
 import type { BackupStorage } from '../backups.js';
+import type { GameVersions } from './versions.js';
 
 // The one implementation of create, start and stop. The admin routes use it now; the UI and
 // Discord bot routes will call the same functions, so every caller behaves the same.
@@ -41,6 +43,7 @@ export interface OperationDeps {
   store: Pick<ServersStore, 'getServer' | 'listServers' | 'createServer' | 'transition' | 'updateSettings'>;
   workflows: Workflows;
   backups: Pick<BackupStorage, 'list'>;
+  versions: GameVersions;
   homeRegion: string;
   /** Regions with game infrastructure. */
   gameRegions: readonly string[];
@@ -56,6 +59,7 @@ export function serverOperations({
   store,
   workflows,
   backups,
+  versions,
   homeRegion,
   gameRegions,
   now = () => new Date(),
@@ -181,6 +185,52 @@ export function serverOperations({
       throw new OperationError(409, `Server ${serverId} is ${server.status} and can't be stopped`);
     },
 
+    /**
+     * Moves a stopped server to a newer release of its game, from its next start. Forward only:
+     * the game converts the world on load, and older versions can't read it back. Needs a clean
+     * last stop with a backup since the server last ran, so the world before the upgrade is kept.
+     */
+    async setVersion(serverId: string, request: unknown): Promise<ServerRecord> {
+      const { version } = validateSetVersion(request);
+      const server = await requireServer(serverId);
+      if (server.version === version) return server;
+      if (server.status !== 'STOPPED') {
+        throw new OperationError(409, `Server ${serverId} is ${server.status}; stop it before changing its version`);
+      }
+
+      const releases = await versions.releases(server.game);
+      if (!releases) throw new OperationError(400, `Changing the version isn't supported for ${server.game}`);
+      const to = releases.indexOf(version);
+      if (to === -1) throw new OperationError(400, `${version} is not a release of ${server.game}`);
+      const from = releases.indexOf(server.version);
+      if (from === -1) {
+        throw new OperationError(409, `Can't tell whether ${version} is newer than ${server.version}, which isn't a known release`);
+      }
+      if (to < from) {
+        throw new OperationError(
+          409,
+          `${version} is older than ${server.version}; versions only move forward (the game upgrades the world)`,
+        );
+      }
+
+      const backedUp =
+        server.lastStopClean === true &&
+        server.lastBackupAt !== undefined &&
+        // Parsed: lastStartedAt comes from EC2 events, without milliseconds.
+        (server.lastStartedAt === undefined || Date.parse(server.lastBackupAt) > Date.parse(server.lastStartedAt));
+      if (!backedUp) {
+        throw new OperationError(
+          409,
+          `Server ${serverId} has no backup since it last ran; start and stop it once (a clean stop takes one)`,
+        );
+      }
+
+      // A same-status write: it only lands if no start got in first.
+      const ok = await store.transition(serverId, { from: ['STOPPED'], to: 'STOPPED', set: { version } });
+      if (!ok) throw new OperationError(409, `Server ${serverId} changed state; try again`);
+      return requireServer(serverId);
+    },
+
     /** The server's backups, newest first. */
     async listBackups(serverId: string): Promise<ListBackupsResponse> {
       await requireServer(serverId); // 404 for an unknown server, not an empty list
@@ -244,6 +294,15 @@ export function serverOperations({
 function restorable(server: ServerRecord): boolean {
   if (server.status === 'STOPPED') return true;
   return server.status === 'FAILED' && (!server.instanceId || server.instanceState === 'stopped');
+}
+
+function validateSetVersion(request: unknown): SetVersionRequest {
+  if (typeof request !== 'object' || request === null) throw new OperationError(400, 'Body must be a JSON object');
+  const { version, ...rest } = request as Record<string, unknown>;
+  const unknown = Object.keys(rest);
+  if (unknown.length) throw new OperationError(400, `Unknown fields: ${unknown.join(', ')}`);
+  if (typeof version !== 'string' || !VERSION.test(version)) throw new OperationError(400, 'Invalid version');
+  return { version };
 }
 
 function validateRestore(request: unknown): RestoreRequest {

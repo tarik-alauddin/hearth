@@ -16,6 +16,7 @@ const USAGE = `Usage: hearth <command> [options]
   start  <serverId>
   stop   <serverId>
   set-channel <serverId> <canary|stable>   agent releases to follow, from the next start
+  set-version <serverId> <version>         a newer game release, from the next start (forward only)
   fleet-check                              stuck, failed and mismatched servers; instances with no server
 
 Options:
@@ -86,6 +87,10 @@ async function main(argv: string[]): Promise<number> {
     case 'set-channel':
       if (!arg) throw new CommandError('set-channel needs a channel: canary or stable');
       await run.setChannel(needId(), arg);
+      return 0;
+    case 'set-version':
+      if (!arg) throw new CommandError('set-version needs a version, e.g. set-version <serverId> 26.4');
+      await run.setVersion(needId(), arg);
       return 0;
     case 'fleet-check':
       await run.fleetCheck();

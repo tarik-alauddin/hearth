@@ -129,6 +129,20 @@ describe('commands', () => {
     expect(out.at(-1)).toBe('No restore pending for s1.');
   });
 
+  it('sets the version', async () => {
+    const posts: string[] = [];
+    const api = {
+      post: async (path: string, body?: unknown) => {
+        posts.push(`${path} ${JSON.stringify(body)}`);
+        return { serverId: 's1', game: 'minecraft-java', version: '26.3' };
+      },
+    } as unknown as Api;
+    const { out, cmd } = run(api);
+    await cmd.setVersion('s1', '26.3');
+    expect(posts).toEqual(['/admin/servers/s1/version {"version":"26.3"}']);
+    expect(out).toEqual(['s1 runs minecraft-java 26.3 from its next start.']);
+  });
+
   it('status shows a pending restore', async () => {
     const { api } = fakeApi([{ status: 'STOPPED', restoreKey: 'servers/s1/20261004T120000Z.tar.gz' }]);
     const { out, cmd } = run(api);
