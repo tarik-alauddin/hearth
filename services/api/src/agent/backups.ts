@@ -1,6 +1,6 @@
-import { HeadObjectCommand, NotFound, S3Client } from '@aws-sdk/client-s3';
+import { DeleteObjectsCommand, HeadObjectCommand, ListObjectsV2Command, NotFound, S3Client } from '@aws-sdk/client-s3';
 import { AssumeRoleCommand, STSClient } from '@aws-sdk/client-sts';
-import type { BackupTarget } from '@hearth/shared';
+import { backupPrefix, isBackupKey, type BackupTarget } from '@hearth/shared';
 
 /** The backup bucket, as the agent routes see it. */
 export interface BackupStorage {
@@ -8,6 +8,8 @@ export interface BackupStorage {
   target(serverId: string, key: string): Promise<BackupTarget>;
   /** The size of the object at `key`, or undefined if there isn't one. */
   size(key: string): Promise<number | undefined>;
+  /** Deletes all but the newest `keep` of a server's backups; returns the deleted keys. */
+  prune(serverId: string, keep: number): Promise<string[]>;
 }
 
 // The shortest session STS allows; the agent's whole stop takes less than 5 minutes.
@@ -71,6 +73,30 @@ export function s3BackupStorage(opts: {
         if (err instanceof NotFound) return undefined;
         throw err;
       }
+    },
+
+    async prune(serverId, keep) {
+      const keys: string[] = [];
+      let token: string | undefined;
+      do {
+        const page = await s3.send(
+          new ListObjectsV2Command({ Bucket: bucket, Prefix: backupPrefix(serverId), ContinuationToken: token }),
+        );
+        for (const { Key } of page.Contents ?? []) if (Key && isBackupKey(serverId, Key)) keys.push(Key);
+        token = page.NextContinuationToken;
+      } while (token);
+
+      // Keys are named by time, so the newest sort last. The bucket is versioned: a delete hides
+      // the object, and the hidden copy expires after 30 days.
+      const old = keys.sort().slice(0, Math.max(keys.length - keep, 0));
+      if (old.length === 0) return [];
+      const out = await s3.send(
+        new DeleteObjectsCommand({ Bucket: bucket, Delete: { Objects: old.map((Key) => ({ Key })), Quiet: true } }),
+      );
+      if (out.Errors?.length) {
+        throw new Error(`Deleting old backups failed: ${out.Errors.map((e) => `${e.Key} ${e.Code}`).join(', ')}`);
+      }
+      return old;
     },
   };
 }

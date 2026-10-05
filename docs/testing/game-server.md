@@ -44,6 +44,10 @@ aws s3 ls s3://<bucket>/servers/<serverId>/            # one <yyyymmdd>T<hhmmss>
 aws s3 cp s3://<bucket>/<key> - | tar tz | head        # world/…, server.properties; no logs/ or *.jar
 ```
 
+Retention keeps the newest 10 per server. Start and stop 11 times (or copy an existing backup to
+older-named keys, e.g. `…/20200101T000000Z.tar.gz`, and stop once): the listing never shows more
+than 10, and the oldest names are the ones gone.
+
 ## 4. Start again
 
 ```bash

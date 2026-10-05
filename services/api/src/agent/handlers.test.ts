@@ -21,6 +21,7 @@ function fakeBackups(objects: Record<string, number> = {}): BackupStorage {
       credentials: { accessKeyId: 'AKID', secretAccessKey: 's', sessionToken: 't', expiration: '2026-09-28T12:15:00.000Z' },
     }),
     size: async (key) => objects[key],
+    prune: async () => [],
   };
 }
 
@@ -194,6 +195,21 @@ describe('agent handlers', () => {
     ])('returns 400 for %s', async (_, key) => {
       expect((await handlers.backupDone(done(key))).statusCode).toBe(400);
       expect(store.backups).toHaveLength(0);
+    });
+
+    it("prunes the server's old backups after recording, keeping 10", async () => {
+      const calls: string[] = [];
+      const backups = { ...fakeBackups({ [BACKUP_KEY]: 1 }), prune: async (id: string, keep: number) => (calls.push(`${id} ${keep}`), []) };
+      const h = agentHandlers({ ...deps, store: store.store, backups });
+      expect((await h.backupDone(done(BACKUP_KEY))).statusCode).toBe(204);
+      expect(calls).toEqual([`${server.serverId} 10`]);
+    });
+
+    it('still records the backup when pruning fails', async () => {
+      const backups = { ...fakeBackups({ [BACKUP_KEY]: 1 }), prune: async () => Promise.reject(new Error('S3 down')) };
+      const h = agentHandlers({ ...deps, store: store.store, backups });
+      expect((await h.backupDone(done(BACKUP_KEY))).statusCode).toBe(204);
+      expect(store.backups).toHaveLength(1);
     });
 
     it('returns 409 when the server moved to another instance', async () => {
