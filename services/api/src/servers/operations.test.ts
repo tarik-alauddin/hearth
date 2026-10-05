@@ -69,6 +69,7 @@ describe('server operations', () => {
         },
       },
       backups: { list: async (id) => (id === 's1' ? BACKUPS : []) },
+      versions: { releases: async () => ['1.21.4', '26.1', '26.3'] },
       homeRegion: 'us-west-2',
       gameRegions: ['us-west-2'],
       now: () => NOW,
@@ -232,6 +233,80 @@ describe('server operations', () => {
     it('refuses to stop a server that is still starting', async () => {
       const { store } = fakeStore([server({ status: 'STARTING' })]);
       await expect(ops(store).stopServer('s1')).rejects.toMatchObject({ statusCode: 409 });
+    });
+  });
+
+  describe('set version', () => {
+    // Started, then stopped cleanly with a backup: ready to upgrade.
+    const backedUp = {
+      version: '26.1',
+      lastStopClean: true,
+      lastStartedAt: '2026-10-05T05:00:00Z',
+      lastBackupAt: '2026-10-05T05:06:53.151Z',
+    };
+
+    it('moves a stopped, backed-up server to a newer release', async () => {
+      const { store, servers } = fakeStore([server(backedUp)]);
+      expect((await ops(store).setVersion('s1', { version: '26.3' })).version).toBe('26.3');
+      expect(servers.get('s1')).toMatchObject({ status: 'STOPPED', version: '26.3' });
+      expect(started).toEqual([]); // applies on the next start
+    });
+
+    it('does nothing when already on that version', async () => {
+      const { store } = fakeStore([server({ ...backedUp, status: 'RUNNING' })]);
+      expect((await ops(store).setVersion('s1', { version: '26.1' })).version).toBe('26.1');
+    });
+
+    it.each([
+      ['an older release', '1.21.4', 409, /only move forward/],
+      ['an unknown version', '26.9', 400, /not a release/],
+      ['a snapshot', '26.4-snapshot-2', 400, /not a release/],
+    ])('refuses %s', async (_, version, statusCode, message) => {
+      const { store } = fakeStore([server(backedUp)]);
+      const err = await ops(store).setVersion('s1', { version }).catch((e: OperationError) => e);
+      expect(err).toMatchObject({ statusCode });
+      expect(String(err)).toMatch(message);
+    });
+
+    it('refuses when the current version is not a known release', async () => {
+      const { store } = fakeStore([server({ ...backedUp, version: '26.2-pre1' })]);
+      await expect(ops(store).setVersion('s1', { version: '26.3' })).rejects.toThrow(/isn't a known release/);
+    });
+
+    it.each(['RUNNING', 'STARTING', 'FAILED'] as const)('refuses while %s', async (status) => {
+      const { store } = fakeStore([server({ ...backedUp, status })]);
+      await expect(ops(store).setVersion('s1', { version: '26.3' })).rejects.toMatchObject({ statusCode: 409 });
+    });
+
+    it.each([
+      ['no backup', { lastBackupAt: undefined }],
+      ['a backup older than the last start', { lastBackupAt: '2026-10-05T04:59:59.999Z' }],
+      ['an unclean last stop', { lastStopClean: false }],
+    ])('refuses with %s', async (_, overrides) => {
+      const { store } = fakeStore([server({ ...backedUp, ...overrides })]);
+      await expect(ops(store).setVersion('s1', { version: '26.3' })).rejects.toThrow(/no backup since it last ran/);
+    });
+
+    it('refuses games without a version list', async () => {
+      const { store } = fakeStore([server(backedUp)]);
+      const noList = serverOperations({
+        store,
+        workflows: { start: async () => {} },
+        backups: { list: async () => [] },
+        versions: { releases: async () => undefined },
+        homeRegion: 'us-west-2',
+        gameRegions: ['us-west-2'],
+      });
+      await expect(noList.setVersion('s1', { version: '26.3' })).rejects.toThrow(/isn't supported/);
+    });
+
+    it.each([
+      ['a missing version', {}],
+      ['an unknown field', { version: '26.3', force: true }],
+      ['a malformed version', { version: '26.3; rm -rf /' }],
+    ])('returns 400 for %s', async (_, body) => {
+      const { store } = fakeStore([server(backedUp)]);
+      await expect(ops(store).setVersion('s1', body)).rejects.toMatchObject({ statusCode: 400 });
     });
   });
 
