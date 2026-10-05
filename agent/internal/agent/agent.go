@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io/fs"
 	"log/slog"
+	"net/http"
 	"os"
 	"time"
 	"unicode/utf8"
@@ -25,6 +26,7 @@ const ContainerName = "hearth-game"
 type API interface {
 	Config(ctx context.Context) (game.Config, error)
 	ReportStatus(ctx context.Context, report api.StatusReport) error
+	Restored(ctx context.Context, key string) error
 }
 
 // Updater replaces the agent with its channel's release (see package update).
@@ -71,6 +73,8 @@ type Options struct {
 	StopTimeout time.Duration
 	// Backups, if set, backs the world up after the game stops, when BackupMarker exists then.
 	Backups Backups
+	// Restore replaces dir with the backup at url (see backup.Restore, the default).
+	Restore func(ctx context.Context, url, dir string) error
 	// BackupMarker is the file the stop workflow's Run Command creates to ask for a backup. Other
 	// stops (an OS shutdown) don't create it: EC2 may not wait long enough for an upload.
 	BackupMarker string
@@ -107,6 +111,11 @@ func New(opts Options) *Agent {
 	}
 	if opts.HealthDeadline == 0 {
 		opts.HealthDeadline = 3 * time.Minute
+	}
+	if opts.Restore == nil {
+		opts.Restore = func(ctx context.Context, url, dir string) error {
+			return backup.Restore(ctx, http.DefaultClient, url, dir)
+		}
 	}
 	return &Agent{Options: opts, log: opts.Logger}
 }
@@ -161,6 +170,17 @@ func (a *Agent) Run(ctx context.Context) error {
 	}
 	adapter := newAdapter()
 	cfg.DataDir, cfg.MemoryMiB = a.DataDir, a.MemoryMiB
+
+	if cfg.Restore != nil {
+		if err := a.restore(ctx, cfg, adapter); err != nil {
+			if ctx.Err() == nil {
+				a.fail(ctx, err.Error())
+				<-ctx.Done()
+			}
+			return nil
+		}
+	}
+
 	spec := adapter.Container(cfg)
 	spec.Name = ContainerName
 
@@ -227,6 +247,53 @@ func (a *Agent) fetchConfig(ctx context.Context) (game.Config, error) {
 		a.log.Warn("fetching config failed; retrying", "attempt", attempt, "err", err)
 		if !a.sleep(ctx, a.backoff(attempt)) {
 			return game.Config{}, ctx.Err()
+		}
+	}
+}
+
+// restore replaces the world with the requested backup, before the game starts, then clears the
+// request. Any failure fails the start, leaving the world as it was (unless only the clearing
+// failed: the world is restored, but the request would restore it again on the next start).
+func (a *Agent) restore(ctx context.Context, cfg game.Config, adapter game.Adapter) error {
+	key, dir := cfg.Restore.Key, adapter.Backup(cfg).Dir
+	a.log.Info("restoring backup", "key", key, "dir", dir)
+	a.report(ctx, "starting", "restoring backup "+key)
+	started := time.Now()
+	// The start workflow waits 15 minutes for the game; a restore that takes that long has stalled.
+	restoreCtx, cancel := context.WithTimeout(ctx, a.ReadyTimeout)
+	defer cancel()
+
+	err := a.Restore(restoreCtx, cfg.Restore.URL, dir)
+	if errors.Is(err, backup.ErrLinkRefused) {
+		// The link may have expired with the credentials that signed it: get a new one, once.
+		a.log.Warn("download link refused; fetching a new one", "key", key)
+		fresh, ferr := a.fetchConfig(ctx)
+		if ferr != nil {
+			return ferr
+		}
+		if fresh.Restore == nil || fresh.Restore.Key != key {
+			return fmt.Errorf("the restore of %s changed while starting", key)
+		}
+		err = a.Restore(restoreCtx, fresh.Restore.URL, dir)
+	}
+	switch {
+	case errors.Is(err, backup.ErrBackupGone):
+		return fmt.Errorf("backup %s no longer exists; choose another with hearth restore", key)
+	case errors.Is(err, backup.ErrLinkRefused):
+		return fmt.Errorf("backup %s couldn't be downloaded: it no longer exists, or S3 refused the link", key)
+	case err != nil:
+		return fmt.Errorf("restoring backup %s failed: %w", key, err)
+	}
+	a.log.Info("backup restored", "key", key, "took", time.Since(started).Round(time.Millisecond))
+
+	for attempt := 1; ; attempt++ {
+		if err = a.API.Restored(ctx, key); err == nil {
+			return nil
+		}
+		a.log.Warn("clearing the restore request failed", "attempt", attempt, "err", err)
+		if attempt == 3 || !a.sleep(ctx, a.backoff(attempt)) {
+			return fmt.Errorf("backup %s is restored, but the request couldn't be cleared (%v); "+
+				"cancel it with hearth restore --cancel before starting again", key, err)
 		}
 	}
 }

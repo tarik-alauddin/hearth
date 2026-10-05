@@ -32,7 +32,7 @@ as part of each PR. The repo layout and commands are in [README.md](README.md).
 | Milestone | Status |
 | --- | --- |
 | M0–M4: foundation, infra, agent, lifecycle workflows, agent releases; plus monitoring | Done |
-| M5 Game updates and backups | In progress: PR1–PR6 merged; PR7 (R3a, restore: API side) in review |
+| M5 Game updates and backups | In progress: PR1–PR7 merged; PR8 (R3b, restore: agent side) in review |
 | M6 Idle shutdown, M7 Move your world | Not started |
 
 **M5 plan:**
@@ -42,12 +42,14 @@ as part of each PR. The repo layout and commands are in [README.md](README.md).
 - PR3, done: keep the newest 10 backups per server (tested on dev).
 - PR4, done: `hearth backups <id>` lists a server's backups (`GET /admin/servers/{id}/backups`).
 - PR6, done: `hearth restore <id> [<key>] [--force]` and `--cancel` record or clear
-  `restoreKey` on a stopped server. Nothing acts on it yet. Also moves the backup storage code to
+  `restoreKey` on a stopped server. Also moves the backup storage code to
   `services/api/src/backups.ts`, shared by agent and admin routes.
-- PR7 (R3a, API), in review: agent config carries `restore: { key, url }` (presigned, 15 min) while a restore
-  is pending; `POST /agent/restored` clears it; restore/cancel accept a stopped `FAILED` server.
-- Then R3b (agent): download, unpack beside the world (refusing paths outside it), swap, report;
-  a missing backup (404) fails the start. Ships on canary first.
+- PR7 (R3a, API), done: agent config carries `restore: { key, url }` (presigned when the config is
+  fetched, 15 min) while a restore is pending; `POST /agent/restored` clears it; restore/cancel
+  accept a stopped `FAILED` server.
+- PR8 (R3b, agent), in review: before starting the game, the agent downloads and unpacks the backup
+  beside the world (refusing paths and symlinks outside it), swaps it in, then clears the request.
+  Any failure fails the start with the world untouched. Ships on canary first.
 - Then `hearth set-version` (forward only, needs a backup).
 
 ## Decisions and why
@@ -93,6 +95,9 @@ as part of each PR. The repo layout and commands are in [README.md](README.md).
 - **Restore happens in the start workflow, not a workflow of its own:** a restore always needs the
   game stopped and then started. A pending restore arrives in the agent's config, so ordinary starts
   pay nothing; only a start with a restore pending downloads and unpacks a backup first.
+- **S3 answers a missing backup with 403, not 404,** because the link's signer (the config Lambda)
+  can't list the bucket. On a 403 the agent fetches a new link once (it may have expired), then
+  fails with "no longer exists, or S3 refused the link".
 - **A restore whose backup is gone fails the start** (the server ends `FAILED`, world untouched) rather
   than starting without it, so the gap is visible. This can happen when a start fails before
   restoring and the next stop's backup prunes the oldest. `hearth restore` and `--cancel` also accept

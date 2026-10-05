@@ -66,14 +66,34 @@ hearth start <serverId>             # prints the new address; the IP changes eve
 
 Join again: what you built is still there.
 
-## 5. Check the rest
+## 5. Restore
+
+Needs the agent with restores: the server on a channel that has it (dev canary first).
+
+1. Stop, then note the newest backup with `hearth backups <serverId>`: call it A.
+2. Start, join, build something new, stop. That stop's backup (B) has the new build.
+3. Ask for A and start:
+
+   ```bash
+   hearth restore <serverId> <A's file name>
+   hearth start <serverId>           # STARTING · agent starting: restoring backup …
+   ```
+
+4. Join: the new build is gone (the world is A's). `hearth status` shows no `restore` row.
+5. Restore B the same way to get the build back.
+
+A missing backup fails the start: copy A to a made-up name, ask for that, delete it from S3, then
+start. Expect `FAILED` with `backup … no longer exists` (or `… or S3 refused the link`), and the
+world untouched. `hearth restore <serverId> --cancel` (allowed while `FAILED`), then start.
+
+## 6. Check the rest
 
 ```bash
 hearth list                         # one line per server
 hearth start <serverId>             # while RUNNING: "Already running.", nothing new starts
 ```
 
-## 6. Clean up
+## 7. Clean up
 
 There's no delete in the API until archiving exists (it would lose the world). Use the dev script
 (needs the AWS CLI; CloudShell has it):

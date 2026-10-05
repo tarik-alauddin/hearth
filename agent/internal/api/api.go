@@ -91,6 +91,15 @@ func (c *Client) BackupCredentials(ctx context.Context) (BackupTarget, error) {
 	return target, err
 }
 
+// Restored clears the server's requested restore of key, now in place (POST /agent/restored).
+func (c *Client) Restored(ctx context.Context, key string) error {
+	body, err := json.Marshal(map[string]string{"key": key})
+	if err != nil {
+		return err
+	}
+	return c.do(ctx, http.MethodPost, "/agent/restored", body, nil)
+}
+
 // BackupDone records a finished upload as the server's newest backup (POST /agent/backups).
 func (c *Client) BackupDone(ctx context.Context, key string) error {
 	body, err := json.Marshal(map[string]string{"key": key})

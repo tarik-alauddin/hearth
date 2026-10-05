@@ -20,6 +20,9 @@ type Config struct {
 	// Agent is the release this server's channel points at (AgentTarget in packages/shared); nil
 	// until the channel has one.
 	Agent *AgentTarget `json:"agent,omitempty"`
+	// Restore is a requested restore (RestoreTarget in packages/shared): replace the world with
+	// this backup before starting the game. Nil when none is pending.
+	Restore *RestoreTarget `json:"restore,omitempty"`
 
 	// Filled in by the agent, not the API.
 	DataDir   string `json:"-"` // root of the world data volume, e.g. /srv/hearth
@@ -31,6 +34,12 @@ type AgentTarget struct {
 	Version string `json:"version"`
 	URL     string `json:"url"` // s3://bucket/key
 	SHA256  string `json:"sha256"`
+}
+
+// RestoreTarget is a backup to restore.
+type RestoreTarget struct {
+	Key string `json:"key"`
+	URL string `json:"url"` // presigned download link, valid for 15 minutes from the config fetch
 }
 
 // BackupSpec says what a backup holds: everything under Dir except paths matching Exclude.
