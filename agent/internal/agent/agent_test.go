@@ -28,6 +28,18 @@ type fakeAPI struct {
 	config      game.Config
 	configFails int // Config fails this many times before succeeding
 	reports     []api.StatusReport
+	restored    []string
+	restoredErr error
+}
+
+func (f *fakeAPI) Restored(_ context.Context, key string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.restoredErr != nil {
+		return f.restoredErr
+	}
+	f.restored = append(f.restored, key)
+	return nil
 }
 
 func (f *fakeAPI) Config(context.Context) (game.Config, error) {
@@ -400,6 +412,74 @@ func TestNoBackupOfAGameThatNeverBecameReady(t *testing.T) {
 	_ = h.stop(t)
 	if slices.ContainsFunc(h.rt.events, func(e string) bool { return strings.HasPrefix(e, "backup") }) {
 		t.Errorf("should not back up: %v", h.rt.events)
+	}
+}
+
+const restoreKey = "servers/s1/20261004T120000Z.tar.gz"
+
+// withRestore puts a pending restore in the config and fakes the download, returning the result
+// of each attempt in turn (the last one repeats).
+func withRestore(h *harness, results ...error) {
+	h.api.config.Restore = &game.RestoreTarget{Key: restoreKey, URL: "https://s3/link"}
+	attempt := 0
+	h.agent.Restore = func(_ context.Context, url, dir string) error {
+		h.rt.record("restore " + url + " " + dir)
+		err := results[min(attempt, len(results)-1)]
+		attempt++
+		return err
+	}
+}
+
+func TestRestoresBeforeStartingTheGameThenClearsTheRequest(t *testing.T) {
+	h := start(t, func(h *harness) { withRestore(h, nil) })
+	eventually(t, "ready", func() bool { return slices.Contains(h.api.states(), "ready") })
+	_ = h.stop(t)
+	if got := h.rt.events[:2]; !slices.Equal(got, []string{"restore https://s3/link /srv/hearth/fake", "start"}) {
+		t.Errorf("events %v: the world should be restored before the game starts", h.rt.events)
+	}
+	if !slices.Equal(h.api.restored, []string{restoreKey}) {
+		t.Errorf("restored %v", h.api.restored)
+	}
+	if !strings.Contains(h.api.firstMessage(), "restoring backup "+restoreKey) {
+		t.Errorf("first report %q should say it's restoring", h.api.firstMessage())
+	}
+}
+
+func TestFetchesANewLinkOnceWhenS3RefusesIt(t *testing.T) {
+	h := start(t, func(h *harness) { withRestore(h, backup.ErrLinkRefused, nil) })
+	eventually(t, "ready", func() bool { return slices.Contains(h.api.states(), "ready") })
+	_ = h.stop(t)
+	if n := len(slices.DeleteFunc(slices.Clone(h.rt.events), func(e string) bool { return !strings.HasPrefix(e, "restore") })); n != 2 {
+		t.Errorf("%d restore attempts, want 2: %v", n, h.rt.events)
+	}
+}
+
+func TestRestoreFailuresFailTheStartWithoutStartingTheGame(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		results     []error
+		restoredErr error
+		want        string
+	}{
+		{"backup gone", []error{backup.ErrBackupGone}, nil, "no longer exists; choose another"},
+		{"link refused twice", []error{backup.ErrLinkRefused}, nil, "no longer exists, or S3 refused the link"},
+		{"unpack error", []error{errors.New("disk full")}, nil, "restoring backup " + restoreKey + " failed: disk full"},
+		{"request not cleared", []error{nil}, errors.New("API down"), "couldn't be cleared"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := start(t, func(h *harness) {
+				withRestore(h, tc.results...)
+				h.api.restoredErr = tc.restoredErr
+			})
+			eventually(t, "error report", func() bool { return slices.Contains(h.api.states(), "error") })
+			if !strings.Contains(h.api.lastMessage(), tc.want) {
+				t.Errorf("message %q should contain %q", h.api.lastMessage(), tc.want)
+			}
+			_ = h.stop(t)
+			if slices.Contains(h.rt.events, "start") {
+				t.Errorf("the game must not start after a failed restore: %v", h.rt.events)
+			}
+		})
 	}
 }
 

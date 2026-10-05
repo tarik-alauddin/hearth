@@ -72,8 +72,9 @@ func TestBackupRoutes(t *testing.T) {
 		case "POST /agent/backup-credentials":
 			_, _ = io.WriteString(w, `{"bucket":"b","key":"servers/s1/20261004T120000Z.tar.gz","region":"us-west-2",`+
 				`"credentials":{"accessKeyId":"AKID","secretAccessKey":"s","sessionToken":"t","expiration":"2026-10-04T12:15:00.000Z"}}`)
-		case "POST /agent/backups":
+		case "POST /agent/backups", "POST /agent/restored":
 			_ = json.NewDecoder(r.Body).Decode(&done)
+			done["path"] = r.URL.Path
 			w.WriteHeader(http.StatusNoContent)
 		default:
 			t.Errorf("%s %s", r.Method, r.URL.Path)
@@ -93,7 +94,13 @@ func TestBackupRoutes(t *testing.T) {
 	if err := c.BackupDone(context.Background(), target.Key); err != nil {
 		t.Fatal(err)
 	}
-	if done["key"] != target.Key {
+	if done["key"] != target.Key || done["path"] != "/agent/backups" {
+		t.Errorf("sent %v", done)
+	}
+	if err := c.Restored(context.Background(), target.Key); err != nil {
+		t.Fatal(err)
+	}
+	if done["key"] != target.Key || done["path"] != "/agent/restored" {
 		t.Errorf("sent %v", done)
 	}
 }
