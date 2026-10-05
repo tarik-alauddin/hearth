@@ -61,7 +61,7 @@ export interface ServersStore {
 }
 
 /** Settings owners can change (more arrive with the UI). */
-export type ServerSettings = Partial<Pick<ServerRecord, 'agentChannel'>>;
+export type ServerSettings = Partial<Pick<ServerRecord, 'agentChannel' | 'idleStopMinutes'>>;
 
 export type StatusIndexEntry = Pick<ServerRecord, 'serverId' | 'status' | 'statusChangedAt' | 'instanceId' | 'instanceState'>;
 

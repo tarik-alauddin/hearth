@@ -1,4 +1,5 @@
 import {
+  DEFAULT_IDLE_STOP_MINUTES,
   GAME_DEFINITIONS,
   type FleetReport,
   type ListBackupsResponse,
@@ -8,6 +9,7 @@ import {
   type ServerRecord,
   type ServerStatus,
   type SetVersionRequest,
+  type UpdateSettingsRequest,
 } from '@hearth/shared';
 import type { Api } from './client.js';
 
@@ -87,6 +89,15 @@ export function commands({ api, fleetCheck, print, sleep = (ms) => new Promise((
       print(`${server.serverId} is on the ${server.agentChannel} channel; it takes effect on the next start.`);
     },
 
+    /** Sets how long a server may sit with nobody playing before it stops: minutes, or "off". */
+    async setIdle(id: string, value: string) {
+      const minutes = value === 'off' ? 0 : Number(value);
+      if (!Number.isInteger(minutes) || minutes < 0) throw new CommandError('set-idle takes a whole number of minutes, or "off"');
+      const body: UpdateSettingsRequest = { idleStopMinutes: minutes };
+      const server = await api.post<ServerRecord>(`/admin/servers/${encodeURIComponent(id)}/settings`, body);
+      print(`${server.serverId} ${idleStop(server)}, from its next start.`);
+    },
+
     /** Moves a stopped server to a newer game release; it runs from the next start. */
     async setVersion(id: string, version: string) {
       const body: SetVersionRequest = { version };
@@ -102,6 +113,7 @@ export function commands({ api, fleetCheck, print, sleep = (ms) => new Promise((
         ['status', s.status + (s.statusMessage ? ` (${s.statusMessage})` : '')],
         ['agent', s.agentState && `${s.agentState}${s.agentVersion ? ` (${s.agentVersion})` : ''}${s.agentMessage ? `: ${s.agentMessage}` : ''}`],
         ['channel', s.agentChannel ?? 'stable'],
+        ['idle stop', idleStop(s)],
         ['instance', s.instanceId && `${s.instanceId} (${s.instanceState ?? 'unknown'})`],
         ['join at', s.publicIp && address(s)],
         [
@@ -173,6 +185,13 @@ export function commands({ api, fleetCheck, print, sleep = (ms) => new Promise((
     const widths = rows[0]!.map((_, i) => Math.max(...rows.map((r) => r[i]!.length)));
     for (const r of rows) print(r.map((cell, i) => cell.padEnd(widths[i]!)).join('  ').trimEnd());
   }
+}
+
+/** "stops after 30 minutes with nobody playing", or "never stops for being idle". */
+function idleStop(server: ServerRecord): string {
+  const minutes = server.idleStopMinutes ?? DEFAULT_IDLE_STOP_MINUTES;
+  if (minutes === 0) return 'never stops for being idle';
+  return `stops after ${minutes === 1 ? '1 minute' : `${minutes} minutes`} with nobody playing`;
 }
 
 function mebibytes(bytes: number): string {

@@ -31,6 +31,11 @@ export function isInstanceState(value: unknown): value is InstanceState {
   return typeof value === 'string' && (INSTANCE_STATES as readonly string[]).includes(value);
 }
 
+/** Idle stop for a server that hasn't chosen: 30 minutes with nobody playing. */
+export const DEFAULT_IDLE_STOP_MINUTES = 30;
+/** The longest idle limit a server can choose: a day. */
+export const MAX_IDLE_STOP_MINUTES = 24 * 60;
+
 /** GSI on `Servers` keyed by `instanceId` */
 export const SERVERS_BY_INSTANCE_INDEX = 'byInstance';
 
@@ -48,6 +53,7 @@ export interface ServerRecord {
   version: string; // game version
   autoUpdate: boolean;
   agentChannel?: AgentChannel; // which agent releases this server follows; default stable
+  idleStopMinutes?: number; // stop after this long with nobody playing; default DEFAULT_IDLE_STOP_MINUTES, 0 = never
   instanceId?: string;
   volumeId?: string;
   // Last report from the agent. `status` is owned by the lifecycle workflows; these are the agent's view.

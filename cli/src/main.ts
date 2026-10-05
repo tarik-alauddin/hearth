@@ -17,6 +17,7 @@ const USAGE = `Usage: hearth <command> [options]
   stop   <serverId>
   set-channel <serverId> <canary|stable>   agent releases to follow, from the next start
   set-version <serverId> <version>         a newer game release, from the next start (forward only)
+  set-idle <serverId> <minutes|off>        stop after this long with nobody playing, from the next start
   fleet-check                              stuck, failed and mismatched servers; instances with no server
 
 Options:
@@ -91,6 +92,10 @@ async function main(argv: string[]): Promise<number> {
     case 'set-version':
       if (!arg) throw new CommandError('set-version needs a version, e.g. set-version <serverId> 26.4');
       await run.setVersion(needId(), arg);
+      return 0;
+    case 'set-idle':
+      if (!arg) throw new CommandError('set-idle needs minutes or "off", e.g. set-idle <serverId> 30');
+      await run.setIdle(needId(), arg);
       return 0;
     case 'fleet-check':
       await run.fleetCheck();

@@ -606,6 +606,39 @@ func TestAsksToStopOnceWhenNobodyPlays(t *testing.T) {
 	}
 }
 
+func TestTheServersIdleSettingWinsOverTheDefault(t *testing.T) {
+	five, zero := 5, 0
+	a := New(Options{IdleAfter: 30 * time.Minute})
+	for _, tc := range []struct {
+		name string
+		cfg  *int
+		want time.Duration
+	}{
+		{"no setting from the API", nil, 30 * time.Minute},
+		{"the server's limit", &five, 5 * time.Minute},
+		{"0 = never", &zero, -1},
+	} {
+		if got := a.idleAfter(game.Config{IdleStopMinutes: tc.cfg}); got != tc.want {
+			t.Errorf("%s: got %s, want %s", tc.name, got, tc.want)
+		}
+	}
+}
+
+func TestNeverAsksWhenTheServerTurnedIdleStopOff(t *testing.T) {
+	zero := 0
+	h := start(t, func(h *harness) {
+		h.api.config.IdleStopMinutes = &zero
+		h.agent.PlayerInterval = 5 * time.Millisecond
+		h.agent.IdleAfter = 10 * time.Millisecond // the setting must win over this
+	})
+	eventually(t, "ready", func() bool { return slices.Contains(h.api.states(), "ready") })
+	time.Sleep(60 * time.Millisecond)
+	_ = h.stop(t)
+	if got := h.api.idleCalls(); len(got) != 0 {
+		t.Errorf("asked to stop with idle stop off: %v", got)
+	}
+}
+
 func TestDoesNotStopWhilePlayersAreOn(t *testing.T) {
 	h := start(t, func(h *harness) {
 		h.game.online = 2

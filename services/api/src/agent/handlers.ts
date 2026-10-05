@@ -5,7 +5,9 @@ import type {
 import {
   BACKUPS_KEPT,
   DEFAULT_AGENT_CHANNEL,
+  DEFAULT_IDLE_STOP_MINUTES,
   GAME_DEFINITIONS,
+  MAX_IDLE_STOP_MINUTES,
   backupKey,
   isAgentState,
   isBackupKey,
@@ -41,7 +43,6 @@ export interface AgentHandlerDeps {
 
 const MAX_VERSION_LENGTH = 64;
 const MAX_MESSAGE_LENGTH = 500;
-const MAX_IDLE_MINUTES = 24 * 60;
 
 export function agentHandlers({
   store,
@@ -75,6 +76,7 @@ export function agentHandlers({
       version: server.version,
       image: game.image,
       port: game.port,
+      idleStopMinutes: server.idleStopMinutes ?? DEFAULT_IDLE_STOP_MINUTES,
       ...(agent ? { agent } : {}),
       ...(restore ? { restore } : {}),
     };
@@ -86,8 +88,8 @@ export function agentHandlers({
     const body = parseJsonObject(event);
     if (typeof body === 'string') return json(400, { message: body });
     const { idleMinutes } = body;
-    if (typeof idleMinutes !== 'number' || !Number.isInteger(idleMinutes) || idleMinutes < 1 || idleMinutes > MAX_IDLE_MINUTES) {
-      return json(400, { message: `idleMinutes must be a whole number from 1 to ${MAX_IDLE_MINUTES}` });
+    if (typeof idleMinutes !== 'number' || !Number.isInteger(idleMinutes) || idleMinutes < 1 || idleMinutes > MAX_IDLE_STOP_MINUTES) {
+      return json(400, { message: `idleMinutes must be a whole number from 1 to ${MAX_IDLE_STOP_MINUTES}` });
     }
     const caller = await callerServer(event);
     if ('error' in caller) return caller.error;

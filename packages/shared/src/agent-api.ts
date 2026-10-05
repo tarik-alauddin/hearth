@@ -15,6 +15,8 @@ export interface AgentConfig {
   agent?: AgentTarget;
   /** A requested restore: replace the world with this backup before starting the game. */
   restore?: RestoreTarget;
+  /** Ask for a stop after this many minutes with nobody playing; 0 = never. */
+  idleStopMinutes: number;
 }
 
 export interface RestoreTarget {
