@@ -28,6 +28,18 @@ export interface ServerOperationResult {
   unchanged?: boolean;
 }
 
+/** One of a server's backups. */
+export interface BackupSummary {
+  key: string;
+  takenAt: string; // ISO 8601 UTC, when the upload finished
+  bytes: number;
+}
+
+/** `GET /admin/servers/{id}/backups`: newest first. */
+export interface ListBackupsResponse {
+  backups: BackupSummary[];
+}
+
 /** `GET /admin/servers?limit=&cursor=` (limit 1–100, default 50) */
 export interface ListServersResponse {
   servers: ServerRecord[];

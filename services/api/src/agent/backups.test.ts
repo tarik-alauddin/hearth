@@ -68,7 +68,7 @@ describe('s3BackupStorage', () => {
             const start = Number(command.input.ContinuationToken ?? 0);
             const end = start + pageSize;
             return {
-              Contents: keys.slice(start, end).map((Key) => ({ Key })),
+              Contents: keys.slice(start, end).map((Key) => ({ Key, LastModified: new Date('2026-10-01T12:00:00Z'), Size: 7 })),
               NextContinuationToken: end < keys.length ? String(end) : undefined,
             };
           }
@@ -84,9 +84,16 @@ describe('s3BackupStorage', () => {
       // Listed out of order, with something that isn't a backup.
       const keys = [key(3), key(12), key(1), 'servers/s1/notes.txt', key(2), ...[4, 5, 6, 7, 8, 9, 10, 11].map(key)];
       const { storage, deleted, prefixes } = bucket(keys, 5);
-      expect(await storage.prune('s1', 10)).toEqual([key(1), key(2)]);
-      expect(deleted).toEqual([[key(1), key(2)]]);
+      expect(await storage.prune('s1', 10)).toEqual([key(2), key(1)]);
+      expect(deleted).toEqual([[key(2), key(1)]]);
       expect(prefixes.every((p) => p === 'servers/s1/')).toBe(true);
+    });
+
+    it('lists only backups, newest first, with time and size', async () => {
+      const { storage } = bucket([key(1), 'servers/s1/notes.txt', key(3), key(2)], 2);
+      expect(await storage.list('s1')).toEqual(
+        [3, 2, 1].map((i) => ({ key: key(i), takenAt: '2026-10-01T12:00:00.000Z', bytes: 7 })),
+      );
     });
 
     it('deletes nothing when there are 10 or fewer', async () => {

@@ -1,6 +1,7 @@
 import {
   GAME_DEFINITIONS,
   type FleetReport,
+  type ListBackupsResponse,
   type ListServersResponse,
   type ServerOperationResult,
   type ServerRecord,
@@ -126,16 +127,25 @@ export function commands({ api, fleetCheck, print, sleep = (ms) => new Promise((
         cursor = page.cursor;
       } while (cursor);
       if (servers.length === 0) return print('No servers.');
-      const rows = [
+      table([
         ['SERVER', 'GAME', 'VERSION', 'STATUS', 'AGENT', 'ADDRESS'],
         ...servers
           .sort((a, b) => a.serverId.localeCompare(b.serverId))
           .map((s) => [s.serverId, s.game, s.version, s.status, s.agentState ?? '-', address(s)]),
-      ];
-      const widths = rows[0]!.map((_, i) => Math.max(...rows.map((r) => r[i]!.length)));
-      for (const r of rows) print(r.map((cell, i) => cell.padEnd(widths[i]!)).join('  ').trimEnd());
+      ]);
+    },
+
+    async backups(id: string) {
+      const { backups } = await api.get<ListBackupsResponse>(`/admin/servers/${encodeURIComponent(id)}/backups`);
+      if (backups.length === 0) return print('No backups yet. One is taken each time the server stops.');
+      table([['TAKEN', 'SIZE', 'KEY'], ...backups.map((b) => [b.takenAt, mebibytes(b.bytes), b.key])]);
     },
   };
+
+  function table(rows: string[][]) {
+    const widths = rows[0]!.map((_, i) => Math.max(...rows.map((r) => r[i]!.length)));
+    for (const r of rows) print(r.map((cell, i) => cell.padEnd(widths[i]!)).join('  ').trimEnd());
+  }
 }
 
 function mebibytes(bytes: number): string {

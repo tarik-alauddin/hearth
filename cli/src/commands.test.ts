@@ -89,6 +89,25 @@ describe('commands', () => {
     expect(out.at(-1)).toBe(`Stopped. World saved. Agent: ${agentMessage}`);
   });
 
+  it('lists backups as a table, or says there are none', async () => {
+    const backups = [
+      { key: 'servers/s1/20261005T120000Z.tar.gz', takenAt: '2026-10-05T12:00:10.000Z', bytes: 3 * 2 ** 20 },
+      { key: 'servers/s1/20261004T120000Z.tar.gz', takenAt: '2026-10-04T12:00:10.000Z', bytes: 2 ** 20 },
+    ];
+    const api = { get: async () => ({ backups }) } as unknown as Api;
+    const { out, cmd } = run(api);
+    await cmd.backups('s1');
+    expect(out).toEqual([
+      'TAKEN                     SIZE     KEY',
+      '2026-10-05T12:00:10.000Z  3.0 MiB  servers/s1/20261005T120000Z.tar.gz',
+      '2026-10-04T12:00:10.000Z  1.0 MiB  servers/s1/20261004T120000Z.tar.gz',
+    ]);
+
+    const empty = run({ get: async () => ({ backups: [] }) } as unknown as Api);
+    await empty.cmd.backups('s1');
+    expect(empty.out).toEqual(['No backups yet. One is taken each time the server stops.']);
+  });
+
   it('status shows the last backup', async () => {
     const { api } = fakeApi([{ status: 'STOPPED', lastBackupAt: '2026-10-04T12:01:00.000Z', lastBackupBytes: 3 * 2 ** 20 }]);
     const { out, cmd } = run(api);

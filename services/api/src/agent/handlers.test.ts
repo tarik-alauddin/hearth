@@ -21,6 +21,7 @@ function fakeBackups(objects: Record<string, number> = {}): BackupStorage {
       credentials: { accessKeyId: 'AKID', secretAccessKey: 's', sessionToken: 't', expiration: '2026-09-28T12:15:00.000Z' },
     }),
     size: async (key) => objects[key],
+    list: async () => [],
     prune: async () => [],
   };
 }

@@ -117,13 +117,12 @@ export class ApiStack extends HearthStack {
     backupDoneFunction.addToRolePolicy(
       new PolicyStatement({ actions: ['s3:GetObject', 's3:DeleteObject'], resources: [serverBackups] }),
     );
-    backupDoneFunction.addToRolePolicy(
-      new PolicyStatement({
-        actions: ['s3:ListBucket'],
-        resources: [`arn:${this.partition}:s3:::${backups}`],
-        conditions: { StringLike: { 's3:prefix': `${backupPrefix('*')}*` } },
-      }),
-    );
+    const listServerBackups = new PolicyStatement({
+      actions: ['s3:ListBucket'],
+      resources: [`arn:${this.partition}:s3:::${backups}`],
+      conditions: { StringLike: { 's3:prefix': `${backupPrefix('*')}*` } },
+    });
+    backupDoneFunction.addToRolePolicy(listServerBackups);
     for (const construct of [backupWriter, backupDoneFunction]) {
       Validations.of(construct).acknowledge({
         id: `AwsSolutions-IAM5[Resource::${serverBackups}]`,
@@ -160,8 +159,11 @@ export class ApiStack extends HearthStack {
         CREATE_WORKFLOW_ARN: props.workflows.create.stateMachineArn,
         START_WORKFLOW_ARN: props.workflows.start.stateMachineArn,
         STOP_WORKFLOW_ARN: props.workflows.stop.stateMachineArn,
+        BACKUP_BUCKET: backups,
+        BACKUP_BUCKET_REGION: props.config.homeRegion,
       },
     });
+    admin.addToRolePolicy(listServerBackups);
     admin.addToRolePolicy(
       new PolicyStatement({
         actions: ['dynamodb:GetItem', 'dynamodb:PutItem', 'dynamodb:UpdateItem', 'dynamodb:Scan'],
@@ -180,6 +182,7 @@ export class ApiStack extends HearthStack {
       ['/admin/servers', HttpMethod.GET],
       ['/admin/servers', HttpMethod.POST],
       ['/admin/servers/{id}', HttpMethod.GET],
+      ['/admin/servers/{id}/backups', HttpMethod.GET],
       ['/admin/servers/{id}/start', HttpMethod.POST],
       ['/admin/servers/{id}/stop', HttpMethod.POST],
       ['/admin/servers/{id}/settings', HttpMethod.POST],
