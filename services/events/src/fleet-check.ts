@@ -2,7 +2,7 @@ import type { Metrics, ServersStore, StatusIndexEntry } from '@hearth/core';
 import { METRICS, type FleetReport, type ServerStatus, type UntrackedInstance } from '@hearth/shared';
 
 /** Statuses a workflow moves a server through; staying in one this long means it's stuck. */
-const TRANSITIONAL: readonly ServerStatus[] = ['PROVISIONING', 'STARTING', 'STOPPING'];
+const TRANSITIONAL: readonly ServerStatus[] = ['PROVISIONING', 'STARTING', 'STOPPING', 'DESTROYING'];
 /** Workflows time out after 30 minutes; stuck = longer than that plus a margin. */
 const STUCK_AFTER_MINUTES = 35;
 /** A launch records its instance seconds after RunInstances; younger instances aren't judged. */

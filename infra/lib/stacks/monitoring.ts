@@ -29,7 +29,7 @@ import { HearthStack, type HearthStackProps } from '../hearth-stack.js';
 
 export interface MonitoringStackProps extends HearthStackProps {
   readonly serversTable: ITableV2;
-  readonly workflows: Record<'create' | 'start' | 'stop', StateMachine>;
+  readonly workflows: Record<'create' | 'start' | 'stop' | 'destroy', StateMachine>;
   readonly api: HttpApi;
   /** Lambdas whose errors are real failures (not the task Lambdas, which throw NotReady by design). */
   readonly apiFunctions: readonly NodejsFunction[];

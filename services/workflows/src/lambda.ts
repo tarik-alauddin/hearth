@@ -1,4 +1,4 @@
-// Lambda entry points for the workflow tasks. OrchestrationStack runs three functions, grouped by the
+// Lambda entry points for the workflow tasks. OrchestrationStack runs four functions, grouped by the
 // permissions they need; each only dispatches the tasks it's allowed to run.
 import { createServersStore } from '@hearth/core';
 import { sdkEc2 } from './ec2.js';
@@ -33,3 +33,5 @@ function dispatcher(allowed: readonly TaskName[]) {
 export const launchHandler = dispatcher(['launchInstance', 'recordVolume']);
 export const powerHandler = dispatcher(['startInstance', 'stopAgent', 'waitForAgentStop', 'stopInstance', 'waitForStopped', 'stopAfterFailure']);
 export const statusHandler = dispatcher(['waitForAgent', 'markRunning', 'markStopped', 'markFailed']);
+// The only function that can terminate instances, delete volumes and delete records.
+export const destroyHandler = dispatcher(['terminateInstances', 'waitForTerminated', 'deleteVolumes', 'deleteRecord']);

@@ -1,5 +1,5 @@
 import { ConditionalCheckFailedException } from '@aws-sdk/client-dynamodb';
-import { QueryCommand, UpdateCommand } from '@aws-sdk/lib-dynamodb';
+import { DeleteCommand, QueryCommand, UpdateCommand } from '@aws-sdk/lib-dynamodb';
 import { describe, expect, it } from 'vitest';
 import { InvalidCursor, dynamoServersStore } from './servers.js';
 
@@ -72,6 +72,28 @@ describe('dynamoServersStore', () => {
       new Date(),
     );
     expect(ok).toBe(false);
+  });
+});
+
+describe('deleteServer', () => {
+  it('deletes the record only while it has the expected status', async () => {
+    const { client, sent } = fakeClient();
+    expect(await dynamoServersStore(client, 't').deleteServer('s1', 'DESTROYING')).toBe(true);
+    expect(sent[0]).toBeInstanceOf(DeleteCommand);
+    expect((sent[0] as DeleteCommand).input).toMatchObject({
+      TableName: 't',
+      Key: { serverId: 's1' },
+      ConditionExpression: '#status = :status',
+      ExpressionAttributeNames: { '#status': 'status' },
+      ExpressionAttributeValues: { ':status': 'DESTROYING' },
+    });
+  });
+
+  it('returns false when the status changed', async () => {
+    const { client } = fakeClient(() => {
+      throw new ConditionalCheckFailedException({ message: 'no', $metadata: {} });
+    });
+    expect(await dynamoServersStore(client, 't').deleteServer('s1', 'DESTROYING')).toBe(false);
   });
 });
 
