@@ -50,6 +50,11 @@ export function acceptedKey(uploadId: string): string {
   return `accepted/${uploadId}.tar.gz`;
 }
 
+/** Whether `key` is an accepted upload's key, in the format `acceptedKey` makes. */
+export function isAcceptedKey(key: string): boolean {
+  return /^accepted\/[0-9A-HJKMNP-TV-Z]{26}\.tar\.gz$/.test(key);
+}
+
 export function rejectedKey(uploadId: string): string {
   return `rejected/${uploadId}.json`;
 }

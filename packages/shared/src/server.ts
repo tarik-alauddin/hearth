@@ -78,7 +78,8 @@ export interface ServerRecord {
   lastBackupKey?: string;
   lastBackupAt?: string; // ISO 8601 UTC
   lastBackupBytes?: number;
-  // A requested restore: this backup replaces the world on the next start.
+  // A requested restore: this archive replaces the game data on the next start.
   restoreKey?: string;
+  restoreSource?: 'upload'; // restoreKey is in the uploads bucket (an accepted upload); unset = the backups bucket
   restoreRequestedAt?: string; // ISO 8601 UTC
 }

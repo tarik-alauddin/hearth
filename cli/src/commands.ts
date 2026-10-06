@@ -124,7 +124,7 @@ export function commands({ api, fleetCheck, print, sleep = (ms) => new Promise((
             `${s.lastStoppedAt}${s.stopReason ? `: ${s.stopReason}` : ''}${s.lastStopClean === false ? ' (not clean)' : ''}`,
         ],
         ['last backup', s.lastBackupAt && `${s.lastBackupAt} (${mebibytes(s.lastBackupBytes ?? 0)})`],
-        ['restore', s.restoreKey && `${s.restoreKey} on the next start`],
+        ['restore', s.restoreKey && `${restoreName(s)} on the next start`],
       ];
       for (const [k, v] of rows) if (v) print(`${k.padEnd(11)} ${v}`);
     },
@@ -187,6 +187,12 @@ export function commands({ api, fleetCheck, print, sleep = (ms) => new Promise((
     const widths = rows[0]!.map((_, i) => Math.max(...rows.map((r) => r[i]!.length)));
     for (const r of rows) print(r.map((cell, i) => cell.padEnd(widths[i]!)).join('  ').trimEnd());
   }
+}
+
+/** A pending restore as people know it: the backup's key, or "upload <id>" for a server created from one. */
+function restoreName(server: ServerRecord): string {
+  const key = server.restoreKey ?? '';
+  return server.restoreSource === 'upload' ? `upload ${key.replace(/^accepted\//, '').replace(/\.tar\.gz$/, '')}` : key;
 }
 
 /** "stops after 30 minutes with nobody playing", or "never stops for being idle". */

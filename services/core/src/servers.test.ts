@@ -82,7 +82,7 @@ describe('clearRestore', () => {
     expect(await dynamoServersStore(client, 't').clearRestore('s1', 'i-1', key)).toBe(true);
     expect((sent[0] as UpdateCommand).input).toMatchObject({
       Key: { serverId: 's1' },
-      UpdateExpression: 'REMOVE restoreKey, restoreRequestedAt',
+      UpdateExpression: 'REMOVE restoreKey, restoreSource, restoreRequestedAt',
       ConditionExpression: 'instanceId = :instanceId AND restoreKey = :key',
       ExpressionAttributeValues: { ':instanceId': 'i-1', ':key': key },
     });

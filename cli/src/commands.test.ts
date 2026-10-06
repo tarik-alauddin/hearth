@@ -179,6 +179,15 @@ describe('commands', () => {
     expect(out).toContain('last stop   2026-10-05T12:00:00Z: no players for 30 minutes');
   });
 
+  it('status names a pending restore of an upload by its upload ID', async () => {
+    const { api } = fakeApi([
+      { status: 'STARTING', restoreKey: 'accepted/01K6ABCDEF0123456789ABCDEF.tar.gz', restoreSource: 'upload' },
+    ]);
+    const { out, cmd } = run(api);
+    await cmd.status('s1');
+    expect(out).toContain('restore     upload 01K6ABCDEF0123456789ABCDEF on the next start');
+  });
+
   it('status shows a pending restore', async () => {
     const { api } = fakeApi([{ status: 'STOPPED', restoreKey: 'servers/s1/20261004T120000Z.tar.gz' }]);
     const { out, cmd } = run(api);

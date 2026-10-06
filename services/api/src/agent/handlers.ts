@@ -10,6 +10,7 @@ import {
   MAX_IDLE_STOP_MINUTES,
   backupKey,
   isAgentState,
+  isAcceptedKey,
   isBackupKey,
   type AgentConfig,
   type AgentStatusReport,
@@ -17,6 +18,7 @@ import {
 } from '@hearth/shared';
 import type { ServersStore } from '@hearth/core';
 import type { BackupStorage } from '../backups.js';
+import type { UploadStorage } from '../uploads.js';
 import { OperationError, type serverOperations } from '../servers/operations.js';
 import { callerInstanceId } from './caller.js';
 import type { AgentReleases } from './releases.js';
@@ -36,6 +38,8 @@ export interface AgentHandlerDeps {
   /** Which agent release each channel points at. */
   releases: AgentReleases;
   backups: BackupStorage;
+  /** Accepted uploads, restored when a server was created from one. */
+  uploads: Pick<UploadStorage, 'downloadUrl'>;
   /** Server operations an agent may trigger for its own server. */
   operations: Pick<ReturnType<typeof serverOperations>, 'idleStop'>;
   now?: () => Date;
@@ -49,6 +53,7 @@ export function agentHandlers({
   instanceRoleNames,
   releases,
   backups,
+  uploads,
   operations,
   now = () => new Date(),
 }: AgentHandlerDeps) {
@@ -69,7 +74,8 @@ export function agentHandlers({
     const game = GAME_DEFINITIONS[server.game];
     const agent = await releases.target(server.agentChannel ?? DEFAULT_AGENT_CHANNEL);
     // Not checked here: if the backup is gone, the agent's download fails and so does the start.
-    const restore = server.restoreKey && { key: server.restoreKey, url: await backups.downloadUrl(server.restoreKey) };
+    const from = server.restoreSource === 'upload' ? uploads : backups;
+    const restore = server.restoreKey && { key: server.restoreKey, url: await from.downloadUrl(server.restoreKey) };
     const body: AgentConfig = {
       serverId: server.serverId,
       game: server.game,
@@ -112,7 +118,10 @@ export function agentHandlers({
     if ('error' in caller) return caller.error;
     const { instanceId, server } = caller;
     const { key } = body;
-    if (typeof key !== 'string' || !isBackupKey(server.serverId, key)) return json(400, { message: 'Invalid key' });
+    // One of this server's backups, or an accepted upload (restored when the server was created from it).
+    if (typeof key !== 'string' || !(isBackupKey(server.serverId, key) || isAcceptedKey(key))) {
+      return json(400, { message: 'Invalid key' });
+    }
     if (!(await store.clearRestore(server.serverId, instanceId, key))) {
       return json(409, { message: `No restore of ${key} pending for server ${server.serverId} on instance ${instanceId}` });
     }

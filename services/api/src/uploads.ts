@@ -1,5 +1,6 @@
 import { GetObjectCommand, HeadObjectCommand, NoSuchKey, NotFound, S3Client } from '@aws-sdk/client-s3';
 import { createPresignedPost } from '@aws-sdk/s3-presigned-post';
+import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { newId as defaultNewId } from '@hearth/core';
 import {
   GAMES,
@@ -15,17 +16,19 @@ import {
 } from '@hearth/shared';
 import { OperationError } from './servers/operations.js';
 
-// The form is short-lived: the client uploads right after asking for it.
+// Forms and download links are short-lived: they're used right after they're made.
 const FORM_SECONDS = 900;
 
-/** The uploads bucket, as the admin routes see it. */
+/** The uploads bucket, as the admin and agent routes see it. */
 export interface UploadStorage {
   /** A presigned POST form for `landingKey(game, uploadId)` that S3 refuses for files over the cap. */
   form(game: GameId, uploadId: string): Promise<Pick<CreateUploadResponse, 'url' | 'fields' | 'expiresAt'>>;
   /** Where repack is with an upload, read from the bucket; undefined if there's no trace of it. */
   status(uploadId: string): Promise<UploadStatus | undefined>;
-  /** Where an accepted upload's repacked archive is, to copy it from. */
+  /** Where an accepted upload's repacked archive is. */
   accepted(uploadId: string): { bucket: string; key: string };
+  /** A short-lived link that downloads `key` (an accepted upload) and nothing else. */
+  downloadUrl(key: string): Promise<string>;
 }
 
 /**
@@ -56,6 +59,9 @@ export function s3UploadStorage(opts: {
 
   return {
     accepted: (uploadId) => ({ bucket, key: acceptedKey(uploadId) }),
+
+    // Signed by the caller (the agent config Lambda) when the agent fetches its config, like a backup's link.
+    downloadUrl: (key) => getSignedUrl(client, new GetObjectCommand({ Bucket: bucket, Key: key }), { expiresIn: FORM_SECONDS }),
 
     async status(uploadId) {
       const accepted = await head(acceptedKey(uploadId));

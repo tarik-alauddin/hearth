@@ -80,6 +80,7 @@ const uploads = uploadOperations({
     form: async () => ({ url: 'https://bucket/', fields: { key: 'k' }, expiresAt: 'later' }),
     status: async (uploadId) => (uploadId === UPLOAD ? { uploadId, status: 'repacking' } : undefined),
     accepted: (uploadId) => ({ bucket: 'uploads', key: `accepted/${uploadId}.tar.gz` }),
+    downloadUrl: async (key) => `https://uploads.example/${key}`,
   },
   newId: () => 'U1',
 });

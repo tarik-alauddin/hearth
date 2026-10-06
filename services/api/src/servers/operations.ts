@@ -4,7 +4,6 @@ import {
   DEFAULT_AGENT_CHANNEL,
   GAMES,
   MAX_IDLE_STOP_MINUTES,
-  backupKey,
   backupPrefix,
   isAgentChannel,
   isUploadId,
@@ -46,7 +45,7 @@ export class OperationError extends Error {
 export interface OperationDeps {
   store: Pick<ServersStore, 'getServer' | 'listServers' | 'createServer' | 'transition' | 'updateSettings'>;
   workflows: Workflows;
-  backups: Pick<BackupStorage, 'list' | 'copyIn'>;
+  backups: Pick<BackupStorage, 'list'>;
   uploads: Pick<UploadStorage, 'status' | 'accepted'>;
   versions: GameVersions;
   homeRegion: string;
@@ -153,14 +152,14 @@ export function serverOperations({
       const serverId = newId(at);
       const operationId = newId(at);
 
-      // Starting from an upload: copy it in as the server's first backup, and restore that on the
-      // first start (M5's restore path). It's then kept like any backup, not lost when the upload expires.
-      let restore: Pick<ServerRecord, 'restoreKey' | 'restoreRequestedAt'> = {};
-      if (upload !== undefined) {
-        const key = backupKey(serverId, at);
-        await backups.copyIn(uploads.accepted(upload), key);
-        restore = { restoreKey: key, restoreRequestedAt: at.toISOString() };
-      }
+      // Starting from an upload: restore the accepted file, straight from the uploads bucket, on the
+      // first start (M5's restore path). No copy: copying gigabytes doesn't fit in an API request.
+      // The server's first stop backs it up; an upload left unstarted past its 7-day expiry fails
+      // that first start, visibly.
+      const restore: Pick<ServerRecord, 'restoreKey' | 'restoreSource' | 'restoreRequestedAt'> =
+        upload === undefined
+          ? {}
+          : { restoreKey: uploads.accepted(upload).key, restoreSource: 'upload', restoreRequestedAt: at.toISOString() };
 
       await store.createServer({
         ...restore,
@@ -312,6 +311,7 @@ export function serverOperations({
         from: [server.status],
         to: server.status,
         set: { restoreKey: wanted, restoreRequestedAt: now().toISOString() },
+        remove: ['restoreSource'], // a backup, replacing any pending upload
       });
       if (!ok) throw new OperationError(409, `Server ${serverId} changed state; try again`);
       return requireServer(serverId);
@@ -327,7 +327,7 @@ export function serverOperations({
       const ok = await store.transition(serverId, {
         from: [server.status],
         to: server.status,
-        remove: ['restoreKey', 'restoreRequestedAt'],
+        remove: ['restoreKey', 'restoreSource', 'restoreRequestedAt'],
       });
       if (!ok) throw new OperationError(409, `Server ${serverId} is no longer stopped; the restore can't be cancelled`);
       return requireServer(serverId);
