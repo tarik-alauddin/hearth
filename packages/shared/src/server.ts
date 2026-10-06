@@ -72,7 +72,7 @@ export interface ServerRecord {
   lastOperationId?: string; // the latest create/start/stop claim; names its workflow execution
   // Written by the lifecycle workflows.
   statusMessage?: string; // why the server is FAILED
-  lastStopClean?: boolean; // the agent reported a clean stop (world saved) during the last stop
+  lastStopClean?: boolean; // the agent reported a clean stop (game saved) during the last stop
   stopReason?: string; // why the last stop happened, when not asked for (e.g. "no players for 30 minutes")
   // The newest backup, recorded when the agent finishes uploading it.
   lastBackupKey?: string;

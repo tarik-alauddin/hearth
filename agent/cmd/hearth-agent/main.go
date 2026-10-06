@@ -51,7 +51,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	env := flags.String("env", os.Getenv("HEARTH_ENV"), "environment (dev, stage or prod); used to find the API")
 	homeRegion := flags.String("home-region", envOr("HEARTH_HOME_REGION", "us-west-2"), "region of the Hearth API")
 	apiURL := flags.String("api-url", os.Getenv("HEARTH_API_URL"), "API endpoint; read from SSM /hearth/<env>/api-url if empty")
-	dataDir := flags.String("data-dir", envOr("HEARTH_DATA_DIR", "/srv/hearth"), "root of the world data volume")
+	dataDir := flags.String("data-dir", envOr("HEARTH_DATA_DIR", "/srv/hearth"), "root of the game data volume")
 	binDir := flags.String("bin-dir", envOr("HEARTH_BIN_DIR", "/opt/hearth/bin"), "where the bootstrap keeps agent binaries")
 	stateDir := flags.String("state-dir", envOr("HEARTH_STATE_DIR", "/var/lib/hearth"), "agent health records shared with the bootstrap")
 	if err := flags.Parse(args); err != nil {

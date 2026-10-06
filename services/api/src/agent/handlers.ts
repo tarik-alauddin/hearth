@@ -110,7 +110,7 @@ export function agentHandlers({
     }
   }
 
-  /** POST /agent/restored: the world now holds the requested backup; clear the request. */
+  /** POST /agent/restored: the game data now holds the requested backup; clear the request. */
   async function restored(event: Event): Promise<Result> {
     const body = parseJsonObject(event);
     if (typeof body === 'string') return json(400, { message: body });

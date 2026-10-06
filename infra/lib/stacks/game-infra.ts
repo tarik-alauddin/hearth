@@ -144,15 +144,15 @@ export class GameInfraStack extends HearthStack {
     this.launchTemplates = launchTemplates as Record<GameId, LaunchTemplate>;
 
     // The stop workflow stops the agent this way while the instance is still fully up: the agent
-    // saves the world and stops the game (the same path as an OS shutdown), with time to spare.
-    // The marker file asks the agent to back the world up too, which only this path does.
+    // saves the game and stops it (the same path as an OS shutdown), with time to spare.
+    // The marker file asks the agent to back the game data up too, which only this path does.
     this.stopAgentDocument = new CfnDocument(this, 'StopAgentDocument', {
       name: `hearth-${env}-stop-agent`,
       documentType: 'Command',
       updateMethod: 'NewVersion',
       content: {
         schemaVersion: '2.2',
-        description: 'Hearth: stop the game agent, which saves the world, stops the game and backs the world up.',
+        description: 'Hearth: stop the game agent, which saves the game, stops it and backs up its data.',
         mainSteps: [
           {
             action: 'aws:runShellScript',
@@ -217,7 +217,7 @@ export class GameInfraStack extends HearthStack {
           }),
         },
         {
-          // The world lives here. Kept on termination; archiving deletes it only after a verified backup.
+          // The game data lives here. Kept on termination; archiving deletes it only after a verified backup.
           deviceName: DATA_DEVICE_NAME,
           volume: BlockDeviceVolume.ebs(game.dataVolumeGiB, {
             volumeType: EbsDeviceVolumeType.GP3,

@@ -13,7 +13,7 @@ export interface GameDefinition {
   readonly protocol: 'tcp' | 'udp';
   /** Graviton instance type used unless the server overrides it. */
   readonly defaultInstanceType: string;
-  /** Default size of the world data volume. */
+  /** Default size of the game data volume. */
   readonly dataVolumeGiB: number;
 }
 

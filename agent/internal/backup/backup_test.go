@@ -88,8 +88,8 @@ func (f *fakeS3) AbortMultipartUpload(context.Context, *s3.AbortMultipartUploadI
 	return &s3.AbortMultipartUploadOutput{}, nil
 }
 
-// world lays out a game data directory: a world bigger than several parts, plus files to exclude.
-func world(t *testing.T) (dir string, region []byte) {
+// gameData lays out a game data directory: a save file bigger than several parts, plus files to exclude.
+func gameData(t *testing.T) (dir string, region []byte) {
 	t.Helper()
 	dir = t.TempDir()
 	region = make([]byte, 5000) // random, so it doesn't compress below a few parts
@@ -134,7 +134,7 @@ func untar(t *testing.T, archive []byte) map[string]string {
 }
 
 func TestBackupStreamsTheArchiveInPartsAndRecordsIt(t *testing.T) {
-	dir, region := world(t)
+	dir, region := gameData(t)
 	if err := os.Symlink("world", filepath.Join(dir, "current")); err != nil {
 		t.Fatal(err)
 	}
@@ -179,7 +179,7 @@ func TestBackupStreamsTheArchiveInPartsAndRecordsIt(t *testing.T) {
 }
 
 func TestFailedUploadIsAbortedAndNotRecorded(t *testing.T) {
-	dir, _ := world(t)
+	dir, _ := gameData(t)
 	store, apiFake := &fakeS3{failPart: 2}, &fakeAPI{}
 	b := &Backuper{API: apiFake, NewS3: func(api.BackupTarget) S3 { return store }, PartSize: 1024}
 

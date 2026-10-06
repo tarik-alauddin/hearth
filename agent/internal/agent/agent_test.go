@@ -415,7 +415,7 @@ func TestFailedBackupStillStopsCleanly(t *testing.T) {
 		t.Fatalf("a failed backup should not fail the stop: %v", err)
 	}
 	if states := h.api.states(); states[len(states)-1] != "stopped" {
-		t.Errorf("reported %v; the world is saved, so the stop is clean", states)
+		t.Errorf("reported %v; the game is saved, so the stop is clean", states)
 	}
 	if msg := h.api.lastMessage(); !strings.Contains(msg, "backup failed: S3 said no") {
 		t.Errorf("message %q should say the backup failed", msg)
@@ -457,7 +457,7 @@ func TestRestoresBeforeStartingTheGameThenClearsTheRequest(t *testing.T) {
 	eventually(t, "ready", func() bool { return slices.Contains(h.api.states(), "ready") })
 	_ = h.stop(t)
 	if got := h.rt.events[:2]; !slices.Equal(got, []string{"restore https://s3/link /srv/hearth/fake", "start"}) {
-		t.Errorf("events %v: the world should be restored before the game starts", h.rt.events)
+		t.Errorf("events %v: the data should be restored before the game starts", h.rt.events)
 	}
 	if !slices.Equal(h.api.restored, []string{restoreKey}) {
 		t.Errorf("restored %v", h.api.restored)

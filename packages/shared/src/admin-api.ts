@@ -58,7 +58,7 @@ export interface SetVersionRequest {
 export interface RestoreRequest {
   /** A key from the backups list, or just its file name; defaults to the newest backup. */
   key?: string;
-  /** Restore even though the last stop wasn't clean (the current world may be in no backup). */
+  /** Restore even though the last stop wasn't clean (the current game data may be in no backup). */
   force?: boolean;
 }
 

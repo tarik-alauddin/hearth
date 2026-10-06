@@ -29,7 +29,7 @@ func (r *recorder) run(_ context.Context, args ...string) (string, error) {
 func TestStart(t *testing.T) {
 	rec := &recorder{}
 	d := &Docker{run: rec.run}
-	data := filepath.Join(t.TempDir(), "world")
+	data := filepath.Join(t.TempDir(), "data")
 
 	err := d.Start(context.Background(), Spec{
 		Name:  "hearth-game",

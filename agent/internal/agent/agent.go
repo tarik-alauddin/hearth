@@ -48,7 +48,7 @@ var (
 	ErrNeverHealthy = errors.New("agent never reached the API")
 )
 
-// Backups backs the world up (see package backup).
+// Backups backs the game data up (see package backup).
 type Backups interface {
 	Backup(ctx context.Context, spec game.BackupSpec) (backup.Result, error)
 }
@@ -66,13 +66,13 @@ type Options struct {
 	API     API
 	Runtime Runtime
 	Games   map[string]game.Factory
-	// DataDir is the root of the world data volume.
+	// DataDir is the root of the game data volume.
 	DataDir   string
 	MemoryMiB int
-	// StopTimeout bounds the graceful stop (save the world, stop the container, back up) after
+	// StopTimeout bounds the graceful stop (save the game, stop the container, back up) after
 	// shutdown is requested.
 	StopTimeout time.Duration
-	// Backups, if set, backs the world up after the game stops, when BackupMarker exists then.
+	// Backups, if set, backs the game data up after the game stops, when BackupMarker exists then.
 	Backups Backups
 	// Restore replaces dir with the backup at url (see backup.Restore, the default).
 	Restore func(ctx context.Context, url, dir string) error
@@ -80,7 +80,7 @@ type Options struct {
 	// stops (an OS shutdown) don't create it: EC2 may not wait long enough for an upload.
 	BackupMarker string
 	// ReadyTimeout bounds how long the game may take to accept players. Defaults to 15 minutes,
-	// enough for a first start that downloads the server and generates a world.
+	// enough for a first start that downloads the server and generates its data.
 	ReadyTimeout time.Duration
 	// PollInterval is how often readiness is checked. Defaults to 5 seconds.
 	PollInterval time.Duration
@@ -221,7 +221,7 @@ func (a *Agent) Run(ctx context.Context) error {
 	}()
 
 	ready := a.waitReady(ctx, adapter, exited)
-	// Back up only a world the game got as far as loading; even if it later crashed, what's on
+	// Back up only data the game got as far as loading; even if it later crashed, what's on
 	// disk is the newest copy there is.
 	var backupSpec *game.BackupSpec
 	if ready {
@@ -264,9 +264,9 @@ func (a *Agent) fetchConfig(ctx context.Context) (game.Config, error) {
 	}
 }
 
-// restore replaces the world with the requested backup, before the game starts, then clears the
-// request. Any failure fails the start, leaving the world as it was (unless only the clearing
-// failed: the world is restored, but the request would restore it again on the next start).
+// restore replaces the game data with the requested backup, before the game starts, then clears the
+// request. Any failure fails the start, leaving the data as it was (unless only the clearing
+// failed: the data is restored, but the request would restore it again on the next start).
 func (a *Agent) restore(ctx context.Context, cfg game.Config, adapter game.Adapter) error {
 	key, dir := cfg.Restore.Key, adapter.Backup(cfg).Dir
 	a.log.Info("restoring backup", "key", key, "dir", dir)
@@ -459,7 +459,7 @@ func (p *playerCount) record(log *slog.Logger, n int, err error) {
 	p.known, p.n = true, n
 }
 
-// shutdown saves the world (if the game is running with one loaded), stops the container, then
+// shutdown saves the game (if it got as far as loading its data), stops the container, then
 // backs up backupSpec if the stop asked for it. It runs on its own deadline: ctx is already
 // cancelled, but the save and backup must still finish.
 func (a *Agent) shutdown(ctx context.Context, spec container.Spec, adapter game.Adapter, save bool, backupSpec *game.BackupSpec) error {
@@ -476,7 +476,7 @@ func (a *Agent) shutdown(ctx context.Context, spec container.Spec, adapter game.
 			a.log.Error("saving before stop failed", "err", err)
 			errs = append(errs, fmt.Errorf("save: %w", err))
 		} else {
-			a.log.Info("world saved")
+			a.log.Info("game saved")
 		}
 	}
 	if err := a.Runtime.Stop(stopCtx, ContainerName, spec.StopTimeout); err != nil {
@@ -489,12 +489,12 @@ func (a *Agent) shutdown(ctx context.Context, spec container.Spec, adapter game.
 		return err
 	}
 
-	// The world is saved, so a failed backup is reported but doesn't make the stop an error.
+	// The game is saved, so a failed backup is reported but doesn't make the stop an error.
 	msg := ""
 	if wantBackup && backupSpec != nil && a.Backups != nil {
 		if err := a.backup(stopCtx, *backupSpec); err != nil {
 			a.log.Error("backup failed", "err", err)
-			msg = "world saved, but the backup failed: " + err.Error()
+			msg = "game saved, but the backup failed: " + err.Error()
 		}
 	}
 	a.report(stopCtx, "stopped", msg)
@@ -507,7 +507,7 @@ func (a *Agent) shutdown(ctx context.Context, spec container.Spec, adapter game.
 const reportReserve = 15 * time.Second
 
 func (a *Agent) backup(ctx context.Context, spec game.BackupSpec) error {
-	a.report(ctx, "stopping", "backing up the world")
+	a.report(ctx, "stopping", "backing up the game data")
 	if deadline, ok := ctx.Deadline(); ok {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithDeadline(ctx, deadline.Add(-min(reportReserve, a.StopTimeout/4)))
@@ -518,7 +518,7 @@ func (a *Agent) backup(ctx context.Context, spec game.BackupSpec) error {
 	if err != nil {
 		return err
 	}
-	a.log.Info("world backed up", "key", res.Key, "bytes", res.Bytes, "took", time.Since(started).Round(time.Millisecond))
+	a.log.Info("game data backed up", "key", res.Key, "bytes", res.Bytes, "took", time.Since(started).Round(time.Millisecond))
 	return nil
 }
 

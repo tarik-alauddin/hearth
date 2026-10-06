@@ -64,7 +64,7 @@ export async function repack(input: string, output: string, rules: UploadRules):
   }
 }
 
-/** Every folder the files sit in, parents before children ("world/", "world/region/", …). */
+/** Every folder the files sit in, parents before children ("dest/", "dest/a/", …). */
 export function folders(files: readonly string[]): string[] {
   const dirs = new Set<string>();
   for (const file of files) {

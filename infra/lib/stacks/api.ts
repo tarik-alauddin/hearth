@@ -111,7 +111,7 @@ export class ApiStack extends HearthStack {
     // Only the credentials function may assume the writer role.
     const backupWriter = new Role(this, 'BackupWriter', {
       assumedBy: backupCredentialsFunction.grantPrincipal,
-      description: `Hearth ${env}: writes world backups, one key per session`,
+      description: `Hearth ${env}: writes game data backups, one key per session`,
     });
     backupWriter.addToPolicy(
       new PolicyStatement({ actions: ['s3:PutObject', 's3:AbortMultipartUpload'], resources: [serverBackups] }),

@@ -88,7 +88,7 @@ export interface TaskDeps {
   metrics?: Metrics;
 }
 
-/** The device name of the world volume; see GameInfraStack. */
+/** The device name of the data volume; see GameInfraStack. */
 export const DATA_DEVICE = '/dev/sdf';
 
 export function workflowTasks({ env, store, ec2, ssm, gameInfra, now = () => new Date(), metrics = emfMetrics(env) }: TaskDeps) {
@@ -148,7 +148,7 @@ export function workflowTasks({ env, store, ec2, ssm, gameInfra, now = () => new
       return { serverId, since };
     },
 
-    /** Create: once the instance runs, record and tag its world volume. */
+    /** Create: once the instance runs, record and tag its data volume. */
     async recordVolume(state: WorkflowState): Promise<WorkflowState> {
       const record = await server(state.serverId, 'STARTING');
       const instanceId = requireInstance(record);
@@ -196,7 +196,7 @@ export function workflowTasks({ env, store, ec2, ssm, gameInfra, now = () => new
 
     /**
      * Stop, first: stop the agent through Run Command while the instance is fully up. The agent saves
-     * the world and stops the game, as it would during an OS shutdown, and reports `stopped`.
+     * the game and stops it, as it would during an OS shutdown, and reports `stopped`.
      */
     async stopAgent({ serverId }: WorkflowState): Promise<WorkflowState> {
       const record = await server(serverId, 'STOPPING');
@@ -246,7 +246,7 @@ export function workflowTasks({ env, store, ec2, ssm, gameInfra, now = () => new
       return state;
     },
 
-    /** Stop: STOPPING → STOPPED, noting whether the agent reported a clean stop (world saved). */
+    /** Stop: STOPPING → STOPPED, noting whether the agent reported a clean stop (game saved). */
     async markStopped(state: WorkflowState): Promise<WorkflowState> {
       const record = await server(state.serverId);
       const clean = record.agentState === 'stopped' && (record.agentReportedAt ?? '') > (state.since ?? '');

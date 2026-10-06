@@ -20,7 +20,7 @@ type Config struct {
 	// Agent is the release this server's channel points at (AgentTarget in packages/shared); nil
 	// until the channel has one.
 	Agent *AgentTarget `json:"agent,omitempty"`
-	// Restore is a requested restore (RestoreTarget in packages/shared): replace the world with
+	// Restore is a requested restore (RestoreTarget in packages/shared): replace the game data with
 	// this backup before starting the game. Nil when none is pending.
 	Restore *RestoreTarget `json:"restore,omitempty"`
 	// IdleStopMinutes is how long the game may run with nobody playing before the agent asks for a
@@ -28,7 +28,7 @@ type Config struct {
 	IdleStopMinutes *int `json:"idleStopMinutes,omitempty"`
 
 	// Filled in by the agent, not the API.
-	DataDir   string `json:"-"` // root of the world data volume, e.g. /srv/hearth
+	DataDir   string `json:"-"` // root of the game data volume, e.g. /srv/hearth
 	MemoryMiB int    `json:"-"` // instance memory; adapters size the game's heap from it
 }
 
@@ -71,7 +71,7 @@ type Adapter interface {
 	// Ready makes one attempt to check that players can connect; nil means ready.
 	// The agent calls it repeatedly until it succeeds or the start times out.
 	Ready(ctx context.Context) error
-	// Save flushes the world to disk. The agent calls it before stopping the container.
+	// Save flushes the game data to disk. The agent calls it before stopping the container.
 	Save(ctx context.Context) error
 	// Players returns how many players are connected. The agent calls it periodically while the
 	// game is ready, to tell when nobody is playing.

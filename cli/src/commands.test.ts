@@ -75,7 +75,7 @@ describe('commands', () => {
     await expect(run(api).cmd.start('s1', true)).rejects.toBeInstanceOf(CommandError);
   });
 
-  it('stop reports whether the world was saved', async () => {
+  it('stop reports whether the game was saved', async () => {
     const { api } = fakeApi([{ status: 'STOPPING' }, { status: 'STOPPED', lastStopClean: false }]);
     const { out, cmd } = run(api);
     await cmd.stop('s1', true);
@@ -83,11 +83,11 @@ describe('commands', () => {
   });
 
   it('stop passes on what went wrong in an otherwise clean stop', async () => {
-    const agentMessage = 'world saved, but the backup failed: upload: timeout';
+    const agentMessage = 'game saved, but the backup failed: upload: timeout';
     const { api } = fakeApi([{ status: 'STOPPING' }, { status: 'STOPPED', lastStopClean: true, agentMessage }]);
     const { out, cmd } = run(api);
     await cmd.stop('s1', true);
-    expect(out.at(-1)).toBe(`Stopped. World saved. Agent: ${agentMessage}`);
+    expect(out.at(-1)).toBe(`Stopped. Game saved. Agent: ${agentMessage}`);
   });
 
   it('lists backups as a table, or says there are none', async () => {
@@ -126,7 +126,7 @@ describe('commands', () => {
       '/admin/servers/s1/restore {"key":"20261004T120000Z.tar.gz","force":true}',
       '/admin/servers/s1/restore/cancel null',
     ]);
-    expect(out[0]).toBe('s1 will restore servers/s1/20261004T120000Z.tar.gz on its next start, replacing the current world.');
+    expect(out[0]).toBe('s1 will restore servers/s1/20261004T120000Z.tar.gz on its next start, replacing the current game data.');
     expect(out.at(-1)).toBe('No restore pending for s1.');
   });
 
@@ -242,7 +242,7 @@ describe('commands', () => {
     }
 
     // Built with the running OS's separator: basename() splits on "\" only on Windows, and CI runs Linux.
-    const file = join('worlds', 'MyWorld.zip');
+    const file = join('uploads', 'MyWorld.zip');
     const opts = { game: 'minecraft-java', version: '26.3', file, wait: false };
 
     it('uploads, waits for repack to accept it, then creates from it', async () => {

@@ -155,13 +155,13 @@ describe('workflow tasks', () => {
       expect(ec2.calls).toEqual([]);
     });
 
-    it('records and tags the world volume once the instance runs', async () => {
+    it('records and tags the data volume once the instance runs', async () => {
       await tasks.launchInstance({ serverId: 's1' });
       await expect(tasks.recordVolume({ serverId: 's1' })).rejects.toBeInstanceOf(NotReady);
-      ec2.instances['i-new'] = { state: 'running', volumes: { '/dev/xvda': 'vol-root', '/dev/sdf': 'vol-world' } };
+      ec2.instances['i-new'] = { state: 'running', volumes: { '/dev/xvda': 'vol-root', '/dev/sdf': 'vol-data' } };
       await tasks.recordVolume({ serverId: 's1' });
-      expect(server.volumeId).toBe('vol-world');
-      expect(ec2.tags['vol-world']).toEqual({ serverId: 's1' });
+      expect(server.volumeId).toBe('vol-data');
+      expect(ec2.tags['vol-data']).toEqual({ serverId: 's1' });
       expect(ec2.tags['vol-root']).toBeUndefined();
     });
   });

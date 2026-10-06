@@ -92,7 +92,7 @@ func (b *Backuper) Backup(ctx context.Context, spec game.BackupSpec) (Result, er
 // Archive writes spec as a gzipped tar, with paths relative to spec.Dir. It keeps directories,
 // regular files and symlinks, with their modes and owners; anything else (sockets, pipes) is skipped.
 func Archive(w io.Writer, spec game.BackupSpec) error {
-	// Fastest compression: the upload is on the clock, and game worlds are often compressed already.
+	// Fastest compression: the upload is on the clock, and game data is often compressed already.
 	gz, err := gzip.NewWriterLevel(w, gzip.BestSpeed)
 	if err != nil {
 		return err

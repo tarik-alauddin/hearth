@@ -1,4 +1,4 @@
-// World backups in the backup bucket: one gzipped tar per backup, under each server's own prefix.
+// Game data backups in the backup bucket: one gzipped tar per backup, under each server's own prefix.
 
 /** How many backups each server keeps; older ones are deleted when a new one is recorded. */
 export const BACKUPS_KEPT = 10;
