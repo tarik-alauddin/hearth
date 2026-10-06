@@ -308,6 +308,54 @@ describe('server operations', () => {
     });
   });
 
+  describe('destroy', () => {
+    it('claims a STOPPED server as DESTROYING and starts the destroy workflow', async () => {
+      const { store, servers } = fakeStore([server({ status: 'STOPPED', instanceState: 'stopped' })]);
+      expect(await ops(store).destroyServer('s1')).toEqual({ serverId: 's1', status: 'DESTROYING' });
+      expect(servers.get('s1')?.status).toBe('DESTROYING');
+      expect(started[0]?.workflow).toBe('destroy');
+    });
+
+    it.each([
+      ['its instance stopped', { instanceState: 'stopped' as const }],
+      ['no instance at all', { instanceId: undefined }],
+    ])('destroys a FAILED server with %s', async (_, overrides) => {
+      const { store } = fakeStore([server({ status: 'FAILED', ...overrides })]);
+      expect((await ops(store).destroyServer('s1')).status).toBe('DESTROYING');
+    });
+
+    it.each([
+      ['RUNNING', {}],
+      ['STARTING', {}],
+      ['STOPPING', {}],
+      ['PROVISIONING', {}],
+      ['FAILED', { instanceState: 'running' as const }],
+      ['FAILED', { instanceState: 'pending' as const }],
+    ])('never destroys a %s server whose instance may be up (%j)', async (status, overrides) => {
+      const { store, servers } = fakeStore([server({ status: status as ServerRecord['status'], ...overrides })]);
+      await expect(ops(store).destroyServer('s1')).rejects.toThrow(/stop it before destroying it/);
+      expect(servers.get('s1')?.status).toBe(status);
+      expect(started).toEqual([]);
+    });
+
+    it('does nothing more while a destroy is under way', async () => {
+      const { store } = fakeStore([server({ status: 'DESTROYING' })]);
+      expect((await ops(store).destroyServer('s1')).unchanged).toBe(true);
+      expect(started).toEqual([]);
+    });
+
+    it('puts the server back if the workflow cannot start', async () => {
+      failWorkflows = true;
+      const { store, servers } = fakeStore([server({ status: 'STOPPED' })]);
+      await expect(ops(store).destroyServer('s1')).rejects.toThrow();
+      expect(servers.get('s1')?.status).toBe('STOPPED');
+    });
+
+    it('returns 404 for an unknown server', async () => {
+      await expect(ops(fakeStore().store).destroyServer('nope')).rejects.toMatchObject({ statusCode: 404 });
+    });
+  });
+
   describe('idle stop', () => {
     it('stops a running server through the stop workflow, recording why', async () => {
       const { store, servers } = fakeStore([server({ status: 'RUNNING' })]);

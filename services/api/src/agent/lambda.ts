@@ -34,7 +34,7 @@ const handlers = agentHandlers({
   // route's function gets the stop workflow's ARN (and permission to start it).
   operations: serverOperations({
     store,
-    workflows: stepFunctionsWorkflows({ create: '', start: '', stop: process.env.STOP_WORKFLOW_ARN ?? '' }),
+    workflows: stepFunctionsWorkflows({ create: '', start: '', stop: process.env.STOP_WORKFLOW_ARN ?? '', destroy: '' }),
     backups,
     uploads, // never used here: agents don't create servers
     versions: publishedVersions(),

@@ -1,7 +1,7 @@
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import type { FleetReport, ServerRecord, UploadStatus } from '@hearth/shared';
-import type { Api } from './client.js';
+import { ApiError, type Api } from './client.js';
 import { CommandError, commands } from './commands.js';
 
 function server(overrides: Partial<ServerRecord>): ServerRecord {
@@ -201,6 +201,93 @@ describe('commands', () => {
     const { out, cmd } = run(api);
     await cmd.status('s1');
     expect(out).toContain('last backup 2026-10-04T12:01:00.000Z (3.0 MiB)');
+  });
+
+  describe('destroy', () => {
+    /** An API whose GET walks through `states` (then 404: destroyed), recording POSTs. */
+    function destroyApi(states: Partial<ServerRecord>[]) {
+      const posts: string[] = [];
+      let i = 0;
+      const api = {
+        get: async () => {
+          const state = states[i++];
+          if (!state) throw new ApiError(404, 'No server s1');
+          return server(state);
+        },
+        post: async (path: string) => {
+          posts.push(path);
+          return { serverId: 's1', status: 'DESTROYING' };
+        },
+      } as unknown as Api;
+      return { api, posts };
+    }
+
+    function runDestroy(api: Api, answer = 's1') {
+      const out: string[] = [];
+      const asked: string[] = [];
+      const cmd = commands({
+        api,
+        print: (l) => out.push(l),
+        sleep: async () => {},
+        pollMs: 1,
+        timeoutMs: 100,
+        ask: async (q) => (asked.push(q), answer),
+      });
+      return { out, asked, cmd };
+    }
+
+    const stopped = { status: 'STOPPED' as const, lastBackupAt: '2026-10-06T10:00:00.000Z' };
+
+    it('shows what goes, asks for the ID back, destroys, and follows it until gone', async () => {
+      const { api, posts } = destroyApi([stopped, { status: 'DESTROYING' }]);
+      const { out, asked, cmd } = runDestroy(api);
+      await cmd.destroy('s1', { yes: false, wait: true });
+      expect(asked).toEqual(['Type the server ID to destroy it: ']);
+      expect(posts).toEqual(['/admin/servers/s1/destroy']);
+      expect(out).toEqual([
+        'This destroys s1 (minecraft-java 1.21.4, STOPPED): its instance, data volume and record.',
+        'Its backups are kept; the newest is from 2026-10-06T10:00:00.000Z.',
+        'Destroying s1.',
+        '  DESTROYING',
+        'Destroyed. Its backups stay in the backups bucket under servers/s1/.',
+      ]);
+    });
+
+    it('warns plainly when there are no backups', async () => {
+      const { api } = destroyApi([{ status: 'STOPPED' }]);
+      const { out, cmd } = runDestroy(api);
+      await cmd.destroy('s1', { yes: true, wait: false });
+      expect(out[1]).toBe('It has no backups: its game data will be gone for good.');
+    });
+
+    it("doesn't destroy when the typed ID doesn't match", async () => {
+      const { api, posts } = destroyApi([stopped]);
+      const { cmd } = runDestroy(api, 's2');
+      await expect(cmd.destroy('s1', { yes: false, wait: false })).rejects.toThrow('Not destroyed');
+      expect(posts).toEqual([]);
+    });
+
+    it('skips the question with --yes', async () => {
+      const { api, posts } = destroyApi([stopped]);
+      const { asked, cmd } = runDestroy(api);
+      await cmd.destroy('s1', { yes: true, wait: false });
+      expect(asked).toEqual([]);
+      expect(posts).toEqual(['/admin/servers/s1/destroy']);
+    });
+
+    it.each(['RUNNING', 'STARTING', 'STOPPING'] as const)('refuses a %s server before asking anything', async (status) => {
+      const { api, posts } = destroyApi([{ status }]);
+      const { asked, cmd } = runDestroy(api);
+      await expect(cmd.destroy('s1', { yes: false, wait: false })).rejects.toThrow(/stop it before destroying it/);
+      expect(asked).toEqual([]);
+      expect(posts).toEqual([]);
+    });
+
+    it('fails with the reason if the destroy ends FAILED', async () => {
+      const { api } = destroyApi([stopped, { status: 'DESTROYING' }, { status: 'FAILED', statusMessage: 'Error: boom' }]);
+      const { cmd } = runDestroy(api);
+      await expect(cmd.destroy('s1', { yes: true, wait: true })).rejects.toThrow('Failed: Error: boom');
+    });
   });
 
   describe('create --upload', () => {

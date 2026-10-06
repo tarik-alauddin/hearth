@@ -17,6 +17,7 @@ const USAGE = `Usage: hearth <command> [options]
   restore <serverId> --cancel              cancel a requested restore
   start  <serverId>
   stop   <serverId>
+  destroy <serverId> [--yes]               delete a stopped server (instance, data volume, record); keeps its backups
   set-channel <serverId> <canary|stable>   agent releases to follow, from the next start
   set-version <serverId> <version>         a newer game release, from the next start (forward only)
   set-idle <serverId> <minutes|off>        stop after this long with nobody playing, from the next start
@@ -44,6 +45,7 @@ async function main(argv: string[]): Promise<number> {
       upload: { type: 'string' },
       force: { type: 'boolean', default: false },
       cancel: { type: 'boolean', default: false },
+      yes: { type: 'boolean', default: false },
       help: { type: 'boolean', short: 'h', default: false },
     },
   });
@@ -93,6 +95,9 @@ async function main(argv: string[]): Promise<number> {
       return 0;
     case 'start':
       await run.start(needId(), wait);
+      return 0;
+    case 'destroy':
+      await run.destroy(needId(), { yes: values.yes, wait });
       return 0;
     case 'stop':
       await run.stop(needId(), wait);

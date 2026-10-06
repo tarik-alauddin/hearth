@@ -47,22 +47,25 @@ as part of each PR. The repo layout and commands are in [README.md](README.md).
 | M5 Game updates and backups | Done (PR1–PR9; follow-ups under Deferred) |
 | M6 Idle shutdown | Done (PR1–PR4; join events from the log under Deferred) |
 | M7 Move your world | Done (PR1–PR4; tested on dev with a real world) |
-| Before Phase 2 | In progress: PR1–PR2 done; PR3 (destroy workflow) in review |
+| Before Phase 2 | In progress: PR1–PR2 done; PR3 (destroy workflow) testing; PR4 (destroy command) in review |
 
 **Before Phase 2 plan** (Phase 1 ends with M7; then the UI, per the Architecture doc):
 1. M7 docs: testing guide section for uploads; Architecture roadmap and System map close-out.
 2. Neutral wording: "world" out of game-neutral code; agent release. Words: "game data" (what's
    stored), "save the game", "data volume". Kept: Minecraft-specific code (adapter, upload rules,
    `TestMinecraft`, repack's Minecraft tests) and test fixture paths like `world/region/…`.
-3. Destroy, part 1 (in review): `hearth-<env>-destroy-server` and its `DestroyTasks` λ, the only
+3. Destroy, part 1 (testing): `hearth-<env>-destroy-server` and its `DestroyTasks` λ, the only
    function that can terminate instances, delete volumes (both only tagged `app=hearth`,
    `env=<env>`) and delete records. Status `DESTROYING` (in the fleet check's stuck list). Steps:
    terminate the record's instance and any tagged with the server (noting each one's data volume
    first: volumes survive termination), wait (6 min), delete the volumes (retried while detaching,
    3 min; already gone = done), delete the record only if still `DESTROYING`. Failure → `FAILED`.
    Backups untouched. In the failed-workflow alarm and dashboard. Nothing starts it until PR4.
-4. Destroy, part 2: `POST /admin/servers/{id}/destroy` and `hearth destroy <id>` (type the ID back
-   to confirm; `--yes` skips the prompt); then delete `scripts/dev-server.sh`.
+4. Destroy, part 2 (in review): `destroyServer` claims STOPPED, or FAILED with its instance not
+   running/pending, as `DESTROYING` (anything else: 409 "stop it before destroying it"; repeated
+   while under way: unchanged). `POST /admin/servers/{id}/destroy`. `hearth destroy <id>` shows what
+   goes (warning plainly when there are no backups), asks for the ID back (`--yes` skips), follows
+   until the record 404s. `scripts/dev-server.sh` is deleted.
 5. EC2 events router (the planned fix): each environment sees only its own instances. Before 6.
 6. Stage and prod: deploy, promote the agent, check alarms reach the owner.
 Not a PR: the owner moves off root credentials (IAM Identity Center or an admin user), before 6.

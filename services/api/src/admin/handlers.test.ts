@@ -49,6 +49,11 @@ function fakeOperations(): { calls: string[]; ops: ReturnType<typeof serverOpera
     },
     startServer: async (id: string) => result(id, id === 'running'),
     stopServer: async (id: string) => result(id),
+    destroyServer: async (id: string) => {
+      if (id === 'running') throw new OperationError(409, 'Server running is RUNNING; stop it before destroying it');
+      calls.push(`destroy ${id}`);
+      return { serverId: id, status: 'DESTROYING', ...(id === 'destroying' ? { unchanged: true } : {}) };
+    },
     listBackups: async (id: string) => {
       if (id === 'missing') throw new OperationError(404, 'No server missing');
       return { backups: BACKUPS };
@@ -158,6 +163,14 @@ describe('admin routes', () => {
     expect(JSON.parse(res.body!)).toEqual({ uploadId: UPLOAD, status: 'repacking' });
     expect((await handle(ops)(event('GET /admin/uploads/{id}', { id: '01K6ZZZZZZ0123456789ABCDEF' }))).statusCode).toBe(404);
     expect((await handle(ops)(event('GET /admin/uploads/{id}', { id: '../etc' }))).statusCode).toBe(404);
+  });
+
+  it('destroys: 202 when started, 200 when already under way, 409 for a running server', async () => {
+    const { calls, ops } = fakeOperations();
+    expect((await handle(ops)(event('POST /admin/servers/{id}/destroy', { id: 's1' }))).statusCode).toBe(202);
+    expect((await handle(ops)(event('POST /admin/servers/{id}/destroy', { id: 'destroying' }))).statusCode).toBe(200);
+    expect((await handle(ops)(event('POST /admin/servers/{id}/destroy', { id: 'running' }))).statusCode).toBe(409);
+    expect(calls).toEqual(['destroy s1', 'destroy destroying']);
   });
 
   it('sets the version, answering with the server', async () => {

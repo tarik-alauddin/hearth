@@ -1,5 +1,6 @@
 import { stat } from 'node:fs/promises';
 import { basename } from 'node:path';
+import { createInterface } from 'node:readline/promises';
 import {
   DEFAULT_IDLE_STOP_MINUTES,
   GAME_DEFINITIONS,
@@ -16,7 +17,16 @@ import {
   type UpdateSettingsRequest,
   type UploadStatus,
 } from '@hearth/shared';
-import { sendUpload as defaultSendUpload, type Api } from './client.js';
+import { ApiError, sendUpload as defaultSendUpload, type Api } from './client.js';
+
+async function askOnTerminal(question: string): Promise<string> {
+  const terminal = createInterface({ input: process.stdin, output: process.stdout });
+  try {
+    return await terminal.question(question);
+  } finally {
+    terminal.close();
+  }
+}
 
 export interface CommandDeps {
   api: Api;
@@ -30,6 +40,8 @@ export interface CommandDeps {
   /** Sends a file with an upload form (see client.ts), and reads a file's size. */
   sendUpload?: (form: CreateUploadResponse, file: string) => Promise<void>;
   fileSize?: (file: string) => Promise<number>;
+  /** Asks a question on the terminal and returns the answer. */
+  ask?: (question: string) => Promise<string>;
 }
 
 /** Stop waiting with a non-zero exit; the message says why. */
@@ -44,8 +56,28 @@ export function commands({
   timeoutMs = 20 * 60_000,
   sendUpload = defaultSendUpload,
   fileSize = async (file) => (await stat(file)).size,
+  ask = askOnTerminal,
 }: CommandDeps) {
   const get = (id: string) => api.get<ServerRecord>(`/admin/servers/${encodeURIComponent(id)}`);
+
+  /** Follows a destroy until the server is gone (its record answers 404). Fails if it ends FAILED. */
+  async function waitUntilGone(id: string): Promise<void> {
+    let last = '';
+    for (let waited = 0; waited <= timeoutMs; waited += pollMs) {
+      let server: ServerRecord;
+      try {
+        server = await get(id);
+      } catch (err) {
+        if (err instanceof ApiError && err.status === 404) return;
+        throw err;
+      }
+      if (server.status !== last) print(`  ${server.status}`);
+      last = server.status;
+      if (server.status === 'FAILED') throw new CommandError(`Failed: ${server.statusMessage ?? 'no reason recorded'}`);
+      await sleep(pollMs);
+    }
+    throw new CommandError(`Still not destroyed after ${Math.round(timeoutMs / 60_000)} minutes; check \`hearth status ${id}\``);
+  }
 
   /**
    * Uploads a file of game data and waits for repack to accept it: the same steps the UI takes.
@@ -147,6 +179,33 @@ export function commands({
     },
 
     /** Moves a server to another agent channel; it runs that channel's release from its next start. */
+    /**
+     * Destroys a stopped server: its instance, data volume and record; its backups are kept. Shows
+     * what will go and asks for the server ID back, unless `yes`.
+     */
+    async destroy(id: string, opts: { yes: boolean; wait: boolean }) {
+      const server = await get(id);
+      if (!['STOPPED', 'FAILED', 'DESTROYING'].includes(server.status)) {
+        throw new CommandError(`${id} is ${server.status}; stop it before destroying it (\`hearth stop ${id}\`)`);
+      }
+      if (server.status !== 'DESTROYING') {
+        print(`This destroys ${id} (${server.game} ${server.version}, ${server.status}): its instance, data volume and record.`);
+        print(
+          server.lastBackupAt
+            ? `Its backups are kept; the newest is from ${server.lastBackupAt}.`
+            : 'It has no backups: its game data will be gone for good.',
+        );
+        if (!opts.yes && (await ask('Type the server ID to destroy it: ')).trim() !== id) {
+          throw new CommandError('Not destroyed: that is not the server ID.');
+        }
+      }
+      const result = await api.post<ServerOperationResult>(`/admin/servers/${encodeURIComponent(id)}/destroy`);
+      print(result.unchanged ? `${id} is already being destroyed.` : `Destroying ${id}.`);
+      if (!opts.wait) return;
+      await waitUntilGone(id);
+      print(`Destroyed. Its backups stay in the backups bucket under servers/${id}/.`);
+    },
+
     async setChannel(id: string, channel: string) {
       const server = await api.post<ServerRecord>(`/admin/servers/${encodeURIComponent(id)}/settings`, { agentChannel: channel });
       print(`${server.serverId} is on the ${server.agentChannel} channel; it takes effect on the next start.`);
