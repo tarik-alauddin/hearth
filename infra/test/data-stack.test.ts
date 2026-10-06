@@ -123,7 +123,49 @@ describe('DataStack', () => {
 
     it('is emptied and deleted with the stack in dev', () => {
       dev.template.hasResource('AWS::S3::Bucket', { DeletionPolicy: 'Delete' });
-      dev.template.resourceCountIs('Custom::S3AutoDeleteObjects', 1);
+      dev.template.resourceCountIs('Custom::S3AutoDeleteObjects', 2); // backups and uploads
+    });
+  });
+
+  describe('uploads bucket', () => {
+    const uploads = () => {
+      const [, bucket] = Object.entries(dev.template.findResources('AWS::S3::Bucket')).find(([id]) => id.startsWith('Uploads'))!;
+      return (bucket as { Properties: Record<string, unknown> }).Properties;
+    };
+
+    it('is its own bucket: private, encrypted, not versioned', () => {
+      const props = uploads();
+      expect(props.BucketName).toBe('hearth-dev-uploads-138300868928-us-west-2');
+      expect(props.PublicAccessBlockConfiguration).toEqual({
+        BlockPublicAcls: true,
+        BlockPublicPolicy: true,
+        IgnorePublicAcls: true,
+        RestrictPublicBuckets: true,
+      });
+      expect(JSON.stringify(props.BucketEncryption)).toContain('AES256');
+      expect(props.VersioningConfiguration).toBeUndefined();
+    });
+
+    it('expires landing files after a day and repack results after a week', () => {
+      const rules = (uploads().LifecycleConfiguration as { Rules: Record<string, unknown>[] }).Rules;
+      expect(rules).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ Prefix: 'landing/', ExpirationInDays: 1, Status: 'Enabled' }),
+          expect.objectContaining({ Prefix: 'accepted/', ExpirationInDays: 7, Status: 'Enabled' }),
+          expect.objectContaining({ Prefix: 'rejected/', ExpirationInDays: 7, Status: 'Enabled' }),
+          expect.objectContaining({ AbortIncompleteMultipartUpload: { DaysAfterInitiation: 1 } }),
+        ]),
+      );
+    });
+
+    it('denies requests without TLS', () => {
+      const policies = Object.values(dev.template.findResources('AWS::S3::BucketPolicy')) as {
+        Properties: { Bucket: { Ref: string }; PolicyDocument: { Statement: { Effect: string; Condition?: unknown }[] } };
+      }[];
+      const policy = policies.find((p) => p.Properties.Bucket.Ref.startsWith('Uploads'));
+      expect(policy?.Properties.PolicyDocument.Statement).toContainEqual(
+        expect.objectContaining({ Effect: 'Deny', Condition: { Bool: { 'aws:SecureTransport': 'false' } } }),
+      );
     });
   });
 

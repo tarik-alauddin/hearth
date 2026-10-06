@@ -33,8 +33,22 @@ as part of each PR. The repo layout and commands are in [README.md](README.md).
 | --- | --- |
 | M0–M4: foundation, infra, agent, lifecycle workflows, agent releases; plus monitoring | Done |
 | M5 Game updates and backups | Done (PR1–PR9; follow-ups under Deferred) |
-| M6 Idle shutdown | In progress: PR1–PR3 merged; PR4 (idle setting) in review |
-| M7 Move your world | Not started |
+| M6 Idle shutdown | Done (PR1–PR4; join events from the log under Deferred) |
+| M7 Move your world | In progress: PR1 (uploads bucket and form) in review |
+
+**M7 plan** (create a server from a user's upload in one step; the UI will do the same):
+- PR1, in review: uploads bucket (DataStack) and `POST /admin/uploads { game }`, returning a
+  presigned POST form (not a PUT link: its signed policy makes S3 enforce the 4 GiB cap, and a
+  browser can submit it) for `landing/<game>/<uploadId>`, valid 15 min. The admin role can write
+  `landing/*` only.
+- PR2: the repack Lambda (`services/repack`) on `landing/`: strict unpack, the game's upload rules,
+  repack in backup format to `accepted/<uploadId>.tar.gz` or a reason to `rejected/<uploadId>.json`;
+  `GET /admin/uploads/{id}` (repacking, accepted, rejected).
+- PR3: `POST /admin/servers { …, upload }` (accepted uploads only) creates with a pending restore
+  of the accepted file (`restoreKind` picks the bucket). The agent doesn't change.
+- PR4: `hearth create --version … --upload <file.zip>`: upload, wait for accepted, create.
+- Separately: a wording-only PR replacing "world" in game-neutral code (54 uses, mostly comments
+  and agent messages); needs an agent release.
 
 **M6 plan** (stop servers nobody is playing on; detection runs on the instance, no heartbeats):
 - PR1, merged: adapters gain `Players()` (Minecraft: the server list ping); the agent checks
@@ -45,7 +59,7 @@ as part of each PR. The repo layout and commands are in [README.md](README.md).
 - PR3, merged: the agent's idle timer. Idle = the latest check worked and saw nobody, and no
   check has seen anyone for `IdleAfter` (30 min; `-idle-after` / `HEARTH_IDLE_AFTER` override).
   A failed check neither counts nor resets. Asks once; after a refused request, waits 5 min.
-- PR4, in review: per-server `idleStopMinutes` (default 30, 0 = never) through the settings route;
+- PR4, done (tested on dev): per-server `idleStopMinutes` (default 30, 0 = never) through the settings route;
   the agent config always carries it, and it wins over the agent's `-idle-after` fallback.
   `hearth set-idle <id> <minutes|off>`; `hearth status` shows it. Applies from the next start.
 
@@ -122,7 +136,21 @@ as part of each PR. The repo layout and commands are in [README.md](README.md).
 - **Backup rules live in each game's adapter** (`Backup()` with an exclude list), not in the agent core.
 - **The fleet check reports and never fixes** (stuck, failed and mismatched servers, untracked instances).
   It is scheduled in prod only; `hearth fleet-check` runs it anywhere.
-- **Game code is not coupled to Minecraft:** one adapter per game under `agent/internal/game/`.
+- **Game code is not coupled to Minecraft:** one adapter per game under `agent/internal/game/`
+  (how to run it), and one set of upload rules per game under `services/uploads/src/games/` (how
+  to accept a user's upload), both keyed by `GameId`. Game-neutral code and messages never say
+  "world" (that's Minecraft's word): uploads, game data, destination. Game-specific code may.
+- **Uploads get their own bucket**, not the backups bucket: untrusted content, no versioning, short
+  expiry, and browser CORS later. Prefixes: `landing/` (client writes through a presigned link,
+  1-day expiry), `accepted/` and `rejected/` (repack writes, 7-day expiry). Repack has no delete
+  permission; landing files just expire. The game is in the landing key, which the link signs, so
+  a client can't pick another game's rules.
+- **User uploads never reach a server as uploaded.** Repack (a throwaway Lambda) unpacks
+  them strictly (no `..`, absolute paths or links; a size cap), keeps an allowlist of the game's
+  files, and repacks them in our backup format; the agent only restores archives our code made.
+  What this can't remove: a deliberately malformed game file still reaches the game's own parser.
+  That is contained by the non-root container, one server per instance, and the minimal instance
+  role. Lambda limits (10 GB disk, 15 min) cover uploads of a few GB.
 
 ## Decided against
 
@@ -142,6 +170,13 @@ as part of each PR. The repo layout and commands are in [README.md](README.md).
   backups don't record their game version, so the old world would just be upgraded again. To roll
   back properly: record the version on each backup (S3 metadata at upload), have restore set it, and
   show it in `hearth backups`. Until then, rolling back is manual.
+- **Game layout facts in one place.** The agent adapter (Go: what to back up) and the upload rules
+  (TypeScript: where an upload goes) both know a game's folder layout. Move such facts into
+  `packages/shared` as data, sent to the agent in its config, when a second game arrives.
+- **Malware scanning of uploads:** GuardDuty Malware Protection for S3 can scan `landing/` files
+  (billed per GB). Not needed while uploads are repacked and allowlisted.
+- **Checking an upload's game version** (e.g. Minecraft's `level.dat`) against the chosen version;
+  until then, the user picks the same or a newer version.
 - **Snapshot versions** (the group may want them). Do rollback (above) first: snapshots are where
   worlds break, and forward-only can't step back. Then one small PR: keep snapshots in the version
   list, marked as such (release-date ordering already spans both), opt in with

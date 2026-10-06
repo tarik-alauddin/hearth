@@ -16,6 +16,7 @@ import {
   agentReleasesBucket,
   backupBucket,
   backupPrefix,
+  uploadsBucket,
 } from '@hearth/shared';
 import { hearthFunction } from '../hearth-function.js';
 import { HearthStack, type HearthStackProps } from '../hearth-stack.js';
@@ -42,6 +43,7 @@ export class ApiStack extends HearthStack {
     const { env, isProd } = props.config;
     // DataStack's bucket, named rather than referenced: it's always in the home region, like this stack.
     const backups = backupBucket(env, props.config.account, props.config.homeRegion);
+    const uploads = uploadsBucket(env, props.config.account, props.config.homeRegion);
     const removalPolicy = isProd ? RemovalPolicy.RETAIN : RemovalPolicy.DESTROY;
 
     this.api = new HttpApi(this, 'Api', { apiName: `hearth-${env}`, createDefaultStage: false });
@@ -183,9 +185,18 @@ export class ApiStack extends HearthStack {
         STOP_WORKFLOW_ARN: props.workflows.stop.stateMachineArn,
         BACKUP_BUCKET: backups,
         BACKUP_BUCKET_REGION: props.config.homeRegion,
+        UPLOADS_BUCKET: uploads,
+        UPLOADS_BUCKET_REGION: props.config.homeRegion,
       },
     });
     admin.addToRolePolicy(listServerBackups);
+    // Upload forms are signed with this role, so it may write landing files and nothing else there.
+    const landing = `arn:${this.partition}:s3:::${uploads}/landing/*`;
+    admin.addToRolePolicy(new PolicyStatement({ actions: ['s3:PutObject'], resources: [landing] }));
+    Validations.of(admin).acknowledge({
+      id: `AwsSolutions-IAM5[Resource::${landing}]`,
+      reason: 'Each upload form is signed for one landing key; the role can write no other prefix.',
+    });
     admin.addToRolePolicy(
       new PolicyStatement({
         actions: ['dynamodb:GetItem', 'dynamodb:PutItem', 'dynamodb:UpdateItem', 'dynamodb:Scan'],
@@ -203,6 +214,7 @@ export class ApiStack extends HearthStack {
     for (const [path, method] of [
       ['/admin/servers', HttpMethod.GET],
       ['/admin/servers', HttpMethod.POST],
+      ['/admin/uploads', HttpMethod.POST],
       ['/admin/servers/{id}', HttpMethod.GET],
       ['/admin/servers/{id}/backups', HttpMethod.GET],
       ['/admin/servers/{id}/version', HttpMethod.POST],

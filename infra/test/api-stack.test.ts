@@ -177,6 +177,7 @@ describe('ApiStack', () => {
     ['GET /admin/servers'],
     ['POST /admin/servers'],
     ['GET /admin/servers/{id}'],
+    ['POST /admin/uploads'],
     ['GET /admin/servers/{id}/backups'],
     ['POST /admin/servers/{id}/version'],
     ['POST /admin/servers/{id}/restore'],
@@ -203,10 +204,15 @@ describe('ApiStack', () => {
     expect(JSON.stringify(statements)).not.toMatch(/ec2:|DeleteItem/);
   });
 
-  it('lets the admin function list server backups and nothing else in the bucket', () => {
-    const statements = policyStatements('AdminServiceRoleDefaultPolicy') as { Action: unknown; Condition?: unknown }[];
+  it('lets the admin function list server backups and write upload landing files, nothing else in S3', () => {
+    const statements = policyStatements('AdminServiceRoleDefaultPolicy') as {
+      Action: unknown;
+      Resource: unknown;
+      Condition?: unknown;
+    }[];
     const s3 = statements.filter((s) => JSON.stringify(s.Action).includes('s3:'));
-    expect(s3.map((s) => s.Action)).toEqual(['s3:ListBucket']);
+    expect(s3.map((s) => s.Action)).toEqual(['s3:ListBucket', 's3:PutObject']);
     expect(s3[0]?.Condition).toEqual({ StringLike: { 's3:prefix': 'servers/*/*' } });
+    expect(s3[1]?.Resource).toBe('arn:aws:s3:::hearth-dev-uploads-138300868928-us-west-2/landing/*');
   });
 });
