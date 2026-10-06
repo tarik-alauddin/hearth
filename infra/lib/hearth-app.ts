@@ -34,6 +34,7 @@ export function addEnvironment(app: App, config: EnvConfig): void {
       create: orchestration.workflows.createServer,
       start: orchestration.workflows.startServer,
       stop: orchestration.workflows.stopServer,
+      destroy: orchestration.workflows.destroyServer,
     },
     api: api.api,
     apiFunctions: api.functions,

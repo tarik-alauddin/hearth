@@ -11,6 +11,7 @@ export const SERVER_STATUSES = [
   'ARCHIVING',
   'ARCHIVED',
   'RESTORING',
+  'DESTROYING', // the destroy workflow is removing it; the record is deleted at the end
   'FAILED',
 ] as const;
 

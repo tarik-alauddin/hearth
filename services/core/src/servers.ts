@@ -1,5 +1,6 @@
 import { ConditionalCheckFailedException, DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import {
+  DeleteCommand,
   DynamoDBDocumentClient,
   GetCommand,
   PutCommand,
@@ -28,6 +29,8 @@ export interface ServersStore {
   listServers(page: { limit: number; cursor?: string }): Promise<{ servers: ServerRecord[]; cursor?: string }>;
   /** Writes a new record; fails if the ID is taken. */
   createServer(server: ServerRecord): Promise<void>;
+  /** Destroy workflow: deletes the record, only while it's `status`. Returns false if it wasn't. */
+  deleteServer(serverId: string, status: ServerStatus): Promise<boolean>;
   /** API: changes user settings on an existing server. Returns false if there's no such server. */
   updateSettings(serverId: string, settings: ServerSettings): Promise<boolean>;
   findByInstance(instanceId: string): Promise<ServerRecord | undefined>;
@@ -114,6 +117,24 @@ export function dynamoServersStore(
       await client.send(
         new PutCommand({ TableName: tableName, Item: server, ConditionExpression: 'attribute_not_exists(serverId)' }),
       );
+    },
+
+    async deleteServer(serverId, status) {
+      try {
+        await client.send(
+          new DeleteCommand({
+            TableName: tableName,
+            Key: { serverId },
+            ConditionExpression: '#status = :status',
+            ExpressionAttributeNames: { '#status': 'status' },
+            ExpressionAttributeValues: { ':status': status },
+          }),
+        );
+        return true;
+      } catch (err) {
+        if (err instanceof ConditionalCheckFailedException) return false;
+        throw err;
+      }
     },
 
     async updateSettings(serverId, settings) {

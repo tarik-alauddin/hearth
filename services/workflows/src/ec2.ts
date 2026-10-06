@@ -1,10 +1,12 @@
 import {
   CreateTagsCommand,
+  DeleteVolumeCommand,
   DescribeInstancesCommand,
   EC2Client,
   RunInstancesCommand,
   StartInstancesCommand,
   StopInstancesCommand,
+  TerminateInstancesCommand,
 } from '@aws-sdk/client-ec2';
 import { CapacityError, type Ec2 } from './tasks.js';
 
@@ -96,6 +98,22 @@ export function sdkEc2(): Ec2 {
 
     async stopInstance(region, instanceId) {
       await client(region).send(new StopInstancesCommand({ InstanceIds: [instanceId] }));
+    },
+
+    async terminateInstance(region, instanceId) {
+      await client(region).send(new TerminateInstancesCommand({ InstanceIds: [instanceId] }));
+    },
+
+    async deleteVolume(region, volumeId) {
+      try {
+        await client(region).send(new DeleteVolumeCommand({ VolumeId: volumeId }));
+        return 'deleted';
+      } catch (err) {
+        const name = (err as { name?: string }).name;
+        if (name === 'VolumeInUse') return 'in-use';
+        if (name === 'InvalidVolume.NotFound') return 'gone';
+        throw err;
+      }
     },
   };
 }

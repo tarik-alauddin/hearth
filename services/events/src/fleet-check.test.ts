@@ -49,6 +49,7 @@ describe('fleet check', () => {
     expect(await check()).toEqual({ stuck: [], failed: [], mismatched: [], untracked: [], running: 1 });
     expect(metrics).toEqual({ StuckServers: 0, FailedServers: 0, RunningServers: 1, StatusMismatches: 0, UntrackedInstances: 0 });
     expect(queries.sort()).toEqual([
+      `DESTROYING before ${ago(35)}`,
       'FAILED',
       `PROVISIONING before ${ago(35)}`,
       'RUNNING',
@@ -61,10 +62,11 @@ describe('fleet check', () => {
     const { check, logs } = run([
       { serverId: 'old-start', status: 'STARTING', statusChangedAt: ago(40) },
       { serverId: 'old-stop', status: 'STOPPING', statusChangedAt: ago(90) },
+      { serverId: 'old-destroy', status: 'DESTROYING', statusChangedAt: ago(60) },
       { serverId: 'fresh', status: 'PROVISIONING', statusChangedAt: ago(10) },
     ]);
-    expect((await check()).stuck.sort()).toEqual(['old-start', 'old-stop']);
-    expect(logs.filter((l) => l.msg === 'stuck server')).toHaveLength(2);
+    expect((await check()).stuck.sort()).toEqual(['old-destroy', 'old-start', 'old-stop']);
+    expect(logs.filter((l) => l.msg === 'stuck server')).toHaveLength(3);
   });
 
   it('counts FAILED servers', async () => {

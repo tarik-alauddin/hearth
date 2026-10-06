@@ -75,15 +75,19 @@ const RETRY_STOPPED: Retry = { error: 'NotReady', interval: Duration.seconds(15)
 // Stopping a failed server's instance: retried on anything (e.g. the instance is still pending).
 const RETRY_CLEANUP: Retry = { error: 'States.ALL', interval: Duration.seconds(10), maxAttempts: 18 }; // 3 min
 const RETRY_CAPACITY: Retry = { error: 'CapacityError', interval: Duration.seconds(30), maxAttempts: 4, backoffRate: 2 };
+const RETRY_TERMINATED: Retry = { error: 'NotReady', interval: Duration.seconds(10), maxAttempts: 36 }; // 6 min
+// A terminated instance's volumes take a few seconds to detach.
+const RETRY_DETACHED: Retry = { error: 'NotReady', interval: Duration.seconds(10), maxAttempts: 18 }; // 3 min
 
 /**
- * The create, start and stop workflows (see "Server lifecycle" in the architecture doc) and their
- * task Lambdas from services/workflows, grouped into three functions by the permissions they need.
+ * The create, start, stop and destroy workflows (see "Server lifecycle" in the architecture doc) and
+ * their task Lambdas from services/workflows, grouped into four functions by the permissions they need.
  */
 export class LifecycleWorkflows extends Construct {
   readonly createServer: StateMachine;
   readonly startServer: StateMachine;
   readonly stopServer: StateMachine;
+  readonly destroyServer: StateMachine;
 
   constructor(scope: Construct, id: string, props: LifecycleWorkflowsProps) {
     super(scope, id);
@@ -121,8 +125,10 @@ export class LifecycleWorkflows extends Construct {
     const launch = fn('LaunchTasks', 'launchHandler');
     const power = fn('PowerTasks', 'powerHandler');
     const status = fn('StatusTasks', 'statusHandler');
+    const destroy = fn('DestroyTasks', 'destroyHandler');
     this.grantLaunch(launch, props);
     this.grantPower(power, props);
+    this.grantDestroy(destroy, props);
     for (const f of [launch, power, status]) {
       f.addToRolePolicy(
         new PolicyStatement({ actions: ['dynamodb:GetItem', 'dynamodb:UpdateItem'], resources: [table.tableArn] }),
@@ -151,6 +157,13 @@ export class LifecycleWorkflows extends Construct {
         .next(step('WaitForStopped', power, 'waitForStopped', RETRY_STOPPED))
         .next(step('MarkStopped', status, 'markStopped'));
     });
+    // Destroy: the API only claims STOPPED or FAILED servers. Backups are left in place.
+    this.destroyServer = this.stateMachine('Destroy', `hearth-${env}-destroy-server`, status, undefined, (step) =>
+      step('TerminateInstances', destroy, 'terminateInstances')
+        .next(step('WaitForTerminated', destroy, 'waitForTerminated', RETRY_TERMINATED))
+        .next(step('DeleteVolumes', destroy, 'deleteVolumes', RETRY_DETACHED))
+        .next(step('DeleteRecord', destroy, 'deleteRecord')),
+    );
   }
 
   /**
@@ -277,6 +290,29 @@ export class LifecycleWorkflows extends Construct {
       fn,
       ['*', ...wildcards],
       'New instances, volumes and interfaces have no ARN before launch; scoped by launch template and tag conditions. DescribeInstances has no resource-level permissions.',
+    );
+  }
+
+  /**
+   * Destroy: terminate instances and delete volumes, only this environment's Hearth ones (enforced
+   * by tag, as for Power), and delete Servers records. No other function can do any of these.
+   */
+  private grantDestroy(fn: NodejsFunction, props: LifecycleWorkflowsProps) {
+    const { env } = props.config;
+    const { partition, account } = Stack.of(this);
+    const instances = `arn:${partition}:ec2:*:${account}:instance/*`;
+    const volumes = `arn:${partition}:ec2:*:${account}:volume/*`;
+    const ours = { StringEquals: { 'aws:ResourceTag/app': 'hearth', 'aws:ResourceTag/env': env } };
+    fn.addToRolePolicy(new PolicyStatement({ actions: ['ec2:TerminateInstances'], resources: [instances], conditions: ours }));
+    fn.addToRolePolicy(new PolicyStatement({ actions: ['ec2:DeleteVolume'], resources: [volumes], conditions: ours }));
+    fn.addToRolePolicy(new PolicyStatement({ actions: ['ec2:DescribeInstances'], resources: ['*'] }));
+    fn.addToRolePolicy(
+      new PolicyStatement({ actions: ['dynamodb:GetItem', 'dynamodb:DeleteItem'], resources: [props.serversTable.tableArn] }),
+    );
+    acknowledgeWildcards(
+      fn,
+      ['*', instances, volumes],
+      'Instances and volumes are chosen at runtime; limited to this environment by the app and env tag condition. DescribeInstances has no resource-level permissions.',
     );
   }
 

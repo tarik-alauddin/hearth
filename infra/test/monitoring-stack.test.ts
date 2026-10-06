@@ -34,6 +34,7 @@ describe('MonitoringStack', () => {
       [
         'api-5xx',
         'create-workflow-failed',
+        'destroy-workflow-failed',
         'failed-servers',
         'lambda-errors',
         'start-workflow-failed',

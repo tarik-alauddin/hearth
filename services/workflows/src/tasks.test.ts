@@ -31,10 +31,15 @@ function newServer(overrides: Partial<ServerRecord> = {}): ServerRecord {
   };
 }
 
-/** One server in memory, with the store's conditional transition rules. */
-function fakeStore(server: ServerRecord): TaskDeps['store'] {
-  return {
-    getServer: async (id) => (id === server.serverId ? { ...server } : undefined),
+/** One server in memory, with the store's conditional transition rules. `deleted` marks it gone. */
+function fakeStore(server: ServerRecord): TaskDeps['store'] & { deleted?: boolean } {
+  const store: TaskDeps['store'] & { deleted?: boolean } = {
+    deleteServer: async (id, status) => {
+      if (id !== server.serverId || store.deleted || server.status !== status) return false;
+      store.deleted = true;
+      return true;
+    },
+    getServer: async (id) => (id === server.serverId && !store.deleted ? { ...server } : undefined),
     transition: async (_, { from, to, instanceId, set = {}, remove = [] }) => {
       if (!from.includes(server.status)) return false;
       if (instanceId !== undefined && server.instanceId !== instanceId) return false;
@@ -43,6 +48,7 @@ function fakeStore(server: ServerRecord): TaskDeps['store'] {
       return true;
     },
   };
+  return store;
 }
 
 class FakeEc2 implements Ec2 {
@@ -78,6 +84,20 @@ class FakeEc2 implements Ec2 {
   async stopInstance(_: string, id: string) {
     this.calls.push(`stop ${id}`);
   }
+  /** Volume → whether it's still attached; a deleted volume is removed. */
+  volumes: Record<string, { attached: boolean }> = {};
+  async terminateInstance(_: string, id: string) {
+    this.calls.push(`terminate ${id}`);
+    this.instances[id] = { ...this.instances[id]!, state: 'shutting-down' };
+  }
+  async deleteVolume(_: string, id: string) {
+    const volume = this.volumes[id];
+    if (!volume) return 'gone' as const;
+    if (volume.attached) return 'in-use' as const;
+    this.calls.push(`delete ${id}`);
+    delete this.volumes[id];
+    return 'deleted' as const;
+  }
 }
 
 class FakeSsm implements Ssm {
@@ -109,16 +129,18 @@ describe('workflow tasks', () => {
   let ec2: FakeEc2;
   let ssm: FakeSsm;
   let tasks: ReturnType<typeof workflowTasks>;
+  let store: ReturnType<typeof fakeStore>;
   let recorded: { name: string; value: number; dimensions?: Record<string, string> }[];
 
   const setup = (overrides: Partial<ServerRecord> = {}) => {
     server = newServer(overrides);
+    store = fakeStore(server);
     ec2 = new FakeEc2();
     ssm = new FakeSsm();
     recorded = [];
     tasks = workflowTasks({
       env: 'dev',
-      store: fakeStore(server),
+      store,
       ec2,
       ssm,
       gameInfra: GAME_INFRA,
@@ -269,6 +291,75 @@ describe('workflow tasks', () => {
       await tasks.markStopped({ serverId: 's1', since: NOW.toISOString() });
       expect(server).toMatchObject({ status: 'STOPPED', lastStopClean: false });
       expect(recorded).toEqual([{ name: 'StopClean', value: 0, dimensions: undefined }]);
+    });
+  });
+
+  describe('destroy', () => {
+    const destroying = { status: 'DESTROYING' as const, instanceId: 'i-1', volumeId: 'vol-1' };
+
+    it('terminates the instance, waits, deletes its volume, then deletes the record', async () => {
+      setup(destroying);
+      ec2.instances['i-1'] = { state: 'stopped', volumes: { '/dev/xvda': 'vol-root', '/dev/sdf': 'vol-1' } };
+      ec2.volumes['vol-1'] = { attached: true };
+
+      const terminated = await tasks.terminateInstances({ serverId: 's1' });
+      expect(terminated).toEqual({ serverId: 's1', instanceIds: ['i-1'], volumeIds: ['vol-1'] });
+      expect(ec2.calls).toEqual(['terminate i-1']);
+
+      await expect(tasks.waitForTerminated(terminated)).rejects.toBeInstanceOf(NotReady);
+      ec2.instances['i-1']!.state = 'terminated';
+      await tasks.waitForTerminated(terminated);
+
+      await expect(tasks.deleteVolumes(terminated)).rejects.toBeInstanceOf(NotReady); // still detaching
+      ec2.volumes['vol-1']!.attached = false;
+      await tasks.deleteVolumes(terminated);
+      await tasks.deleteVolumes(terminated); // a retry after it's gone is fine
+      expect(ec2.calls).toEqual(['terminate i-1', 'delete vol-1']);
+
+      expect(await tasks.deleteRecord(terminated)).toEqual({ serverId: 's1' });
+      expect(store.deleted).toBe(true);
+    });
+
+    it('also removes an instance the record never learned of, and its unrecorded volume', async () => {
+      setup({ status: 'DESTROYING' }); // e.g. a create that failed right after launch
+      ec2.instances['i-orphan'] = { state: 'running', volumes: { '/dev/sdf': 'vol-orphan' } };
+      ec2.tags['i-orphan'] = { serverId: 's1' };
+      const terminated = await tasks.terminateInstances({ serverId: 's1' });
+      expect(terminated).toEqual({ serverId: 's1', instanceIds: ['i-orphan'], volumeIds: ['vol-orphan'] });
+      expect(ec2.calls).toEqual(['terminate i-orphan']);
+    });
+
+    it("destroys a server that never got an instance: there's nothing to terminate", async () => {
+      setup({ status: 'DESTROYING' });
+      const terminated = await tasks.terminateInstances({ serverId: 's1' });
+      expect(terminated).toEqual({ serverId: 's1', instanceIds: [], volumeIds: [] });
+      await tasks.waitForTerminated(terminated);
+      await tasks.deleteVolumes(terminated);
+      await tasks.deleteRecord(terminated);
+      expect(store.deleted).toBe(true);
+      expect(ec2.calls).toEqual([]);
+    });
+
+    it("doesn't terminate an instance that's already terminated", async () => {
+      setup(destroying);
+      ec2.instances['i-1'] = { state: 'terminated', volumes: {} };
+      expect((await tasks.terminateInstances({ serverId: 's1' })).volumeIds).toEqual(['vol-1']);
+      expect(ec2.calls).toEqual([]);
+    });
+
+    it.each(['STOPPED', 'RUNNING'] as const)('refuses to touch a server that is %s', async (status) => {
+      setup({ ...destroying, status });
+      ec2.instances['i-1'] = { state: 'stopped', volumes: {} };
+      await expect(tasks.terminateInstances({ serverId: 's1' })).rejects.toThrow(/expected DESTROYING/);
+      await expect(tasks.deleteRecord({ serverId: 's1' })).rejects.toThrow(/record was kept/);
+      expect(ec2.calls).toEqual([]);
+      expect(store.deleted).toBeUndefined();
+    });
+
+    it('a failed destroy marks the server FAILED, keeping its record', async () => {
+      setup(destroying);
+      await tasks.markFailed({ serverId: 's1', error: { Error: 'Error', Cause: '{"errorMessage":"boom"}' } });
+      expect(server).toMatchObject({ status: 'FAILED', statusMessage: 'Error: boom' });
     });
   });
 

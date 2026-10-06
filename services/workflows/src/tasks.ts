@@ -1,7 +1,7 @@
 import { emfMetrics, type Metrics, type ServersStore } from '@hearth/core';
 import { METRICS, type ServerRecord, type ServerStatus } from '@hearth/shared';
 
-// Step Functions task handlers for the create, start and stop workflows. Each task is short;
+// Step Functions task handlers for the create, start, stop and destroy workflows. Each task is short;
 // waiting is done by throwing NotReady, which the state machine retries on a fixed interval.
 
 /** Retried by the state machine until it succeeds or the retries run out. */
@@ -32,6 +32,9 @@ export interface WorkflowState {
   commandId?: string;
   /** Stop: set when stopping the agent failed or timed out, and the instance is stopped anyway. */
   agentStopError?: unknown;
+  /** Destroy: the instances being terminated, and the data volumes to delete once they have. */
+  instanceIds?: string[];
+  volumeIds?: string[];
 }
 
 /** Which workflow a task runs in (create | start | stop), passed by the state machine. */
@@ -58,6 +61,9 @@ export interface Ec2 {
   createTags(region: string, resourceIds: string[], tags: Record<string, string>): Promise<void>;
   startInstance(region: string, instanceId: string): Promise<void>;
   stopInstance(region: string, instanceId: string): Promise<void>;
+  terminateInstance(region: string, instanceId: string): Promise<void>;
+  /** Deletes a volume: `in-use` while it's still attached (e.g. its instance is terminating), `gone` if it never existed or was deleted. */
+  deleteVolume(region: string, volumeId: string): Promise<'deleted' | 'in-use' | 'gone'>;
 }
 
 export type CommandStatus = 'pending' | 'success' | 'failed';
@@ -80,7 +86,7 @@ export type GameInfra = Record<
 
 export interface TaskDeps {
   env: string;
-  store: Pick<ServersStore, 'getServer' | 'transition'>;
+  store: Pick<ServersStore, 'getServer' | 'transition' | 'deleteServer'>;
   ec2: Ec2;
   ssm: Ssm;
   gameInfra: GameInfra;
@@ -279,6 +285,56 @@ export function workflowTasks({ env, store, ec2, ssm, gameInfra, now = () => new
     },
 
     /**
+     * Destroy, first: terminate the server's instances (the record's, and any other tagged with this
+     * server, as a launch can fail before the record learns its instance). Each instance's data
+     * volume is noted first: it survives termination, and an early failure may never have recorded it.
+     */
+    async terminateInstances({ serverId }: WorkflowState): Promise<WorkflowState> {
+      const record = await server(serverId, 'DESTROYING');
+      const found = await ec2.findInstances(record.region, serverId);
+      const instanceIds = new Set(found.filter((i) => i.state !== 'terminated').map((i) => i.instanceId));
+      if (record.instanceId && !found.some((i) => i.instanceId === record.instanceId)) instanceIds.add(record.instanceId);
+      const volumeIds = new Set(record.volumeId ? [record.volumeId] : []);
+      for (const instanceId of instanceIds) {
+        const instance = await ec2.describeInstance(record.region, instanceId);
+        const volumeId = instance?.volumes[DATA_DEVICE];
+        if (volumeId) volumeIds.add(volumeId);
+        if (instance && instance.state !== 'terminated') await ec2.terminateInstance(record.region, instanceId);
+      }
+      return { serverId, instanceIds: [...instanceIds], volumeIds: [...volumeIds] };
+    },
+
+    /** Destroy: wait until every instance has terminated, which detaches the data volumes. */
+    async waitForTerminated(state: WorkflowState): Promise<WorkflowState> {
+      const record = await server(state.serverId, 'DESTROYING');
+      for (const instanceId of state.instanceIds ?? []) {
+        const instance = await ec2.describeInstance(record.region, instanceId);
+        if (instance && instance.state !== 'terminated') throw new NotReady(`Instance ${instanceId} is ${instance.state}`);
+      }
+      return state;
+    },
+
+    /** Destroy: delete the data volumes. One already gone counts as deleted, so a retry is safe. */
+    async deleteVolumes(state: WorkflowState): Promise<WorkflowState> {
+      const record = await server(state.serverId, 'DESTROYING');
+      for (const volumeId of state.volumeIds ?? []) {
+        if ((await ec2.deleteVolume(record.region, volumeId)) === 'in-use') {
+          throw new NotReady(`Volume ${volumeId} is still attached`);
+        }
+      }
+      return state;
+    },
+
+    /** Destroy, last: delete the record. The server's backups are kept, so its data can still be retrieved. */
+    async deleteRecord(state: WorkflowState): Promise<WorkflowState> {
+      if (!(await store.deleteServer(state.serverId, 'DESTROYING'))) {
+        throw new Error(`Server ${state.serverId} is no longer DESTROYING; its record was kept`);
+      }
+      console.log(JSON.stringify({ msg: 'server destroyed', ...state }));
+      return { serverId: state.serverId };
+    },
+
+    /**
      * Any workflow's failure path: mark the server FAILED with the reason. An instance the record
      * didn't know about is recorded, so the server can be started or stopped again.
      */
@@ -290,7 +346,7 @@ export function workflowTasks({ env, store, ec2, ssm, gameInfra, now = () => new
       const record = await store.getServer(input.serverId);
       const adopt = input.instanceId && !record?.instanceId ? { instanceId: input.instanceId } : {};
       const moved = await store.transition(input.serverId, {
-        from: ['PROVISIONING', 'STARTING', 'STOPPING'],
+        from: ['PROVISIONING', 'STARTING', 'STOPPING', 'DESTROYING'],
         to: 'FAILED',
         set: { statusMessage: message, ...adopt },
       });

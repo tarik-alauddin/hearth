@@ -60,7 +60,7 @@ describe('OrchestrationStack', () => {
       return JSON.stringify((machine as { Properties: { DefinitionString: unknown } }).Properties.DefinitionString);
     };
 
-    it.each(['create', 'start', 'stop'])('has a %s-server state machine with logging and tracing', (op) => {
+    it.each(['create', 'start', 'stop', 'destroy'])('has a %s-server state machine with logging and tracing', (op) => {
       template.hasResourceProperties('AWS::StepFunctions::StateMachine', {
         StateMachineName: `hearth-dev-${op}-server`,
         TracingConfiguration: { Enabled: true },
@@ -137,6 +137,32 @@ describe('OrchestrationStack', () => {
     it('only starts and stops Hearth instances of this environment', () => {
       const power = statementsOf('WorkflowsPowerTasks').find((s) => JSON.stringify(s.Action).includes('StartInstances'));
       expect(power?.Condition).toEqual({ StringEquals: { 'aws:ResourceTag/app': 'hearth', 'aws:ResourceTag/env': 'dev' } });
+    });
+
+    it('destroys as terminate, wait, delete volumes, delete record; failures mark FAILED', () => {
+      const def = definition('hearth-dev-destroy-server');
+      const order = ['TerminateInstances', 'WaitForTerminated', 'DeleteVolumes', 'DeleteRecord'].map((s) =>
+        def.indexOf(`\\"${s}\\":`),
+      );
+      expect(order.every((i, n) => i >= 0 && (n === 0 || i > order[n - 1]!))).toBe(true);
+      expect(def).toContain('\\"StartAt\\":\\"TerminateInstances\\"');
+      expect(def).toContain('MarkFailed');
+      expect(def).not.toContain('StopAfterFailure');
+    });
+
+    it('only terminates and deletes Hearth instances and volumes of this environment', () => {
+      const statements = statementsOf('WorkflowsDestroyTasks');
+      const ours = { StringEquals: { 'aws:ResourceTag/app': 'hearth', 'aws:ResourceTag/env': 'dev' } };
+      expect(statements.find((s) => s.Action === 'ec2:TerminateInstances')?.Condition).toEqual(ours);
+      expect(statements.find((s) => s.Action === 'ec2:DeleteVolume')?.Condition).toEqual(ours);
+      expect(JSON.stringify(statements.map((s) => s.Action))).not.toMatch(/RunInstances|StartInstances|StopInstances|PassRole|UpdateItem/);
+    });
+
+    it('keeps terminate, delete-volume and delete-item permissions in the destroy function alone', () => {
+      for (const prefix of ['WorkflowsLaunchTasks', 'WorkflowsPowerTasks', 'WorkflowsStatusTasks']) {
+        const actions = JSON.stringify(statementsOf(prefix).map((s) => s.Action));
+        expect(actions).not.toMatch(/TerminateInstances|DeleteVolume|DeleteItem/);
+      }
     });
 
     it('keeps EC2 launch permissions out of the status and power functions', () => {
