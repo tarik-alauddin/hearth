@@ -1,6 +1,8 @@
+import { openAsBlob } from 'node:fs';
+import { basename } from 'node:path';
 import { InvokeCommand, LambdaClient } from '@aws-sdk/client-lambda';
 import { GetParameterCommand, SSMClient } from '@aws-sdk/client-ssm';
-import { fleetCheckFunctionName, type FleetReport } from '@hearth/shared';
+import { fleetCheckFunctionName, type CreateUploadResponse, type FleetReport } from '@hearth/shared';
 import { Sha256 } from '@aws-crypto/sha256-js';
 import { SignatureV4 } from '@smithy/signature-v4';
 import type { AwsCredentialIdentityProvider } from '@smithy/types';
@@ -66,6 +68,27 @@ export function apiClient(opts: {
       request('GET', path, Object.fromEntries(Object.entries(query).filter((e): e is [string, string] => e[1] !== undefined))),
     post: (path, body) => request('POST', path, {}, body),
   };
+}
+
+/**
+ * Sends a file with a presigned S3 POST form (from `POST /admin/uploads`): every form field, then
+ * the file last, as S3 requires. The file streams from disk. S3 refuses anything over the form's
+ * size cap; its XML error becomes the message.
+ */
+export async function sendUpload(
+  form: Pick<CreateUploadResponse, 'url' | 'fields'>,
+  file: string,
+  doFetch: typeof globalThis.fetch = globalThis.fetch,
+): Promise<void> {
+  const body = new FormData();
+  for (const [name, value] of Object.entries(form.fields)) body.append(name, value);
+  body.append('file', await openAsBlob(file), basename(file));
+  const res = await doFetch(form.url, { method: 'POST', body });
+  if (!res.ok) {
+    const xml = await res.text();
+    const message = /<Message>([^<]*)<\/Message>/.exec(xml)?.[1] ?? (xml || res.statusText);
+    throw new Error(`The upload failed: ${message}`);
+  }
 }
 
 /** The API endpoint: HEARTH_API_URL, or the SSM parameter ApiStack publishes for the environment. */
