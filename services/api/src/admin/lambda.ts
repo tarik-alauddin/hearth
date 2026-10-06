@@ -22,6 +22,7 @@ export const handler = adminHandler({
       create: requireEnv('CREATE_WORKFLOW_ARN'),
       start: requireEnv('START_WORKFLOW_ARN'),
       stop: requireEnv('STOP_WORKFLOW_ARN'),
+      destroy: requireEnv('DESTROY_WORKFLOW_ARN'),
     }),
     backups: s3BackupStorage({
       bucket: requireEnv('BACKUP_BUCKET'),

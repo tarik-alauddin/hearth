@@ -78,6 +78,11 @@ export function adminHandler({ operations, uploads, instanceRoleNames, log = def
           log({ msg: 'stop requested', caller, ...result });
           return json(result.unchanged ? 200 : 202, result);
         }
+        case 'POST /admin/servers/{id}/destroy': {
+          const result = await operations.destroyServer(serverId);
+          log({ msg: 'destroy requested', caller, ...result });
+          return json(result.unchanged ? 200 : 202, result);
+        }
         default:
           return json(404, { message: `No route ${event.routeKey}` });
       }

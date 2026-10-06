@@ -193,16 +193,17 @@ describe('ApiStack', () => {
     ['POST /admin/servers/{id}/restore/cancel'],
     ['POST /admin/servers/{id}/start'],
     ['POST /admin/servers/{id}/stop'],
+    ['POST /admin/servers/{id}/destroy'],
     ['POST /admin/servers/{id}/settings'],
   ])('protects %s with IAM auth', (routeKey) => {
     template.hasResourceProperties('AWS::ApiGatewayV2::Route', { RouteKey: routeKey, AuthorizationType: 'AWS_IAM' });
   });
 
-  it('lets the admin function start only the three lifecycle workflows', () => {
+  it('lets the admin function start only the four lifecycle workflows', () => {
     const statements = policyStatements('AdminServiceRoleDefaultPolicy') as { Action: unknown; Resource: unknown }[];
     const start = statements.find((s) => s.Action === 'states:StartExecution');
     expect(JSON.stringify(start?.Resource)).toMatch(/create-server|Create/);
-    expect((start?.Resource as unknown[]).length).toBe(3);
+    expect((start?.Resource as unknown[]).length).toBe(4); // create, start, stop, destroy
     const dynamo = statements.find((s) => JSON.stringify(s.Action).includes('dynamodb'));
     expect((dynamo?.Action as string[]).sort()).toEqual([
       'dynamodb:GetItem',

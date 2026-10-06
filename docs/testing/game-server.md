@@ -131,12 +131,17 @@ hearth start <serverId>             # while RUNNING: "Already running.", nothing
 
 ## 9. Clean up
 
-There's no delete in the API until archiving exists (it would lose the world). Use the dev script
-(needs the AWS CLI; CloudShell has it):
-
 ```bash
-bash scripts/dev-server.sh destroy <serverId> --yes
+hearth stop <serverId>              # destroy refuses a server that isn't stopped
+hearth destroy <serverId>           # shows what goes, then asks you to type the ID; --yes skips that
 ```
+
+Expect `DESTROYING`, then `Destroyed.` The instance and data volume are deleted (EC2 console);
+`hearth status <serverId>` now answers 404. Its backups are kept under `servers/<serverId>/` in the
+backups bucket.
+
+Refused: `hearth destroy` on a running server (`stop it before destroying it`), and a typed ID that
+doesn't match (`Not destroyed`).
 
 ## Troubleshooting
 
@@ -149,6 +154,7 @@ bash scripts/dev-server.sh destroy <serverId> --yes
 | `API 403` | Your credentials lack `execute-api:Invoke`, or you're using a game instance's role |
 | `API 409` | The server is mid-operation (e.g. stop while starting); wait and retry |
 | Can't connect from the client | Version mismatch, or an old IP after a start |
+| A destroy ends `FAILED` | The message; the `hearth-<env>-destroy-server` execution in **Step Functions**. `hearth destroy` again retries it |
 | An upload stays "Checking it…" | The `Repack` Lambda's logs (`upload accepted` / `upload rejected` / `repack failed`); `aws s3 ls s3://hearth-<env>-uploads-<account>-us-west-2/landing/` |
 | A server from an upload `FAILED` on first start | `hearth status` (e.g. `backup … no longer exists`: the upload expired before the first start); create again with a new upload |
 | Backup failed, or no `last backup` | `journalctl -u hearth-agent` (`backup failed`); the `AgentBackupCredentials`/`AgentBackupDone` Lambda logs |

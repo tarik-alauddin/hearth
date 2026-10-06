@@ -28,7 +28,7 @@ export interface ApiStackProps extends HearthStackProps {
   /** Game instance roles, one per game region; they may call the agent routes. */
   readonly instanceRoles: readonly IRole[];
   /** The lifecycle workflows the server operations start. */
-  readonly workflows: Record<'create' | 'start' | 'stop', IStateMachine>;
+  readonly workflows: Record<'create' | 'start' | 'stop' | 'destroy', IStateMachine>;
   readonly gameRegions: readonly string[];
 }
 
@@ -195,6 +195,7 @@ export class ApiStack extends HearthStack {
         CREATE_WORKFLOW_ARN: props.workflows.create.stateMachineArn,
         START_WORKFLOW_ARN: props.workflows.start.stateMachineArn,
         STOP_WORKFLOW_ARN: props.workflows.stop.stateMachineArn,
+        DESTROY_WORKFLOW_ARN: props.workflows.destroy.stateMachineArn,
         BACKUP_BUCKET: backups,
         BACKUP_BUCKET_REGION: props.config.homeRegion,
         UPLOADS_BUCKET: uploads,
@@ -270,6 +271,7 @@ export class ApiStack extends HearthStack {
       ['/admin/servers/{id}/restore/cancel', HttpMethod.POST],
       ['/admin/servers/{id}/start', HttpMethod.POST],
       ['/admin/servers/{id}/stop', HttpMethod.POST],
+      ['/admin/servers/{id}/destroy', HttpMethod.POST],
       ['/admin/servers/{id}/settings', HttpMethod.POST],
     ] as const) {
       this.api.addRoutes({ path, methods: [method], integration: adminIntegration, authorizer });

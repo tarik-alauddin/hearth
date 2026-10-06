@@ -25,7 +25,7 @@ import type { GameVersions } from './versions.js';
 // The one implementation of create, start and stop. The admin routes use it now; the UI and
 // Discord bot routes will call the same functions, so every caller behaves the same.
 
-export type WorkflowName = 'create' | 'start' | 'stop';
+export type WorkflowName = 'create' | 'start' | 'stop' | 'destroy';
 
 export interface Workflows {
   /** Starts a workflow execution named after the operation, so the same claim can't run twice. */
@@ -211,6 +211,22 @@ export function serverOperations({
         return claimAndRun(server, 'stop', ['RUNNING', 'FAILED'], 'STOPPING', { remove: ['stopReason'] });
       }
       throw new OperationError(409, `Server ${serverId} is ${server.status} and can't be stopped`);
+    },
+
+    /**
+     * STOPPED, or FAILED with its instance not running → DESTROYING, and the destroy workflow
+     * removes its instance, data volume and record. Its backups are kept. Never a running server:
+     * stopping it first also saves and backs it up.
+     */
+    async destroyServer(serverId: string): Promise<ServerOperationResult> {
+      const server = await requireServer(serverId);
+      if (server.status === 'DESTROYING') return { serverId, status: server.status, unchanged: true };
+      const instanceUp = server.instanceState === 'running' || server.instanceState === 'pending';
+      if (server.status === 'STOPPED' || (server.status === 'FAILED' && !instanceUp)) {
+        return claimAndRun(server, 'destroy', [server.status], 'DESTROYING');
+      }
+      const why = server.status === 'FAILED' ? 'is FAILED but its instance is still running' : `is ${server.status}`;
+      throw new OperationError(409, `Server ${serverId} ${why}; stop it before destroying it`);
     },
 
     /**
