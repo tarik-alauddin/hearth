@@ -13,6 +13,8 @@ export interface CreateServerRequest {
   region?: string;
   /** Defaults to stable. */
   agentChannel?: AgentChannel;
+  /** An accepted upload (from `POST /admin/uploads`) to start the server with, instead of new game data. */
+  upload?: string;
 }
 
 /** `POST /admin/servers/{id}/settings`: the settings to change. */

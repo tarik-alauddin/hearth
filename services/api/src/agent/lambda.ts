@@ -4,6 +4,7 @@ import { s3BackupStorage } from '../backups.js';
 import { serverOperations } from '../servers/operations.js';
 import { publishedVersions } from '../servers/versions.js';
 import { stepFunctionsWorkflows } from '../servers/workflows.js';
+import { s3UploadStorage } from '../uploads.js';
 import { agentHandlers } from './handlers.js';
 import { ssmAgentReleases } from './releases.js';
 
@@ -32,6 +33,8 @@ const handlers = agentHandlers({
     store,
     workflows: stepFunctionsWorkflows({ create: '', start: '', stop: process.env.STOP_WORKFLOW_ARN ?? '' }),
     backups,
+    // Agents never create servers, so never touch uploads; there's no uploads bucket to name here.
+    uploads: s3UploadStorage({ bucket: '', region: process.env.AWS_REGION ?? '' }),
     versions: publishedVersions(),
     homeRegion: process.env.AWS_REGION ?? '',
     gameRegions: [],

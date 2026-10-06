@@ -60,14 +60,16 @@ export function commands({ api, fleetCheck, print, sleep = (ms) => new Promise((
   }
 
   return {
-    async create(opts: { game: string; version: string; region?: string; channel?: string; wait: boolean }) {
+    async create(opts: { game: string; version: string; region?: string; channel?: string; upload?: string; wait: boolean }) {
       const result = await api.post<ServerOperationResult>('/admin/servers', {
         game: opts.game,
         version: opts.version,
         ...(opts.region ? { region: opts.region } : {}),
         ...(opts.channel ? { agentChannel: opts.channel } : {}),
+        ...(opts.upload ? { upload: opts.upload } : {}),
       });
-      print(`Creating ${result.serverId} (${opts.game} ${opts.version}). The first start takes a few minutes.`);
+      const from = opts.upload ? ` from upload ${opts.upload}` : '';
+      print(`Creating ${result.serverId} (${opts.game} ${opts.version})${from}. The first start takes a few minutes.`);
       await followUp(result, 'RUNNING', opts.wait);
     },
 

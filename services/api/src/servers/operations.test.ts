@@ -1,11 +1,26 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import type { ServerRecord } from '@hearth/shared';
+import type { ServerRecord, UploadStatus } from '@hearth/shared';
 import { InvalidCursor } from '@hearth/core';
 import { OperationError, serverOperations, type OperationDeps, type WorkflowName } from './operations.js';
 
 const NOW = new Date('2026-09-29T12:00:00Z');
 const NEWEST = 'servers/s1/20261005T120000Z.tar.gz';
 const OLDER = 'servers/s1/20261004T120000Z.tar.gz';
+// Uploads in each state repack can leave them in (IDs are ULIDs).
+const ACCEPTED = '01K6ACCEPTED00000000000000';
+const OLD_ACCEPTED = '01K6ACCEPTED0000000000000Z'; // accepted before repack recorded the game
+const REPACKING = '01K6REPACKNG00000000000000';
+const REJECTED = '01K6REJECTED00000000000000';
+const OTHER_GAME = '01K6THERGAME00000000000000';
+const UPLOADS: Record<string, UploadStatus> = {
+  [ACCEPTED]: { uploadId: ACCEPTED, status: 'accepted', bytes: 100, game: 'minecraft-java' },
+  [OLD_ACCEPTED]: { uploadId: OLD_ACCEPTED, status: 'accepted', bytes: 100 },
+  [REPACKING]: { uploadId: REPACKING, status: 'repacking' },
+  [REJECTED]: { uploadId: REJECTED, status: 'rejected', reason: 'no level.dat found' },
+  [OTHER_GAME]: { uploadId: OTHER_GAME, status: 'accepted', bytes: 100, game: 'terraria' },
+};
+let copies: string[] = [];
+
 const BACKUPS = [
   { key: NEWEST, takenAt: '2026-10-05T12:00:10.000Z', bytes: 2048 },
   { key: OLDER, takenAt: '2026-10-04T12:00:10.000Z', bytes: 1024 },
@@ -68,7 +83,16 @@ describe('server operations', () => {
           started.push({ workflow, serverId, operationId });
         },
       },
-      backups: { list: async (id) => (id === 's1' ? BACKUPS : []) },
+      backups: {
+        list: async (id) => (id === 's1' ? BACKUPS : []),
+        copyIn: async (source, key) => {
+          copies.push(`${source.bucket}/${source.key} -> ${key}`);
+        },
+      },
+      uploads: {
+        status: async (uploadId) => UPLOADS[uploadId],
+        accepted: (uploadId) => ({ bucket: 'uploads', key: `accepted/${uploadId}.tar.gz` }),
+      },
       versions: { releases: async () => ['1.21.4', '26.1', '26.3'] },
       homeRegion: 'us-west-2',
       gameRegions: ['us-west-2'],
@@ -80,6 +104,51 @@ describe('server operations', () => {
     started = [];
     failWorkflows = false;
     ids = 1;
+    copies = [];
+  });
+
+  describe('create from an upload', () => {
+    const create = (store: OperationDeps['store'], upload: unknown) =>
+      ops(store).createServer({ game: 'minecraft-java', version: '26.3', upload }, 'arn:caller');
+
+    it('copies the accepted upload in as the first backup and restores it on the first start', async () => {
+      const { store, servers } = fakeStore();
+      expect(await create(store, ACCEPTED)).toEqual({ serverId: 'ID1', status: 'PROVISIONING' });
+      const key = 'servers/ID1/20260929T120000Z.tar.gz';
+      expect(copies).toEqual([`uploads/accepted/${ACCEPTED}.tar.gz -> ${key}`]);
+      expect(servers.get('ID1')).toMatchObject({
+        status: 'PROVISIONING',
+        restoreKey: key,
+        restoreRequestedAt: NOW.toISOString(),
+      });
+      expect(started[0]?.workflow).toBe('create');
+    });
+
+    it('takes an upload accepted before repack recorded its game', async () => {
+      const { store } = fakeStore();
+      await create(store, OLD_ACCEPTED);
+      expect(copies).toHaveLength(1);
+    });
+
+    it.each([
+      ['still repacking', REPACKING, 409, /still being checked/],
+      ['rejected, with the reason', REJECTED, 409, /rejected: no level.dat found/],
+      ['for another game', OTHER_GAME, 409, /for terraria, not minecraft-java/],
+      ['unknown', '01K6NKNWN00000000000000000', 404, /never uploaded, or expired/],
+      ['not an upload ID', '../etc/passwd', 404, /No upload/],
+    ])('refuses an upload that is %s, creating nothing', async (_, upload, statusCode, message) => {
+      const { store, servers } = fakeStore();
+      const err = await create(store, upload).catch((e: OperationError) => e);
+      expect(err).toMatchObject({ statusCode });
+      expect(String(err)).toMatch(message);
+      expect(servers.size).toBe(0);
+      expect(copies).toEqual([]);
+      expect(started).toEqual([]);
+    });
+
+    it('returns 400 for an upload that is not a string', async () => {
+      await expect(create(fakeStore().store, 42)).rejects.toMatchObject({ statusCode: 400 });
+    });
   });
 
   describe('create', () => {
@@ -336,7 +405,8 @@ describe('server operations', () => {
       const noList = serverOperations({
         store,
         workflows: { start: async () => {} },
-        backups: { list: async () => [] },
+        backups: { list: async () => [], copyIn: async () => {} },
+        uploads: { status: async () => undefined, accepted: () => ({ bucket: 'uploads', key: 'k' }) },
         versions: { releases: async () => undefined },
         homeRegion: 'us-west-2',
         gameRegions: ['us-west-2'],

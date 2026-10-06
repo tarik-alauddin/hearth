@@ -8,6 +8,7 @@ import { CommandError, commands } from './commands.js';
 const USAGE = `Usage: hearth <command> [options]
 
   create --version <v> [--game minecraft-java] [--game-region <region>] [--channel canary|stable]
+         [--from-upload <uploadId>]          start with an accepted upload's game data
   list
   status <serverId>
   backups <serverId>                       the server's backups, newest first
@@ -38,6 +39,7 @@ async function main(argv: string[]): Promise<number> {
       'game-region': { type: 'string' },
       channel: { type: 'string' },
       'no-wait': { type: 'boolean', default: false },
+      'from-upload': { type: 'string' },
       force: { type: 'boolean', default: false },
       cancel: { type: 'boolean', default: false },
       help: { type: 'boolean', short: 'h', default: false },
@@ -64,7 +66,14 @@ async function main(argv: string[]): Promise<number> {
   switch (command) {
     case 'create':
       if (!values.version) throw new CommandError('create needs --version, e.g. --version 1.21.4 (match your client)');
-      await run.create({ game: values.game, version: values.version, region: values['game-region'], channel: values.channel, wait });
+      await run.create({
+        game: values.game,
+        version: values.version,
+        region: values['game-region'],
+        channel: values.channel,
+        upload: values['from-upload'],
+        wait,
+      });
       return 0;
     case 'list':
       await run.list();

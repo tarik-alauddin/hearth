@@ -13,6 +13,8 @@ function requireEnv(name: string): string {
   return value;
 }
 
+const uploads = s3UploadStorage({ bucket: requireEnv('UPLOADS_BUCKET'), region: requireEnv('UPLOADS_BUCKET_REGION') });
+
 export const handler = adminHandler({
   operations: serverOperations({
     store: createServersStore(requireEnv('SERVERS_TABLE')),
@@ -24,14 +26,13 @@ export const handler = adminHandler({
     backups: s3BackupStorage({
       bucket: requireEnv('BACKUP_BUCKET'),
       region: requireEnv('BACKUP_BUCKET_REGION'),
-      writerRoleArn: '', // admin routes only list backups
+      writerRoleArn: '', // admin routes list backups and copy uploads in; they never hand out credentials
     }),
+    uploads,
     versions: publishedVersions(),
     homeRegion: requireEnv('HOME_REGION'),
     gameRegions: requireEnv('GAME_REGIONS').split(','),
   }),
-  uploads: uploadOperations({
-    uploads: s3UploadStorage({ bucket: requireEnv('UPLOADS_BUCKET'), region: requireEnv('UPLOADS_BUCKET_REGION') }),
-  }),
+  uploads: uploadOperations({ uploads }),
   instanceRoleNames: requireEnv('INSTANCE_ROLE_NAMES').split(','),
 });

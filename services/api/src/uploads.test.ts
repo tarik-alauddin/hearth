@@ -67,6 +67,7 @@ describe('uploadOperations', () => {
       return { url: 'https://bucket/', fields: { key: `landing/${game}/${uploadId}` }, expiresAt: 'later' };
     },
     status: async () => undefined,
+    accepted: (uploadId) => ({ bucket: 'uploads', key: `accepted/${uploadId}.tar.gz` }),
   };
   const ops = uploadOperations({ uploads, now: () => NOW, newId: () => 'U1' });
 
