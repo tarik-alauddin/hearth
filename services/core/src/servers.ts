@@ -189,7 +189,7 @@ export function dynamoServersStore(
     async clearRestore(serverId, instanceId, key) {
       return conditionalUpdate({
         Key: { serverId },
-        UpdateExpression: 'REMOVE restoreKey, restoreRequestedAt',
+        UpdateExpression: 'REMOVE restoreKey, restoreSource, restoreRequestedAt',
         ConditionExpression: 'instanceId = :instanceId AND restoreKey = :key',
         ExpressionAttributeValues: { ':instanceId': instanceId, ':key': key },
       });

@@ -25,7 +25,6 @@ function fakeBackups(objects: Record<string, number> = {}): BackupStorage {
     size: async (key) => objects[key],
     list: async () => [],
     prune: async () => [],
-    copyIn: async () => {},
   };
 }
 
@@ -59,6 +58,7 @@ function fakeStore(servers: ServerRecord[]) {
       const s = servers.find((x) => x.serverId === serverId);
       if (!s || s.instanceId !== instanceId || s.restoreKey !== key) return false;
       delete s.restoreKey;
+      delete s.restoreSource;
       delete s.restoreRequestedAt;
       return true;
     },
@@ -89,7 +89,8 @@ describe('agent handlers', () => {
       return { serverId, status: 'STOPPING' };
     },
   };
-  const deps = { instanceRoleNames: [ROLE], releases: noReleases, backups: fakeBackups(), operations, now: () => NOW };
+  const uploads = { downloadUrl: async (key: string) => `https://uploads.example/${key}?signed` };
+  const deps = { instanceRoleNames: [ROLE], releases: noReleases, backups: fakeBackups(), uploads, operations, now: () => NOW };
 
   beforeEach(() => {
     store = fakeStore([server]);
@@ -256,6 +257,15 @@ describe('agent handlers', () => {
       const h = agentHandlers({ ...deps, store: fakeStore([pending]).store });
       const res = await h.config(event());
       expect(JSON.parse(res.body!).restore).toEqual({ key: BACKUP_KEY, url: `https://backups.example/${BACKUP_KEY}?signed` });
+    });
+
+    it("signs an accepted upload's link against the uploads bucket, and clears it when done", async () => {
+      const key = 'accepted/01K6ABCDEF0123456789ABCDEF.tar.gz';
+      const servers = [{ ...pending, restoreKey: key, restoreSource: 'upload' as const }];
+      const h = agentHandlers({ ...deps, store: fakeStore(servers).store });
+      expect(JSON.parse((await h.config(event())).body!).restore).toEqual({ key, url: `https://uploads.example/${key}?signed` });
+      expect((await h.restored(restored(key))).statusCode).toBe(204);
+      expect(servers[0]).not.toHaveProperty('restoreKey');
     });
 
     it('leaves restore out of the config when none is pending', async () => {

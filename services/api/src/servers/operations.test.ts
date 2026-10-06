@@ -19,7 +19,6 @@ const UPLOADS: Record<string, UploadStatus> = {
   [REJECTED]: { uploadId: REJECTED, status: 'rejected', reason: 'no level.dat found' },
   [OTHER_GAME]: { uploadId: OTHER_GAME, status: 'accepted', bytes: 100, game: 'terraria' },
 };
-let copies: string[] = [];
 
 const BACKUPS = [
   { key: NEWEST, takenAt: '2026-10-05T12:00:10.000Z', bytes: 2048 },
@@ -83,12 +82,7 @@ describe('server operations', () => {
           started.push({ workflow, serverId, operationId });
         },
       },
-      backups: {
-        list: async (id) => (id === 's1' ? BACKUPS : []),
-        copyIn: async (source, key) => {
-          copies.push(`${source.bucket}/${source.key} -> ${key}`);
-        },
-      },
+      backups: { list: async (id) => (id === 's1' ? BACKUPS : []) },
       uploads: {
         status: async (uploadId) => UPLOADS[uploadId],
         accepted: (uploadId) => ({ bucket: 'uploads', key: `accepted/${uploadId}.tar.gz` }),
@@ -104,30 +98,28 @@ describe('server operations', () => {
     started = [];
     failWorkflows = false;
     ids = 1;
-    copies = [];
   });
 
   describe('create from an upload', () => {
     const create = (store: OperationDeps['store'], upload: unknown) =>
       ops(store).createServer({ game: 'minecraft-java', version: '26.3', upload }, 'arn:caller');
 
-    it('copies the accepted upload in as the first backup and restores it on the first start', async () => {
+    it('restores the accepted upload, straight from the uploads bucket, on the first start', async () => {
       const { store, servers } = fakeStore();
       expect(await create(store, ACCEPTED)).toEqual({ serverId: 'ID1', status: 'PROVISIONING' });
-      const key = 'servers/ID1/20260929T120000Z.tar.gz';
-      expect(copies).toEqual([`uploads/accepted/${ACCEPTED}.tar.gz -> ${key}`]);
       expect(servers.get('ID1')).toMatchObject({
         status: 'PROVISIONING',
-        restoreKey: key,
+        restoreKey: `accepted/${ACCEPTED}.tar.gz`,
+        restoreSource: 'upload',
         restoreRequestedAt: NOW.toISOString(),
       });
       expect(started[0]?.workflow).toBe('create');
     });
 
     it('takes an upload accepted before repack recorded its game', async () => {
-      const { store } = fakeStore();
+      const { store, servers } = fakeStore();
       await create(store, OLD_ACCEPTED);
-      expect(copies).toHaveLength(1);
+      expect(servers.get('ID1')?.restoreKey).toBe(`accepted/${OLD_ACCEPTED}.tar.gz`);
     });
 
     it.each([
@@ -142,7 +134,6 @@ describe('server operations', () => {
       expect(err).toMatchObject({ statusCode });
       expect(String(err)).toMatch(message);
       expect(servers.size).toBe(0);
-      expect(copies).toEqual([]);
       expect(started).toEqual([]);
     });
 
@@ -405,7 +396,7 @@ describe('server operations', () => {
       const noList = serverOperations({
         store,
         workflows: { start: async () => {} },
-        backups: { list: async () => [], copyIn: async () => {} },
+        backups: { list: async () => [] },
         uploads: { status: async () => undefined, accepted: () => ({ bucket: 'uploads', key: 'k' }) },
         versions: { releases: async () => undefined },
         homeRegion: 'us-west-2',
@@ -439,6 +430,19 @@ describe('server operations', () => {
       expect(result).toMatchObject({ status: 'STOPPED', restoreKey: NEWEST, restoreRequestedAt: NOW.toISOString() });
       expect(servers.get('s1')?.restoreKey).toBe(NEWEST);
       expect(started).toEqual([]); // nothing runs until the next start
+    });
+
+    it('replaces a pending upload restore with a backup, and cancelling clears either', async () => {
+      const pendingUpload = { restoreKey: `accepted/${ACCEPTED}.tar.gz`, restoreSource: 'upload' as const };
+      const { store, servers } = fakeStore([server({ lastStopClean: true, ...pendingUpload })]);
+      await ops(store).requestRestore('s1', {});
+      expect(servers.get('s1')).toMatchObject({ restoreKey: NEWEST });
+      expect(servers.get('s1')).not.toHaveProperty('restoreSource'); // else the agent would look in the uploads bucket
+
+      Object.assign(servers.get('s1')!, pendingUpload);
+      await ops(store).cancelRestore('s1');
+      expect(servers.get('s1')).not.toHaveProperty('restoreKey');
+      expect(servers.get('s1')).not.toHaveProperty('restoreSource');
     });
 
     it.each([OLDER, '20261004T120000Z.tar.gz'])('takes a chosen backup by key or file name (%s)', async (key) => {

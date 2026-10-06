@@ -46,6 +46,10 @@ export class ApiStack extends HearthStack {
     // DataStack's bucket, named rather than referenced: it's always in the home region, like this stack.
     const backups = backupBucket(env, props.config.account, props.config.homeRegion);
     const uploads = uploadsBucket(env, props.config.account, props.config.homeRegion);
+    const uploadsArn = `arn:${this.partition}:s3:::${uploads}`;
+    const landing = `${uploadsArn}/landing/*`;
+    const accepted = `${uploadsArn}/accepted/*`;
+    const rejected = `${uploadsArn}/rejected/*`;
     const removalPolicy = isProd ? RemovalPolicy.RETAIN : RemovalPolicy.DESTROY;
 
     this.api = new HttpApi(this, 'Api', { apiName: `hearth-${env}`, createDefaultStage: false });
@@ -74,6 +78,8 @@ export class ApiStack extends HearthStack {
           AGENT_RELEASES_BUCKET: agentReleasesBucket(props.config.account),
           BACKUP_BUCKET: backups,
           BACKUP_BUCKET_REGION: props.config.homeRegion,
+          UPLOADS_BUCKET: uploads,
+          UPLOADS_BUCKET_REGION: props.config.homeRegion,
         },
       });
 
@@ -130,6 +136,10 @@ export class ApiStack extends HearthStack {
 
     // Restores: the config handler presigns the download, so the link reads with this role.
     configFunction.addToRolePolicy(new PolicyStatement({ actions: ['s3:GetObject'], resources: [serverBackups] }));
+    // ...and for a server created from an upload, the accepted upload's. Listing the uploads bucket
+    // makes a missing (expired) upload a 404 for the agent, not a 403.
+    configFunction.addToRolePolicy(new PolicyStatement({ actions: ['s3:GetObject'], resources: [accepted] }));
+    configFunction.addToRolePolicy(new PolicyStatement({ actions: ['s3:ListBucket'], resources: [uploadsArn] }));
     const restoredFunction = agentFunction('AgentRestored', 'restoredHandler');
     restoredFunction.addToRolePolicy(new PolicyStatement({ actions: ['dynamodb:Query'], resources: [byInstanceIndexArn] }));
     restoredFunction.addToRolePolicy(
@@ -192,17 +202,7 @@ export class ApiStack extends HearthStack {
       },
     });
     admin.addToRolePolicy(listServerBackups);
-    // Creating a server from an upload copies the accepted upload in as its first backup.
-    admin.addToRolePolicy(new PolicyStatement({ actions: ['s3:PutObject'], resources: [serverBackups] }));
-    Validations.of(admin).acknowledge({
-      id: `AwsSolutions-IAM5[Resource::${serverBackups}]`,
-      reason: "Copies an accepted upload in as a new server's first backup, under that server's prefix.",
-    });
     // Upload forms are signed with this role, so it may write landing files and nothing else there.
-    const uploadsArn = `arn:${this.partition}:s3:::${uploads}`;
-    const landing = `${uploadsArn}/landing/*`;
-    const accepted = `${uploadsArn}/accepted/*`;
-    const rejected = `${uploadsArn}/rejected/*`;
     admin.addToRolePolicy(new PolicyStatement({ actions: ['s3:PutObject'], resources: [landing] }));
     // Upload status: read where an upload has got to. Listing makes a missing key a 404 rather than a 403.
     admin.addToRolePolicy(new PolicyStatement({ actions: ['s3:GetObject'], resources: [landing, accepted, rejected] }));
@@ -235,6 +235,7 @@ export class ApiStack extends HearthStack {
     for (const [construct, resources] of [
       [admin, [landing, accepted, rejected]],
       [repack, [landing, accepted, rejected]],
+      [configFunction, [accepted]],
     ] as const) {
       for (const resource of resources) {
         Validations.of(construct).acknowledge({

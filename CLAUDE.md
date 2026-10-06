@@ -42,7 +42,7 @@ as part of each PR. The repo layout and commands are in [README.md](README.md).
 | M0–M4: foundation, infra, agent, lifecycle workflows, agent releases; plus monitoring | Done |
 | M5 Game updates and backups | Done (PR1–PR9; follow-ups under Deferred) |
 | M6 Idle shutdown | Done (PR1–PR4; join events from the log under Deferred) |
-| M7 Move your world | In progress: PR1–PR2 merged; PR3 (create from an upload) in review |
+| M7 Move your world | In progress: PR1–PR3 merged; PR3b (restore from upload, replacing PR3's copy) in review |
 
 **M7 plan** (create a server from a user's upload in one step; the UI will do the same):
 - PR1, merged: uploads bucket (DataStack) and `POST /admin/uploads { game }`, returning a
@@ -56,11 +56,16 @@ as part of each PR. The repo layout and commands are in [README.md](README.md).
   an allowlist, to `world/`, owner 1000:1000, folders included so the game can write in them).
   Writes `accepted/<id>.tar.gz` or `rejected/<id>.json`; any internal failure is a rejection too.
   `GET /admin/uploads/{id}` reads status from the bucket (no table): repacking, accepted, rejected.
-- PR3, in review: `POST /admin/servers { …, upload }` (accepted uploads only, for the same game:
-  repack tags accepted files with `game` metadata) copies the accepted file into the backups
-  bucket as the new server's first backup (CopyObject, server side), then creates the server with
-  a pending restore of it. No `restoreKind`: the agent, agent config and restore path are M5's,
-  unchanged, and the data outlives the upload's 7-day expiry. CLI: `hearth create --from-upload <id>`.
+- PR3, merged, then replaced: it copied the accepted file into the backups bucket inside the create
+  request. A 949 MiB upload took longer than the admin Lambda's 10 s (and API Gateway caps a request
+  at 30 s), so create returned 500 and left orphan copies. Long work never runs in an API request.
+- PR3b (restore-from-upload), in review: `POST /admin/servers { …, upload }` (accepted uploads
+  only, for the same game: repack tags accepted files with `game` metadata) creates the server
+  with a pending restore of `accepted/<id>.tar.gz` and `restoreSource: 'upload'`; no copy. The
+  config Lambda signs the agent's link against the uploads bucket (read `accepted/*`, list the
+  bucket); the agent and restore path are M5's, unchanged. The data becomes a backup at the first
+  stop; a server not started before the upload expires (7 days) fails its first start, visibly.
+  Requesting or cancelling a restore clears `restoreSource`. CLI: `hearth create --from-upload <id>`.
 - PR4: `hearth create --version … --upload <file.zip>`: upload, wait for accepted, create.
 - Separately: a wording-only PR replacing "world" in game-neutral code (54 uses, mostly comments
   and agent messages); needs an agent release.

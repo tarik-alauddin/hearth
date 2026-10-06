@@ -1,5 +1,4 @@
 import {
-  CopyObjectCommand,
   DeleteObjectsCommand,
   GetObjectCommand,
   HeadObjectCommand,
@@ -23,8 +22,6 @@ export interface BackupStorage {
   list(serverId: string): Promise<BackupSummary[]>;
   /** Deletes all but the newest `keep` of a server's backups; returns the deleted keys. */
   prune(serverId: string, keep: number): Promise<string[]>;
-  /** Copies an archive already in our format (e.g. an accepted upload) in as backup `key`. */
-  copyIn(source: { bucket: string; key: string }, key: string): Promise<void>;
 }
 
 // The shortest session STS allows; the agent's whole stop takes less than 5 minutes.
@@ -106,11 +103,6 @@ export function s3BackupStorage(opts: {
     },
 
     downloadUrl: presign,
-
-    async copyIn(source, key) {
-      // One request, server side: no download. S3 copies up to 5 GB this way; uploads are capped at 4 GiB.
-      await s3.send(new CopyObjectCommand({ Bucket: bucket, Key: key, CopySource: `${source.bucket}/${source.key}` }));
-    },
 
     async size(key) {
       try {

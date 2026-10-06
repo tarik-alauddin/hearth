@@ -68,6 +68,7 @@ describe('uploadOperations', () => {
     },
     status: async () => undefined,
     accepted: (uploadId) => ({ bucket: 'uploads', key: `accepted/${uploadId}.tar.gz` }),
+    downloadUrl: async (key) => `https://uploads.example/${key}`,
   };
   const ops = uploadOperations({ uploads, now: () => NOW, newId: () => 'U1' });
 

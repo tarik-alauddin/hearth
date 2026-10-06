@@ -126,11 +126,19 @@ describe('ApiStack', () => {
     expect(JSON.stringify(statements[0]?.Resource)).toContain('/servers/*/*');
   });
 
-  it('lets the config handler read server backups, for the restore links it presigns, and nothing else in S3', () => {
+  it('lets the config handler read server backups and accepted uploads, for the restore links it presigns', () => {
     const statements = policyStatements('AgentConfigServiceRoleDefaultPolicy') as { Action: string; Resource: unknown }[];
     const s3 = statements.filter((s) => JSON.stringify(s.Action).includes('s3:'));
-    expect(s3.map((s) => s.Action)).toEqual(['s3:GetObject']);
-    expect(JSON.stringify(s3[0]?.Resource)).toContain('/servers/*/*');
+    expect(s3).toEqual([
+      expect.objectContaining({
+        Action: 's3:GetObject', // CDK merges the two statements
+        Resource: [
+          'arn:aws:s3:::hearth-dev-backups-138300868928-us-west-2/servers/*/*',
+          'arn:aws:s3:::hearth-dev-uploads-138300868928-us-west-2/accepted/*',
+        ],
+      }),
+      expect.objectContaining({ Action: 's3:ListBucket', Resource: 'arn:aws:s3:::hearth-dev-uploads-138300868928-us-west-2' }),
+    ]);
   });
 
   it('lets the idle handler start only the stop workflow, and no other workflow', () => {
@@ -215,11 +223,8 @@ describe('ApiStack', () => {
     const s3 = statements.filter((s) => JSON.stringify(s.Action).includes('s3:'));
     expect(s3).toEqual([
       expect.objectContaining({ Action: 's3:ListBucket', Condition: { StringLike: { 's3:prefix': 'servers/*/*' } } }),
-      // Copying an accepted upload in as a new server's first backup; writing landing files. (CDK merges them.)
-      expect.objectContaining({
-        Action: 's3:PutObject',
-        Resource: ['arn:aws:s3:::hearth-dev-backups-138300868928-us-west-2/servers/*/*', `${uploads}/landing/*`],
-      }),
+      // Landing files only: it can't write backups (a server created from an upload restores it in place).
+      expect.objectContaining({ Action: 's3:PutObject', Resource: `${uploads}/landing/*` }),
       expect.objectContaining({
         Action: 's3:GetObject',
         Resource: [`${uploads}/accepted/*`, `${uploads}/landing/*`, `${uploads}/rejected/*`], // CDK sorts them
