@@ -27,8 +27,8 @@ func serve(t *testing.T, status int, body []byte) string {
 	return srv.URL
 }
 
-// oldWorld is the world a restore replaces.
-func oldWorld(t *testing.T) string {
+// oldData is the game data a restore replaces.
+func oldData(t *testing.T) string {
 	t.Helper()
 	dir := filepath.Join(t.TempDir(), "minecraft")
 	if err := os.MkdirAll(filepath.Join(dir, "world"), 0o755); err != nil {
@@ -49,8 +49,8 @@ func read(t *testing.T, path string) string {
 	return string(b)
 }
 
-func TestRestoreReplacesTheWorldWithTheBackup(t *testing.T) {
-	src, region := world(t)
+func TestRestoreReplacesTheDataWithTheBackup(t *testing.T) {
+	src, region := gameData(t)
 	if err := os.Symlink("world", filepath.Join(src, "current")); err != nil {
 		t.Fatal(err)
 	}
@@ -61,7 +61,7 @@ func TestRestoreReplacesTheWorldWithTheBackup(t *testing.T) {
 	if err := Archive(&archive, game.BackupSpec{Dir: src, Exclude: []string{"logs", "*.jar"}}); err != nil {
 		t.Fatal(err)
 	}
-	dir := oldWorld(t)
+	dir := oldData(t)
 	if err := os.WriteFile(filepath.Join(dir, "only-in-old"), []byte("x"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -93,9 +93,9 @@ func TestRestoreReplacesTheWorldWithTheBackup(t *testing.T) {
 	}
 }
 
-func TestFailedRestoresLeaveTheWorldAsItWas(t *testing.T) {
+func TestFailedRestoresLeaveTheDataAsItWas(t *testing.T) {
 	var archive bytes.Buffer
-	src, _ := world(t)
+	src, _ := gameData(t)
 	if err := Archive(&archive, game.BackupSpec{Dir: src}); err != nil {
 		t.Fatal(err)
 	}
@@ -113,13 +113,13 @@ func TestFailedRestoresLeaveTheWorldAsItWas(t *testing.T) {
 		{"not a gzip", 200, []byte("<Error>nope</Error>"), nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			dir := oldWorld(t)
+			dir := oldData(t)
 			err := Restore(context.Background(), http.DefaultClient, serve(t, tc.status, tc.body), dir)
 			if err == nil || (tc.want != nil && !errors.Is(err, tc.want)) {
 				t.Fatalf("got %v, want %v", err, tc.want)
 			}
 			if read(t, filepath.Join(dir, "world", "level.dat")) != "old" {
-				t.Error("the old world should be untouched")
+				t.Error("the old data should be untouched")
 			}
 			if _, err := os.Lstat(dir + ".restoring"); !os.IsNotExist(err) {
 				t.Error("the half-unpacked backup should be removed")
@@ -128,14 +128,14 @@ func TestFailedRestoresLeaveTheWorldAsItWas(t *testing.T) {
 	}
 }
 
-func TestRestorePutsBackAWorldMovedAsideByAnInterruptedSwap(t *testing.T) {
-	dir := oldWorld(t)
+func TestRestorePutsBackDataMovedAsideByAnInterruptedSwap(t *testing.T) {
+	dir := oldData(t)
 	if err := os.Rename(dir, dir+".previous"); err != nil { // cut short between the two renames
 		t.Fatal(err)
 	}
 	_ = Restore(context.Background(), http.DefaultClient, serve(t, 404, nil), dir)
 	if read(t, filepath.Join(dir, "world", "level.dat")) != "old" {
-		t.Error("the world moved aside should be back in place")
+		t.Error("the data moved aside should be back in place")
 	}
 }
 
@@ -170,7 +170,7 @@ func tarball(t *testing.T, entries ...entry) []byte {
 	return buf.Bytes()
 }
 
-func TestUnpackRefusesEntriesOutsideTheWorld(t *testing.T) {
+func TestUnpackRefusesEntriesOutsideTheDataFolder(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
 		entries []entry
@@ -193,13 +193,13 @@ func TestUnpackRefusesEntriesOutsideTheWorld(t *testing.T) {
 				t.Fatal("expected the archive to be refused")
 			}
 			if _, err := os.Lstat(filepath.Join(parent, "evil")); !os.IsNotExist(err) {
-				t.Error("wrote outside the world")
+				t.Error("wrote outside the data folder")
 			}
 		})
 	}
 }
 
-func TestUnpackAllowsSymlinksWithinTheWorld(t *testing.T) {
+func TestUnpackAllowsSymlinksWithinTheDataFolder(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "w")
 	archive := tarball(t,
 		entry{name: "world/", typ: tar.TypeDir},

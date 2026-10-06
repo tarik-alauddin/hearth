@@ -215,7 +215,7 @@ export function serverOperations({
 
     /**
      * The agent on `instanceId` found nobody playing for `idleMinutes`: RUNNING → STOPPING, through
-     * the same stop workflow (so the world is still saved and backed up), recording why.
+     * the same stop workflow (so the game is still saved and backed up), recording why.
      */
     async idleStop(serverId: string, instanceId: string, idleMinutes: number): Promise<ServerOperationResult> {
       const server = await requireServer(serverId);
@@ -234,8 +234,8 @@ export function serverOperations({
 
     /**
      * Moves a stopped server to a newer release of its game, from its next start. Forward only:
-     * the game converts the world on load, and older versions can't read it back. Needs a clean
-     * last stop with a backup since the server last ran, so the world before the upgrade is kept.
+     * the game converts its data on load, and older versions can't read it back. Needs a clean
+     * last stop with a backup since the server last ran, so the data before the upgrade is kept.
      */
     async setVersion(serverId: string, request: unknown): Promise<ServerRecord> {
       const { version } = validateSetVersion(request);
@@ -256,7 +256,7 @@ export function serverOperations({
       if (to < from) {
         throw new OperationError(
           409,
-          `${version} is older than ${server.version}; versions only move forward (the game upgrades the world)`,
+          `${version} is older than ${server.version}; versions only move forward (the game upgrades its data)`,
         );
       }
 
@@ -285,8 +285,8 @@ export function serverOperations({
     },
 
     /**
-     * Asks for a backup (default: the newest) to replace the world on the next start. Only while
-     * stopped (see `restorable`), and not after an unclean stop unless forced: that world may be in
+     * Asks for a backup (default: the newest) to replace the game data on the next start. Only while
+     * stopped (see `restorable`), and not after an unclean stop unless forced: that data may be in
      * no backup.
      */
     async requestRestore(serverId: string, request: unknown): Promise<ServerRecord> {
@@ -298,7 +298,7 @@ export function serverOperations({
       if (server.lastStopClean === false && !force) {
         throw new OperationError(
           409,
-          `Server ${serverId}'s last stop wasn't clean, so its current world may be in no backup; force to restore anyway`,
+          `Server ${serverId}'s last stop wasn't clean, so its current game data may be in no backup; force to restore anyway`,
         );
       }
       const available = await backups.list(serverId);

@@ -6,7 +6,7 @@ export const metricsNamespace = (env: string) => `Hearth/${env}`;
 export const METRICS = {
   /** Seconds from launch/start to the agent reporting ready. Dimension: Workflow (create | start). */
   timeToReady: 'TimeToReady',
-  /** 1 if the agent reported a clean stop (world saved), else 0. One data point per stop. */
+  /** 1 if the agent reported a clean stop (game saved), else 0. One data point per stop. */
   stopClean: 'StopClean',
   /** Fleet check: servers mid-transition for longer than the workflow timeout allows. */
   stuckServers: 'StuckServers',

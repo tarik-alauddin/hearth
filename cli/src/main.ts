@@ -8,12 +8,12 @@ import { CommandError, commands } from './commands.js';
 const USAGE = `Usage: hearth <command> [options]
 
   create --version <v> [--game minecraft-java] [--game-region <region>] [--channel canary|stable]
-         [--upload <file.zip|file.tar.gz>]   start with this game data (e.g. a zipped world); max 4 GiB
+         [--upload <file.zip|file.tar.gz>]   start with this game data (e.g. a zipped Minecraft world); max 4 GiB
          [--from-upload <uploadId>]          start with an upload already accepted
   list
   status <serverId>
   backups <serverId>                       the server's backups, newest first
-  restore <serverId> [<key>] [--force]     replace the world with a backup (default: newest) on the next start
+  restore <serverId> [<key>] [--force]     replace the game data with a backup (default: newest) on the next start
   restore <serverId> --cancel              cancel a requested restore
   start  <serverId>
   stop   <serverId>

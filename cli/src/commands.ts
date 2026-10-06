@@ -101,9 +101,9 @@ export function commands({
     if (!wait) return;
     const server = await waitFor(result.serverId, target);
     if (target === 'RUNNING') print(`Ready. Join at ${address(server)}   (server ${server.serverId})`);
-    else if (server.lastStopClean === false) print('Stopped. The agent did not report a clean stop; the world may not be saved.');
+    else if (server.lastStopClean === false) print('Stopped. The agent did not report a clean stop; the game may not be saved.');
     // A clean stop's message is a problem that didn't stop it, e.g. a failed backup.
-    else print(`Stopped. World saved.${server.agentMessage ? ` Agent: ${server.agentMessage}` : ''}`);
+    else print(`Stopped. Game saved.${server.agentMessage ? ` Agent: ${server.agentMessage}` : ''}`);
   }
 
   return {
@@ -142,7 +142,7 @@ export function commands({
 
     async stop(id: string, wait: boolean) {
       const result = await api.post<ServerOperationResult>(`/admin/servers/${encodeURIComponent(id)}/stop`);
-      print(result.unchanged ? `Already ${result.status.toLowerCase()}.` : `Stopping ${id}; the agent saves and backs up the world first.`);
+      print(result.unchanged ? `Already ${result.status.toLowerCase()}.` : `Stopping ${id}; the agent saves and backs up the game first.`);
       await followUp(result, 'STOPPED', wait);
     },
 
@@ -230,11 +230,11 @@ export function commands({
       table([['TAKEN', 'SIZE', 'KEY'], ...backups.map((b) => [b.takenAt, mebibytes(b.bytes), b.key])]);
     },
 
-    /** Asks for a backup to replace the world on the next start; nothing happens until then. */
+    /** Asks for a backup to replace the game data on the next start; nothing happens until then. */
     async restore(id: string, key: string | undefined, force: boolean) {
       const body: RestoreRequest = { ...(key ? { key } : {}), ...(force ? { force } : {}) };
       const server = await api.post<ServerRecord>(`/admin/servers/${encodeURIComponent(id)}/restore`, body);
-      print(`${server.serverId} will restore ${server.restoreKey} on its next start, replacing the current world.`);
+      print(`${server.serverId} will restore ${server.restoreKey} on its next start, replacing the current game data.`);
       print(`Start it with \`hearth start ${server.serverId}\`, or cancel with \`hearth restore ${server.serverId} --cancel\`.`);
     },
 

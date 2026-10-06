@@ -59,7 +59,7 @@ func Restore(ctx context.Context, client *http.Client, url, dir string) error {
 }
 
 // recoverSwap cleans up after a restore that was cut short: an unfinished unpack is discarded, and
-// a world moved aside but never replaced is put back.
+// data moved aside but never replaced is put back.
 func recoverSwap(dir, staging, previous string) error {
 	if err := os.RemoveAll(staging); err != nil {
 		return err
@@ -73,8 +73,8 @@ func recoverSwap(dir, staging, previous string) error {
 	return os.RemoveAll(previous)
 }
 
-// swap moves dir aside, moves staging into its place, then deletes the old world. Renames on one
-// filesystem are atomic, so dir is always either the old world or the new one.
+// swap moves dir aside, moves staging into its place, then deletes the old data. Renames on one
+// filesystem are atomic, so dir is always either the old data or the new.
 func swap(dir, staging, previous string) error {
 	if err := os.Rename(dir, previous); err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return err

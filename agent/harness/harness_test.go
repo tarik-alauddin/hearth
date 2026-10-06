@@ -136,7 +136,7 @@ func docker(t *testing.T, args ...string) string {
 	return strings.TrimSpace(string(out))
 }
 
-// dataDir is a fresh world volume stand-in. A game may write files as its own user, which the
+// dataDir is a fresh data volume stand-in. A game may write files as its own user, which the
 // test process can't delete; cleanupImage (an image already pulled for the test, with a shell)
 // removes them. Empty means the game writes nothing that needs it.
 func dataDir(t *testing.T, cleanupImage string) string {

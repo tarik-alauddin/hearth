@@ -128,7 +128,7 @@ export class MonitoringStack extends HearthStack {
     }
     alarm(
       'unclean-stop',
-      'A server stopped without the agent reporting a clean stop: its world may not be saved.',
+      'A server stopped without the agent reporting a clean stop: its game may not be saved.',
       // StopClean is 1 or 0 per stop; any 0 in the period means an unclean stop.
       new MathExpression({
         expression: 'samples - clean',

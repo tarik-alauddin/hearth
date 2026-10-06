@@ -13,7 +13,7 @@ export interface AgentConfig {
   port: number;
   /** The agent release this server's channel points at; absent until the channel has one. */
   agent?: AgentTarget;
-  /** A requested restore: replace the world with this backup before starting the game. */
+  /** A requested restore: replace the game data with this backup before starting the game. */
   restore?: RestoreTarget;
   /** Ask for a stop after this many minutes with nobody playing; 0 = never. */
   idleStopMinutes: number;
@@ -30,7 +30,7 @@ export interface IdleReport {
   idleMinutes: number;
 }
 
-/** `POST /agent/restored` request body: the world now holds this backup. */
+/** `POST /agent/restored` request body: the game data now holds this backup. */
 export interface RestoreDoneReport {
   key: string;
 }
