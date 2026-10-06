@@ -1,3 +1,4 @@
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import type { FleetReport, ServerRecord, UploadStatus } from '@hearth/shared';
 import type { Api } from './client.js';
@@ -240,7 +241,9 @@ describe('commands', () => {
       return { out, sent, cmd };
     }
 
-    const opts = { game: 'minecraft-java', version: '26.3', file: 'C:\\worlds\\MyWorld.zip', wait: false };
+    // Built with the running OS's separator: basename() splits on "\" only on Windows, and CI runs Linux.
+    const file = join('worlds', 'MyWorld.zip');
+    const opts = { game: 'minecraft-java', version: '26.3', file, wait: false };
 
     it('uploads, waits for repack to accept it, then creates from it', async () => {
       const { api, calls } = uploadApi([
@@ -249,7 +252,7 @@ describe('commands', () => {
       ]);
       const { out, sent, cmd } = runUpload(api);
       await cmd.create(opts);
-      expect(sent).toEqual(['https://s3/ C:\\worlds\\MyWorld.zip']);
+      expect(sent).toEqual([`https://s3/ ${file}`]);
       expect(calls).toEqual([
         'POST /admin/uploads {"game":"minecraft-java"}',
         `GET /admin/uploads/${UPLOAD}`,
