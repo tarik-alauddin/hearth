@@ -69,6 +69,8 @@ export class DataStack extends HearthStack {
     // here needs recovering, so no versioning; files expire instead of being deleted.
     this.uploadsBucket = new Bucket(this, 'Uploads', {
       bucketName: uploadsBucket(env, this.account, this.region),
+      // New landing files reach the repack Lambda (in ApiStack) through EventBridge.
+      eventBridgeEnabled: true,
       blockPublicAccess: BlockPublicAccess.BLOCK_ALL,
       encryption: BucketEncryption.S3_MANAGED,
       enforceSSL: true,
@@ -86,5 +88,13 @@ export class DataStack extends HearthStack {
       id: 'AwsSolutions-S1',
       reason: 'Server access logs would need a second bucket; uploads live a week at most.',
     });
+    // CDK's helper that switches on the bucket's EventBridge notifications, at deploy time only.
+    const notifications = this.node.tryFindChild('BucketNotificationsHandler050a0587b7544547bf325f094a3db834');
+    if (notifications) {
+      Validations.of(notifications).acknowledge({
+        id: 'AwsSolutions-IAM4[Policy::arn:<AWS::Partition>:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole]',
+        reason: "CDK's bucket-notifications helper; the AWS-maintained policy only allows writing its logs.",
+      });
+    }
   }
 }

@@ -1,0 +1,25 @@
+{
+  "name": "@hearth/repack",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.1143.0",
+    "@hearth/shared": "workspace:*",
+    "tar-stream": "^3.2.2",
+    "yauzl": "^3.4.0"
+  },
+  "devDependencies": {
+    "@types/aws-lambda": "^8.10.163",
+    "@types/node": "^26.6.3",
+    "@types/yauzl": "^3.4.0",
+    "@types/yazl": "^3.3.1",
+    "typescript": "~6.0.3",
+    "vitest": "^5.0.2",
+    "yazl": "^3.3.1"
+  }
+}

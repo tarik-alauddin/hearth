@@ -178,6 +178,7 @@ describe('ApiStack', () => {
     ['POST /admin/servers'],
     ['GET /admin/servers/{id}'],
     ['POST /admin/uploads'],
+    ['GET /admin/uploads/{id}'],
     ['GET /admin/servers/{id}/backups'],
     ['POST /admin/servers/{id}/version'],
     ['POST /admin/servers/{id}/restore'],
@@ -204,15 +205,59 @@ describe('ApiStack', () => {
     expect(JSON.stringify(statements)).not.toMatch(/ec2:|DeleteItem/);
   });
 
-  it('lets the admin function list server backups and write upload landing files, nothing else in S3', () => {
+  it('lets the admin function list server backups, write upload landing files and read upload results', () => {
     const statements = policyStatements('AdminServiceRoleDefaultPolicy') as {
       Action: unknown;
       Resource: unknown;
       Condition?: unknown;
     }[];
+    const uploads = 'arn:aws:s3:::hearth-dev-uploads-138300868928-us-west-2';
     const s3 = statements.filter((s) => JSON.stringify(s.Action).includes('s3:'));
-    expect(s3.map((s) => s.Action)).toEqual(['s3:ListBucket', 's3:PutObject']);
-    expect(s3[0]?.Condition).toEqual({ StringLike: { 's3:prefix': 'servers/*/*' } });
-    expect(s3[1]?.Resource).toBe('arn:aws:s3:::hearth-dev-uploads-138300868928-us-west-2/landing/*');
+    expect(s3).toEqual([
+      expect.objectContaining({ Action: 's3:ListBucket', Condition: { StringLike: { 's3:prefix': 'servers/*/*' } } }),
+      expect.objectContaining({ Action: 's3:PutObject', Resource: `${uploads}/landing/*` }),
+      expect.objectContaining({
+        Action: 's3:GetObject',
+        Resource: [`${uploads}/accepted/*`, `${uploads}/landing/*`, `${uploads}/rejected/*`], // CDK sorts them
+      }),
+      expect.objectContaining({ Action: 's3:ListBucket', Resource: uploads }),
+    ]);
+    expect(JSON.stringify(statements)).not.toContain('s3:Delete');
+  });
+
+  describe('repack', () => {
+    const uploads = 'arn:aws:s3:::hearth-dev-uploads-138300868928-us-west-2';
+
+    it('has the disk, memory and time for uploads of a few GB', () => {
+      template.hasResourceProperties('AWS::Lambda::Function', {
+        Handler: 'index.handler',
+        Timeout: 900,
+        MemorySize: 2048,
+        EphemeralStorage: { Size: 10240 },
+        Environment: { Variables: Match.objectLike({ UPLOADS_BUCKET: 'hearth-dev-uploads-138300868928-us-west-2' }) },
+      });
+    });
+
+    it('reads landing files and writes results, and can delete nothing', () => {
+      const statements = policyStatements('RepackServiceRoleDefaultPolicy') as { Action: unknown; Resource: unknown }[];
+      expect(statements).toEqual([
+        expect.objectContaining({ Action: 's3:GetObject', Resource: `${uploads}/landing/*` }),
+        expect.objectContaining({ Action: 's3:PutObject', Resource: [`${uploads}/accepted/*`, `${uploads}/rejected/*`] }),
+      ]);
+    });
+
+    it('runs for each new landing file in the uploads bucket', () => {
+      template.hasResourceProperties('AWS::Events::Rule', {
+        EventPattern: {
+          source: ['aws.s3'],
+          'detail-type': ['Object Created'],
+          detail: {
+            bucket: { name: ['hearth-dev-uploads-138300868928-us-west-2'] },
+            object: { key: [{ prefix: 'landing/' }] },
+          },
+        },
+        Targets: [Match.objectLike({ RetryPolicy: { MaximumRetryAttempts: 2 } })],
+      });
+    });
   });
 });
