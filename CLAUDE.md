@@ -26,6 +26,14 @@ as part of each PR. The repo layout and commands are in [README.md](README.md).
   infra changes, and shellcheck (`koalaman/shellcheck:latest` in Docker) for shell scripts.
 - Windows + Git Bash: set `MSYS_NO_PATHCONV=1` for AWS CLI calls with `/hearth/...` paths. `.sh` and `.go`
   files must stay LF (`.gitattributes`). Prefer the Edit tool over shell or Python rewrites of source files.
+- Local `pnpm synth` on this machine: CDK calls `pnpm.cmd`, but Volta installs `pnpm.exe`; put a
+  `pnpm.cmd` shim (`@pnpm.exe %*`) on PATH for the run. Go isn't installed: run agent checks in the
+  `golang:1.27` Docker image.
+- Lambdas bundle as ESM: a function bundling CommonJS packages (e.g. yauzl) needs
+  `commonJsDependencies: true` in `hearthFunction`, or it fails at runtime with "Dynamic require"
+  (unit tests and `node -e` don't show it). Load the synthesized bundle as ESM to check.
+- S3 answers a missing key with 403, not 404, unless the caller (or a link's signer) has
+  `s3:ListBucket` on the bucket.
 
 ## Status (update with each PR)
 
@@ -34,16 +42,20 @@ as part of each PR. The repo layout and commands are in [README.md](README.md).
 | M0–M4: foundation, infra, agent, lifecycle workflows, agent releases; plus monitoring | Done |
 | M5 Game updates and backups | Done (PR1–PR9; follow-ups under Deferred) |
 | M6 Idle shutdown | Done (PR1–PR4; join events from the log under Deferred) |
-| M7 Move your world | In progress: PR1 (uploads bucket and form) in review |
+| M7 Move your world | In progress: PR1 (uploads bucket and form) merging; PR2 (repack) in review |
 
 **M7 plan** (create a server from a user's upload in one step; the UI will do the same):
-- PR1, in review: uploads bucket (DataStack) and `POST /admin/uploads { game }`, returning a
+- PR1, merging: uploads bucket (DataStack) and `POST /admin/uploads { game }`, returning a
   presigned POST form (not a PUT link: its signed policy makes S3 enforce the 4 GiB cap, and a
   browser can submit it) for `landing/<game>/<uploadId>`, valid 15 min. The admin role can write
   `landing/*` only.
-- PR2: the repack Lambda (`services/repack`) on `landing/`: strict unpack, the game's upload rules,
-  repack in backup format to `accepted/<uploadId>.tar.gz` or a reason to `rejected/<uploadId>.json`;
-  `GET /admin/uploads/{id}` (repacking, accepted, rejected).
+- PR2, in review: the repack Lambda (`services/repack`, ApiStack; EventBridge rule on the bucket's
+  Object Created events under `landing/`; 10 GiB /tmp, 15 min, 2 GB). Reads zip (yauzl, sizes
+  checked) or .tar.gz (tar-stream) by magic bytes; refuses links, unsafe paths, >200k entries,
+  >8 GiB unpacked. Per-game `UploadRules` in `src/games/` (Minecraft: the folder with level.dat,
+  an allowlist, to `world/`, owner 1000:1000, folders included so the game can write in them).
+  Writes `accepted/<id>.tar.gz` or `rejected/<id>.json`; any internal failure is a rejection too.
+  `GET /admin/uploads/{id}` reads status from the bucket (no table): repacking, accepted, rejected.
 - PR3: `POST /admin/servers { …, upload }` (accepted uploads only) creates with a pending restore
   of the accepted file (`restoreKind` picks the bucket). The agent doesn't change.
 - PR4: `hearth create --version … --upload <file.zip>`: upload, wait for accepted, create.
@@ -126,7 +138,7 @@ as part of each PR. The repo layout and commands are in [README.md](README.md).
 - **Restore happens in the start workflow, not a workflow of its own:** a restore always needs the
   game stopped and then started. A pending restore arrives in the agent's config, so ordinary starts
   pay nothing; only a start with a restore pending downloads and unpacks a backup first.
-- **S3 answers a missing backup with 403, not 404,** because the link's signer (the config Lambda)
+- **S3 answers a missing backup with 403, not 404** (see the working agreement), because the link's signer (the config Lambda)
   can't list the bucket. On a 403 the agent fetches a new link once (it may have expired), then
   fails with "no longer exists, or S3 refused the link".
 - **A restore whose backup is gone fails the start** (the server ends `FAILED`, world untouched) rather

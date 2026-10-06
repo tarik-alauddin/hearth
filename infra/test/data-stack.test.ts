@@ -146,6 +146,12 @@ describe('DataStack', () => {
       expect(props.VersioningConfiguration).toBeUndefined();
     });
 
+    it('sends its events to EventBridge, where repack picks up new landing files', () => {
+      dev.template.hasResourceProperties('Custom::S3BucketNotifications', {
+        NotificationConfiguration: { EventBridgeConfiguration: {} },
+      });
+    });
+
     it('expires landing files after a day and repack results after a week', () => {
       const rules = (uploads().LifecycleConfiguration as { Rules: Record<string, unknown>[] }).Rules;
       expect(rules).toEqual(

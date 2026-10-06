@@ -74,8 +74,12 @@ const BACKUPS = [
   { key: 'servers/s1/20261004T120000Z.tar.gz', takenAt: '2026-10-04T12:00:10.000Z', bytes: 1024 },
 ];
 
+const UPLOAD = '01K6ABCDEF0123456789ABCDEF';
 const uploads = uploadOperations({
-  uploads: { form: async () => ({ url: 'https://bucket/', fields: { key: 'k' }, expiresAt: 'later' }) },
+  uploads: {
+    form: async () => ({ url: 'https://bucket/', fields: { key: 'k' }, expiresAt: 'later' }),
+    status: async (uploadId) => (uploadId === UPLOAD ? { uploadId, status: 'repacking' } : undefined),
+  },
   newId: () => 'U1',
 });
 
@@ -143,6 +147,15 @@ describe('admin routes', () => {
     expect(JSON.parse(res.body!)).toMatchObject({ uploadId: 'U1', url: 'https://bucket/' });
     const bad = await handle(ops)(event('POST /admin/uploads', { body: '{"game":"tetris"}' }));
     expect(bad.statusCode).toBe(400);
+  });
+
+  it("answers an upload's status, or 404 for an unknown upload", async () => {
+    const { ops } = fakeOperations();
+    const res = await handle(ops)(event('GET /admin/uploads/{id}', { id: UPLOAD }));
+    expect(res.statusCode).toBe(200);
+    expect(JSON.parse(res.body!)).toEqual({ uploadId: UPLOAD, status: 'repacking' });
+    expect((await handle(ops)(event('GET /admin/uploads/{id}', { id: '01K6ZZZZZZ0123456789ABCDEF' }))).statusCode).toBe(404);
+    expect((await handle(ops)(event('GET /admin/uploads/{id}', { id: '../etc' }))).statusCode).toBe(404);
   });
 
   it('sets the version, answering with the server', async () => {

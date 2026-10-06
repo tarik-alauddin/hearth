@@ -44,6 +44,8 @@ export function adminHandler({ operations, uploads, instanceRoleNames, log = def
           log({ msg: 'upload started', caller, uploadId: result.uploadId });
           return json(201, result);
         }
+        case 'GET /admin/uploads/{id}':
+          return json(200, await uploads.uploadStatus(event.pathParameters?.id ?? ''));
         case 'GET /admin/servers/{id}/backups':
           return json(200, await operations.listBackups(serverId));
         case 'POST /admin/servers/{id}/version': {

@@ -1,3 +1,4 @@
+import { GetObjectCommand, HeadObjectCommand, NoSuchKey, NotFound } from '@aws-sdk/client-s3';
 import { describe, expect, it } from 'vitest';
 import { MAX_UPLOAD_BYTES } from '@hearth/shared';
 import { s3UploadStorage, uploadOperations, type UploadStorage } from './uploads.js';
@@ -27,6 +28,37 @@ describe('s3UploadStorage', () => {
   });
 });
 
+describe('s3UploadStorage status', () => {
+  const ID = '01K6ABCDEF0123456789ABCDEF';
+
+  /** A bucket holding just these keys (a rejection's body is its JSON). */
+  function bucket(objects: Record<string, string>) {
+    const s3 = {
+      send: async (command: HeadObjectCommand | GetObjectCommand) => {
+        const body = objects[command.input.Key!];
+        if (body === undefined) {
+          throw command instanceof HeadObjectCommand
+            ? new NotFound({ message: 'not found', $metadata: {} })
+            : new NoSuchKey({ message: 'no such key', $metadata: {} });
+        }
+        return command instanceof HeadObjectCommand
+          ? { ContentLength: body.length }
+          : { Body: { transformToString: async () => body } };
+      },
+    };
+    return s3UploadStorage({ bucket: 'b', region: 'us-west-2', s3: s3 as never });
+  }
+
+  it.each([
+    [{ [`accepted/${ID}.tar.gz`]: 'x'.repeat(42) }, { uploadId: ID, status: 'accepted', bytes: 42 }],
+    [{ [`rejected/${ID}.json`]: '{"reason":"no level.dat","at":"t"}' }, { uploadId: ID, status: 'rejected', reason: 'no level.dat' }],
+    [{ [`landing/minecraft-java/${ID}`]: 'zip' }, { uploadId: ID, status: 'repacking' }],
+    [{}, undefined],
+  ])('reads %j as %j', async (objects, want) => {
+    expect(await bucket(objects).status(ID)).toEqual(want);
+  });
+});
+
 describe('uploadOperations', () => {
   const forms: string[] = [];
   const uploads: UploadStorage = {
@@ -34,6 +66,7 @@ describe('uploadOperations', () => {
       forms.push(`${game} ${uploadId}`);
       return { url: 'https://bucket/', fields: { key: `landing/${game}/${uploadId}` }, expiresAt: 'later' };
     },
+    status: async () => undefined,
   };
   const ops = uploadOperations({ uploads, now: () => NOW, newId: () => 'U1' });
 

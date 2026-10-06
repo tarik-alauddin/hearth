@@ -1,4 +1,6 @@
-import { RemovalPolicy, Validations } from 'aws-cdk-lib';
+import { Duration, RemovalPolicy, Size, Validations } from 'aws-cdk-lib';
+import { Rule } from 'aws-cdk-lib/aws-events';
+import { LambdaFunction } from 'aws-cdk-lib/aws-events-targets';
 import { HttpApi, HttpMethod, HttpStage, LogGroupLogDestination } from 'aws-cdk-lib/aws-apigatewayv2';
 import { HttpIamAuthorizer } from 'aws-cdk-lib/aws-apigatewayv2-authorizers';
 import { HttpLambdaIntegration } from 'aws-cdk-lib/aws-apigatewayv2-integrations';
@@ -191,12 +193,50 @@ export class ApiStack extends HearthStack {
     });
     admin.addToRolePolicy(listServerBackups);
     // Upload forms are signed with this role, so it may write landing files and nothing else there.
-    const landing = `arn:${this.partition}:s3:::${uploads}/landing/*`;
+    const uploadsArn = `arn:${this.partition}:s3:::${uploads}`;
+    const landing = `${uploadsArn}/landing/*`;
+    const accepted = `${uploadsArn}/accepted/*`;
+    const rejected = `${uploadsArn}/rejected/*`;
     admin.addToRolePolicy(new PolicyStatement({ actions: ['s3:PutObject'], resources: [landing] }));
-    Validations.of(admin).acknowledge({
-      id: `AwsSolutions-IAM5[Resource::${landing}]`,
-      reason: 'Each upload form is signed for one landing key; the role can write no other prefix.',
+    // Upload status: read where an upload has got to. Listing makes a missing key a 404 rather than a 403.
+    admin.addToRolePolicy(new PolicyStatement({ actions: ['s3:GetObject'], resources: [landing, accepted, rejected] }));
+    admin.addToRolePolicy(new PolicyStatement({ actions: ['s3:ListBucket'], resources: [uploadsArn] }));
+
+    // Repack: each new landing file, through EventBridge. It reads landing files and writes
+    // results; it can't delete anything (landing files expire).
+    const repack = hearthFunction(this, 'Repack', {
+      config: props.config,
+      entry: 'repack/src/lambda.ts',
+      handler: 'handler',
+      environment: { UPLOADS_BUCKET: uploads },
+      timeout: Duration.minutes(15),
+      memorySize: 2048,
+      ephemeralStorageSize: Size.gibibytes(10),
+      commonJsDependencies: true, // yauzl, tar-stream
     });
+    repack.addToRolePolicy(new PolicyStatement({ actions: ['s3:GetObject'], resources: [landing] }));
+    repack.addToRolePolicy(new PolicyStatement({ actions: ['s3:PutObject'], resources: [accepted, rejected] }));
+    new Rule(this, 'UploadLanded', {
+      description: `Hearth ${env}: repack each new upload`,
+      eventPattern: {
+        source: ['aws.s3'],
+        detailType: ['Object Created'],
+        detail: { bucket: { name: [uploads] }, object: { key: [{ prefix: 'landing/' }] } },
+      },
+      targets: [new LambdaFunction(repack, { retryAttempts: 2 })],
+    });
+
+    for (const [construct, resources] of [
+      [admin, [landing, accepted, rejected]],
+      [repack, [landing, accepted, rejected]],
+    ] as const) {
+      for (const resource of resources) {
+        Validations.of(construct).acknowledge({
+          id: `AwsSolutions-IAM5[Resource::${resource}]`,
+          reason: 'Uploads are keyed by a random ID under fixed prefixes; each role gets only the prefixes it needs.',
+        });
+      }
+    }
     admin.addToRolePolicy(
       new PolicyStatement({
         actions: ['dynamodb:GetItem', 'dynamodb:PutItem', 'dynamodb:UpdateItem', 'dynamodb:Scan'],
@@ -209,12 +249,13 @@ export class ApiStack extends HearthStack {
         resources: Object.values(props.workflows).map((machine) => machine.stateMachineArn),
       }),
     );
-    this.functions = [...agentRoutes.map(([, , fn]) => fn), admin];
+    this.functions = [...agentRoutes.map(([, , fn]) => fn), admin, repack];
     const adminIntegration = new HttpLambdaIntegration('AdminIntegration', admin);
     for (const [path, method] of [
       ['/admin/servers', HttpMethod.GET],
       ['/admin/servers', HttpMethod.POST],
       ['/admin/uploads', HttpMethod.POST],
+      ['/admin/uploads/{id}', HttpMethod.GET],
       ['/admin/servers/{id}', HttpMethod.GET],
       ['/admin/servers/{id}/backups', HttpMethod.GET],
       ['/admin/servers/{id}/version', HttpMethod.POST],
