@@ -46,7 +46,19 @@ as part of each PR. The repo layout and commands are in [README.md](README.md).
 | M0–M4: foundation, infra, agent, lifecycle workflows, agent releases; plus monitoring | Done |
 | M5 Game updates and backups | Done (PR1–PR9; follow-ups under Deferred) |
 | M6 Idle shutdown | Done (PR1–PR4; join events from the log under Deferred) |
-| M7 Move your world | In progress: PR1–PR3b merged; PR4 tested on dev, merging after a CI fix; testing guide and doc close-out left |
+| M7 Move your world | Done (PR1–PR4; tested on dev with a real world) |
+| Before Phase 2 | In progress: PR1 (M7 docs) in review |
+
+**Before Phase 2 plan** (Phase 1 ends with M7; then the UI, per the Architecture doc):
+1. M7 docs: testing guide section for uploads; Architecture roadmap and System map close-out.
+2. Neutral wording: "world" out of game-neutral code (54 uses); agent release.
+3. Destroy, part 1: a Step Functions `destroy` workflow (terminate the instance and wait, delete the
+   data volume, delete the record). Long waits, so a workflow, never an API request.
+4. Destroy, part 2: `POST /admin/servers/{id}/destroy` and `hearth destroy <id>` (type the ID back
+   to confirm; `--yes` skips the prompt); then delete `scripts/dev-server.sh`.
+5. EC2 events router (the planned fix): each environment sees only its own instances. Before 6.
+6. Stage and prod: deploy, promote the agent, check alarms reach the owner.
+Not a PR: the owner moves off root credentials (IAM Identity Center or an admin user), before 6.
 
 **M7 plan** (create a server from a user's upload in one step; the UI will do the same):
 - PR1, merged: uploads bucket (DataStack) and `POST /admin/uploads { game }`, returning a
@@ -70,12 +82,10 @@ as part of each PR. The repo layout and commands are in [README.md](README.md).
   bucket); the agent and restore path are M5's, unchanged. The data becomes a backup at the first
   stop; a server not started before the upload expires (7 days) fails its first start, visibly.
   Requesting or cancelling a restore clears `restoreSource`. CLI: `hearth create --from-upload <id>`.
-- PR4, tested on dev; merging after a CI fix (a test only passed on Windows): `hearth create --version … --upload <file.zip|.tar.gz>`: checks the size, gets a
+- PR4, merged (tested on dev; its first CI run failed on a test that only passed on Windows): `hearth create --version … --upload <file.zip|.tar.gz>`: checks the size, gets a
   form, POSTs the file to S3 (streamed from disk: `openAsBlob`; fields first, file last), polls
   `GET /admin/uploads/{id}` until accepted (or fails with repack's reason), then creates from it.
   The same steps the UI will take. `--from-upload <id>` stays for an upload already accepted.
-- Separately: a wording-only PR replacing "world" in game-neutral code (54 uses, mostly comments
-  and agent messages); needs an agent release.
 
 **M6 plan** (stop servers nobody is playing on; detection runs on the instance, no heartbeats):
 - PR1, merged: adapters gain `Players()` (Minecraft: the server list ping); the agent checks
@@ -123,6 +133,11 @@ as part of each PR. The repo layout and commands are in [README.md](README.md).
   change doesn't redeploy the stack that consumes it.
 - **A failed workflow never leaves an instance running.** Create/start failure paths stop the instance;
   instances are tagged with `serverId` at launch.
+- **Destroy** (planned): never a running server (refused: stop it first, which also saves and backs
+  it up). It removes the instance, data volume and record, and **keeps the server's backups**, so
+  someone with a problem can still get their data back. Those backups are current objects, so no
+  lifecycle rule expires them; deleting them is by hand. Confirm by typing the server ID; `--yes`
+  skips the prompt.
 - **Agent releases:** a merge to `main` touching `agent/` cuts `YYYY.MM.DD-<sha7>` onto dev canary;
   "Promote agent" moves any release to any env and channel. Pruning is count-based (each channel's last
   3, the newest 5).

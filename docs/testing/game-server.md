@@ -1,7 +1,8 @@
 # Game server check
 
-End-to-end check that a server can be created, joined from a Minecraft client, stopped (with a
-backup) and started with its world intact, through the real API and lifecycle workflows. Rerun after changes to the
+End-to-end check that a server can be created (fresh, or from an uploaded world), joined from a
+Minecraft client, stopped (with a backup) and started with its world intact, through the real API
+and lifecycle workflows. Rerun after changes to the
 agent, the API, the workflows, the startup script or the launch template.
 
 **Where to run:** locally (`pnpm hearth …`, with AWS credentials for the account) or in AWS CloudShell
@@ -97,14 +98,38 @@ hearth set-version <serverId> <older release>   # refused: versions only move fo
 hearth start <serverId>                         # join with a client on the new version
 ```
 
-## 7. Check the rest
+## 7. Create from an upload
+
+A zip (or .tar.gz) holding a world, e.g. a single-player save from `.minecraft/saves/<name>`,
+zipped. Pick the world's version or a newer one: the game upgrades a world on load, never back.
+
+```bash
+hearth create --version <version> --upload <MyWorld.zip>
+```
+
+Expect `Uploading MyWorld.zip (… MiB)…` → `Uploaded. Checking it…` → `Accepted (…)` → the usual
+create, with `STARTING · agent starting` while the agent restores it. Join: it's your world, not a
+new one. After the first `hearth stop`, `hearth backups <serverId>` lists it as the first backup.
+
+Refused, and nothing created:
+
+| Upload | Message |
+| --- | --- |
+| Not a zip or .tar.gz (e.g. a .txt) | `The upload was rejected: the upload must be a .zip or .tar.gz file` |
+| A zip with no world in it | `… no Minecraft world found: the upload needs exactly one folder holding level.dat` |
+| Over 4 GiB | `… uploads can be at most 4096.0 MiB` (before anything is uploaded) |
+
+`--from-upload <uploadId>` creates from an upload already accepted (accepted uploads expire after
+7 days).
+
+## 8. Check the rest
 
 ```bash
 hearth list                         # one line per server
 hearth start <serverId>             # while RUNNING: "Already running.", nothing new starts
 ```
 
-## 8. Clean up
+## 9. Clean up
 
 There's no delete in the API until archiving exists (it would lose the world). Use the dev script
 (needs the AWS CLI; CloudShell has it):
@@ -124,4 +149,6 @@ bash scripts/dev-server.sh destroy <serverId> --yes
 | `API 403` | Your credentials lack `execute-api:Invoke`, or you're using a game instance's role |
 | `API 409` | The server is mid-operation (e.g. stop while starting); wait and retry |
 | Can't connect from the client | Version mismatch, or an old IP after a start |
+| An upload stays "Checking it…" | The `Repack` Lambda's logs (`upload accepted` / `upload rejected` / `repack failed`); `aws s3 ls s3://hearth-<env>-uploads-<account>-us-west-2/landing/` |
+| A server from an upload `FAILED` on first start | `hearth status` (e.g. `backup … no longer exists`: the upload expired before the first start); create again with a new upload |
 | Backup failed, or no `last backup` | `journalctl -u hearth-agent` (`backup failed`); the `AgentBackupCredentials`/`AgentBackupDone` Lambda logs |
