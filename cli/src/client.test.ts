@@ -1,5 +1,41 @@
+import { mkdtemp, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { ApiError, apiClient } from './client.js';
+import { ApiError, apiClient, sendUpload } from './client.js';
+
+describe('sendUpload', () => {
+  async function file(content: string) {
+    const path = join(await mkdtemp(join(tmpdir(), 'upload-')), 'MyWorld.zip');
+    await writeFile(path, content);
+    return path;
+  }
+
+  it("POSTs the form's fields first and the file last, as S3 requires", async () => {
+    let sent: { url: string; entries: [string, FormDataEntryValue][] } | undefined;
+    const fetch = (async (url: string, init: RequestInit) => {
+      sent = { url, entries: [...(init.body as FormData).entries()] };
+      return new Response(null, { status: 204 });
+    }) as typeof globalThis.fetch;
+
+    await sendUpload({ url: 'https://bucket.s3/', fields: { key: 'landing/x', Policy: 'p' } }, await file('zipdata'), fetch);
+    expect(sent?.url).toBe('https://bucket.s3/');
+    expect(sent?.entries.map(([name]) => name)).toEqual(['key', 'Policy', 'file']);
+    const blob = sent?.entries[2]?.[1] as File;
+    expect(blob.name).toBe('MyWorld.zip');
+    expect(await blob.text()).toBe('zipdata');
+  });
+
+  it("fails with S3's message", async () => {
+    const fetch = (async () =>
+      new Response('<Error><Code>EntityTooLarge</Code><Message>Your proposed upload exceeds the maximum allowed size</Message></Error>', {
+        status: 400,
+      })) as typeof globalThis.fetch;
+    await expect(sendUpload({ url: 'https://bucket.s3/', fields: {} }, await file('x'), fetch)).rejects.toThrow(
+      'The upload failed: Your proposed upload exceeds the maximum allowed size',
+    );
+  });
+});
 
 const credentials = async () => ({ accessKeyId: 'AKIDEXAMPLE', secretAccessKey: 'secret', sessionToken: 'token' });
 

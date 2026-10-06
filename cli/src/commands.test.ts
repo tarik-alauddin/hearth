@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { FleetReport, ServerRecord } from '@hearth/shared';
+import type { FleetReport, ServerRecord, UploadStatus } from '@hearth/shared';
 import type { Api } from './client.js';
 import { CommandError, commands } from './commands.js';
 
@@ -200,6 +200,89 @@ describe('commands', () => {
     const { out, cmd } = run(api);
     await cmd.status('s1');
     expect(out).toContain('last backup 2026-10-04T12:01:00.000Z (3.0 MiB)');
+  });
+
+  describe('create --upload', () => {
+    const UPLOAD = '01K6ABCDEF0123456789ABCDEF';
+
+    /** An API that hands out an upload form, reports the given statuses in turn, and creates. */
+    function uploadApi(statuses: UploadStatus[]) {
+      const calls: string[] = [];
+      let i = 0;
+      const api = {
+        post: async (path: string, body?: unknown) => {
+          calls.push(`POST ${path} ${JSON.stringify(body)}`);
+          if (path === '/admin/uploads') return { uploadId: UPLOAD, url: 'https://s3/', fields: { key: 'k' } };
+          return { serverId: 's1', status: 'PROVISIONING' };
+        },
+        get: async (path: string) => {
+          calls.push(`GET ${path}`);
+          return statuses[Math.min(i++, statuses.length - 1)];
+        },
+      } as unknown as Api;
+      return { api, calls };
+    }
+
+    function runUpload(api: Api, bytes = 3 * 2 ** 20) {
+      const out: string[] = [];
+      const sent: string[] = [];
+      const cmd = commands({
+        api,
+        print: (l) => out.push(l),
+        sleep: async () => {},
+        pollMs: 1,
+        timeoutMs: 100,
+        fileSize: async () => bytes,
+        sendUpload: async (form, file) => {
+          sent.push(`${form.url} ${file}`);
+        },
+      });
+      return { out, sent, cmd };
+    }
+
+    const opts = { game: 'minecraft-java', version: '26.3', file: 'C:\\worlds\\MyWorld.zip', wait: false };
+
+    it('uploads, waits for repack to accept it, then creates from it', async () => {
+      const { api, calls } = uploadApi([
+        { uploadId: UPLOAD, status: 'repacking' },
+        { uploadId: UPLOAD, status: 'accepted', bytes: 2 * 2 ** 20 },
+      ]);
+      const { out, sent, cmd } = runUpload(api);
+      await cmd.create(opts);
+      expect(sent).toEqual(['https://s3/ C:\\worlds\\MyWorld.zip']);
+      expect(calls).toEqual([
+        'POST /admin/uploads {"game":"minecraft-java"}',
+        `GET /admin/uploads/${UPLOAD}`,
+        `GET /admin/uploads/${UPLOAD}`,
+        `POST /admin/servers {"game":"minecraft-java","version":"26.3","upload":"${UPLOAD}"}`,
+      ]);
+      expect(out).toEqual([
+        'Uploading MyWorld.zip (3.0 MiB)…',
+        'Uploaded. Checking it…',
+        'Accepted (2.0 MiB after repacking).',
+        `Creating s1 (minecraft-java 26.3) from upload ${UPLOAD}. The first start takes a few minutes.`,
+      ]);
+    });
+
+    it("stops with repack's reason and creates nothing when the upload is rejected", async () => {
+      const { api, calls } = uploadApi([{ uploadId: UPLOAD, status: 'rejected', reason: 'no level.dat found' }]);
+      const { cmd } = runUpload(api);
+      await expect(cmd.create(opts)).rejects.toThrow('The upload was rejected: no level.dat found');
+      expect(calls.some((c) => c.startsWith('POST /admin/servers'))).toBe(false);
+    });
+
+    it('refuses a file over the limit before asking for a form', async () => {
+      const { api, calls } = uploadApi([]);
+      const { cmd } = runUpload(api, 5 * 2 ** 30);
+      await expect(cmd.create(opts)).rejects.toThrow(/uploads can be at most 4096.0 MiB/);
+      expect(calls).toEqual([]);
+    });
+
+    it('refuses both a file and an upload ID', async () => {
+      const { api } = uploadApi([]);
+      const { cmd } = runUpload(api);
+      await expect(cmd.create({ ...opts, upload: UPLOAD })).rejects.toBeInstanceOf(CommandError);
+    });
   });
 
   it('creates from an accepted upload', async () => {

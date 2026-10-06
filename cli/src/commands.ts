@@ -1,6 +1,10 @@
+import { stat } from 'node:fs/promises';
+import { basename } from 'node:path';
 import {
   DEFAULT_IDLE_STOP_MINUTES,
   GAME_DEFINITIONS,
+  MAX_UPLOAD_BYTES,
+  type CreateUploadResponse,
   type FleetReport,
   type ListBackupsResponse,
   type ListServersResponse,
@@ -10,8 +14,9 @@ import {
   type ServerStatus,
   type SetVersionRequest,
   type UpdateSettingsRequest,
+  type UploadStatus,
 } from '@hearth/shared';
-import type { Api } from './client.js';
+import { sendUpload as defaultSendUpload, type Api } from './client.js';
 
 export interface CommandDeps {
   api: Api;
@@ -22,13 +27,55 @@ export interface CommandDeps {
   /** How often to check progress while waiting, and for how long. */
   pollMs?: number;
   timeoutMs?: number;
+  /** Sends a file with an upload form (see client.ts), and reads a file's size. */
+  sendUpload?: (form: CreateUploadResponse, file: string) => Promise<void>;
+  fileSize?: (file: string) => Promise<number>;
 }
 
 /** Stop waiting with a non-zero exit; the message says why. */
 export class CommandError extends Error {}
 
-export function commands({ api, fleetCheck, print, sleep = (ms) => new Promise((r) => setTimeout(r, ms)), pollMs = 5_000, timeoutMs = 20 * 60_000 }: CommandDeps) {
+export function commands({
+  api,
+  fleetCheck,
+  print,
+  sleep = (ms) => new Promise((r) => setTimeout(r, ms)),
+  pollMs = 5_000,
+  timeoutMs = 20 * 60_000,
+  sendUpload = defaultSendUpload,
+  fileSize = async (file) => (await stat(file)).size,
+}: CommandDeps) {
   const get = (id: string) => api.get<ServerRecord>(`/admin/servers/${encodeURIComponent(id)}`);
+
+  /**
+   * Uploads a file of game data and waits for repack to accept it: the same steps the UI takes.
+   * Returns the upload ID to create from; a rejection fails with repack's reason.
+   */
+  async function upload(game: string, file: string): Promise<string> {
+    let bytes: number;
+    try {
+      bytes = await fileSize(file);
+    } catch {
+      throw new CommandError(`Can't read ${file}`);
+    }
+    if (bytes > MAX_UPLOAD_BYTES) throw new CommandError(`${file} is ${mebibytes(bytes)}; uploads can be at most ${mebibytes(MAX_UPLOAD_BYTES)}`);
+
+    const form = await api.post<CreateUploadResponse>('/admin/uploads', { game });
+    print(`Uploading ${basename(file)} (${mebibytes(bytes)})…`);
+    await sendUpload(form, file);
+    print('Uploaded. Checking it…');
+
+    for (let waited = 0; waited <= timeoutMs; waited += pollMs) {
+      const status = await api.get<UploadStatus>(`/admin/uploads/${form.uploadId}`);
+      if (status.status === 'accepted') {
+        print(`Accepted (${mebibytes(status.bytes)} after repacking).`);
+        return form.uploadId;
+      }
+      if (status.status === 'rejected') throw new CommandError(`The upload was rejected: ${status.reason}`);
+      await sleep(pollMs);
+    }
+    throw new CommandError(`Upload ${form.uploadId} still not checked after ${Math.round(timeoutMs / 60_000)} minutes`);
+  }
 
   /** Follows the server until it reaches `target`, printing each change. Fails on FAILED or timeout. */
   async function waitFor(id: string, target: ServerStatus): Promise<ServerRecord> {
@@ -60,15 +107,29 @@ export function commands({ api, fleetCheck, print, sleep = (ms) => new Promise((
   }
 
   return {
-    async create(opts: { game: string; version: string; region?: string; channel?: string; upload?: string; wait: boolean }) {
+    /**
+     * Creates a server with new game data, an earlier upload (`upload`, an upload ID), or a file
+     * uploaded first (`file`: upload, wait for repack to accept it, then create from it).
+     */
+    async create(opts: {
+      game: string;
+      version: string;
+      region?: string;
+      channel?: string;
+      upload?: string;
+      file?: string;
+      wait: boolean;
+    }) {
+      if (opts.upload && opts.file) throw new CommandError('Give a file to upload or an upload ID, not both');
+      const uploadId = opts.file ? await upload(opts.game, opts.file) : opts.upload;
       const result = await api.post<ServerOperationResult>('/admin/servers', {
         game: opts.game,
         version: opts.version,
         ...(opts.region ? { region: opts.region } : {}),
         ...(opts.channel ? { agentChannel: opts.channel } : {}),
-        ...(opts.upload ? { upload: opts.upload } : {}),
+        ...(uploadId ? { upload: uploadId } : {}),
       });
-      const from = opts.upload ? ` from upload ${opts.upload}` : '';
+      const from = uploadId ? ` from upload ${uploadId}` : '';
       print(`Creating ${result.serverId} (${opts.game} ${opts.version})${from}. The first start takes a few minutes.`);
       await followUp(result, 'RUNNING', opts.wait);
     },

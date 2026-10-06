@@ -8,7 +8,8 @@ import { CommandError, commands } from './commands.js';
 const USAGE = `Usage: hearth <command> [options]
 
   create --version <v> [--game minecraft-java] [--game-region <region>] [--channel canary|stable]
-         [--from-upload <uploadId>]          start with an accepted upload's game data
+         [--upload <file.zip|file.tar.gz>]   start with this game data (e.g. a zipped world); max 4 GiB
+         [--from-upload <uploadId>]          start with an upload already accepted
   list
   status <serverId>
   backups <serverId>                       the server's backups, newest first
@@ -40,6 +41,7 @@ async function main(argv: string[]): Promise<number> {
       channel: { type: 'string' },
       'no-wait': { type: 'boolean', default: false },
       'from-upload': { type: 'string' },
+      upload: { type: 'string' },
       force: { type: 'boolean', default: false },
       cancel: { type: 'boolean', default: false },
       help: { type: 'boolean', short: 'h', default: false },
@@ -72,6 +74,7 @@ async function main(argv: string[]): Promise<number> {
         region: values['game-region'],
         channel: values.channel,
         upload: values['from-upload'],
+        file: values.upload,
         wait,
       });
       return 0;

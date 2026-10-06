@@ -42,7 +42,7 @@ as part of each PR. The repo layout and commands are in [README.md](README.md).
 | M0–M4: foundation, infra, agent, lifecycle workflows, agent releases; plus monitoring | Done |
 | M5 Game updates and backups | Done (PR1–PR9; follow-ups under Deferred) |
 | M6 Idle shutdown | Done (PR1–PR4; join events from the log under Deferred) |
-| M7 Move your world | In progress: PR1–PR3 merged; PR3b (restore from upload, replacing PR3's copy) in review |
+| M7 Move your world | In progress: PR1–PR3b merged (create from an upload works on dev); PR4 (one-step CLI) in review |
 
 **M7 plan** (create a server from a user's upload in one step; the UI will do the same):
 - PR1, merged: uploads bucket (DataStack) and `POST /admin/uploads { game }`, returning a
@@ -59,14 +59,17 @@ as part of each PR. The repo layout and commands are in [README.md](README.md).
 - PR3, merged, then replaced: it copied the accepted file into the backups bucket inside the create
   request. A 949 MiB upload took longer than the admin Lambda's 10 s (and API Gateway caps a request
   at 30 s), so create returned 500 and left orphan copies. Long work never runs in an API request.
-- PR3b (restore-from-upload), in review: `POST /admin/servers { …, upload }` (accepted uploads
+- PR3b (restore-from-upload), merged (tested on dev: a real world, restored on first start): `POST /admin/servers { …, upload }` (accepted uploads
   only, for the same game: repack tags accepted files with `game` metadata) creates the server
   with a pending restore of `accepted/<id>.tar.gz` and `restoreSource: 'upload'`; no copy. The
   config Lambda signs the agent's link against the uploads bucket (read `accepted/*`, list the
   bucket); the agent and restore path are M5's, unchanged. The data becomes a backup at the first
   stop; a server not started before the upload expires (7 days) fails its first start, visibly.
   Requesting or cancelling a restore clears `restoreSource`. CLI: `hearth create --from-upload <id>`.
-- PR4: `hearth create --version … --upload <file.zip>`: upload, wait for accepted, create.
+- PR4, in review: `hearth create --version … --upload <file.zip|.tar.gz>`: checks the size, gets a
+  form, POSTs the file to S3 (streamed from disk: `openAsBlob`; fields first, file last), polls
+  `GET /admin/uploads/{id}` until accepted (or fails with repack's reason), then creates from it.
+  The same steps the UI will take. `--from-upload <id>` stays for an upload already accepted.
 - Separately: a wording-only PR replacing "world" in game-neutral code (54 uses, mostly comments
   and agent messages); needs an agent release.
 
