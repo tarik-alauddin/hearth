@@ -2,13 +2,14 @@ import { Duration, RemovalPolicy, Validations } from 'aws-cdk-lib';
 import { AttributeType, ProjectionType, TableV2 } from 'aws-cdk-lib/aws-dynamodb';
 import { BlockPublicAccess, Bucket, BucketEncryption, StorageClass } from 'aws-cdk-lib/aws-s3';
 import type { Construct } from 'constructs';
-import { SERVERS_BY_INSTANCE_INDEX, SERVERS_BY_STATUS_INDEX, backupBucket } from '@hearth/shared';
+import { SERVERS_BY_INSTANCE_INDEX, SERVERS_BY_STATUS_INDEX, backupBucket, uploadsBucket } from '@hearth/shared';
 import { HearthStack, type HearthStackProps } from '../hearth-stack.js';
 
-/** Stateful: DynamoDB tables and the S3 backup bucket. Retained with termination protection in prod. */
+/** Stateful: DynamoDB tables and the S3 backup and uploads buckets. Retained with termination protection in prod. */
 export class DataStack extends HearthStack {
   readonly serversTable: TableV2;
   readonly backupBucket: Bucket;
+  readonly uploadsBucket: Bucket;
 
   constructor(scope: Construct, props: HearthStackProps) {
     const { isProd, env } = props.config;
@@ -62,6 +63,28 @@ export class DataStack extends HearthStack {
     Validations.of(this.backupBucket).acknowledge({
       id: 'AwsSolutions-S1',
       reason: 'Server access logs would need a second bucket; only the API and agents touch backups.',
+    });
+
+    // User uploads, kept apart from backups: untrusted until repacked, and short-lived. Nothing
+    // here needs recovering, so no versioning; files expire instead of being deleted.
+    this.uploadsBucket = new Bucket(this, 'Uploads', {
+      bucketName: uploadsBucket(env, this.account, this.region),
+      blockPublicAccess: BlockPublicAccess.BLOCK_ALL,
+      encryption: BucketEncryption.S3_MANAGED,
+      enforceSSL: true,
+      removalPolicy,
+      autoDeleteObjects: !isProd,
+      lifecycleRules: [
+        // Repack reads a landing file once, within minutes; it has no delete permission.
+        { id: 'expire-landing-after-1-day', prefix: 'landing/', expiration: Duration.days(1) },
+        { id: 'expire-accepted-after-7-days', prefix: 'accepted/', expiration: Duration.days(7) },
+        { id: 'expire-rejected-after-7-days', prefix: 'rejected/', expiration: Duration.days(7) },
+        { id: 'abort-incomplete-uploads', abortIncompleteMultipartUploadAfter: Duration.days(1) },
+      ],
+    });
+    Validations.of(this.uploadsBucket).acknowledge({
+      id: 'AwsSolutions-S1',
+      reason: 'Server access logs would need a second bucket; uploads live a week at most.',
     });
   }
 }

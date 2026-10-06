@@ -30,6 +30,23 @@ export interface ServerOperationResult {
   unchanged?: boolean;
 }
 
+/** `POST /admin/uploads`: start an upload of game data for this game. */
+export interface CreateUploadRequest {
+  game: GameId;
+}
+
+/**
+ * `POST /admin/uploads` response: a presigned S3 form. Send a multipart/form-data POST to `url`
+ * with every field in `fields`, then the file last as `file`. S3 refuses files over the size cap.
+ */
+export interface CreateUploadResponse {
+  uploadId: string;
+  url: string;
+  fields: Record<string, string>;
+  maxBytes: number;
+  expiresAt: string; // ISO 8601 UTC
+}
+
 /** `POST /admin/servers/{id}/version`: a newer game release to run from the next start. */
 export interface SetVersionRequest {
   version: string;

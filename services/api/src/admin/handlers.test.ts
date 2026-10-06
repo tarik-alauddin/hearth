@@ -2,6 +2,7 @@ import type { APIGatewayProxyEventV2WithIAMAuthorizer } from 'aws-lambda';
 import { describe, expect, it } from 'vitest';
 import type { ServerOperationResult } from '@hearth/shared';
 import { OperationError, type serverOperations } from '../servers/operations.js';
+import { uploadOperations } from '../uploads.js';
 import { adminHandler } from './handlers.js';
 
 const ADMIN = 'arn:aws:iam::138300868928:user/admin';
@@ -73,8 +74,13 @@ const BACKUPS = [
   { key: 'servers/s1/20261004T120000Z.tar.gz', takenAt: '2026-10-04T12:00:10.000Z', bytes: 1024 },
 ];
 
+const uploads = uploadOperations({
+  uploads: { form: async () => ({ url: 'https://bucket/', fields: { key: 'k' }, expiresAt: 'later' }) },
+  newId: () => 'U1',
+});
+
 const handle = (ops: ReturnType<typeof serverOperations>) =>
-  adminHandler({ operations: ops, instanceRoleNames: ['hearth-dev-InstanceRole'], log: () => {} });
+  adminHandler({ operations: ops, uploads, instanceRoleNames: ['hearth-dev-InstanceRole'], log: () => {} });
 
 describe('admin routes', () => {
   it('creates a server owned by the caller and answers 202', async () => {
@@ -128,6 +134,15 @@ describe('admin routes', () => {
     const { ops } = fakeOperations();
     const res = await handle(ops)(event('GET /admin/servers/{id}/backups', { id: 'missing' }));
     expect(res.statusCode).toBe(404);
+  });
+
+  it('starts an upload, answering 201 with the form', async () => {
+    const { ops } = fakeOperations();
+    const res = await handle(ops)(event('POST /admin/uploads', { body: '{"game":"minecraft-java"}' }));
+    expect(res.statusCode).toBe(201);
+    expect(JSON.parse(res.body!)).toMatchObject({ uploadId: 'U1', url: 'https://bucket/' });
+    const bad = await handle(ops)(event('POST /admin/uploads', { body: '{"game":"tetris"}' }));
+    expect(bad.statusCode).toBe(400);
   });
 
   it('sets the version, answering with the server', async () => {

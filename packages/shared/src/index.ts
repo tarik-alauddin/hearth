@@ -7,3 +7,4 @@ export * from './fleet-check.js';
 export * from './games.js';
 export * from './metrics.js';
 export * from './server.js';
+export * from './uploads.js';
