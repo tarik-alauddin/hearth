@@ -66,6 +66,8 @@ export function repackHandler({ bucket, s3, rules = UPLOAD_RULES, workDir = tmpd
           Body: createReadStream(output),
           ContentLength: (await stat(output)).size,
           ContentType: 'application/gzip',
+          // Which game's rules accepted it: a server can only be created from its own game's upload.
+          Metadata: { game },
         }),
       );
       console.log(JSON.stringify({ msg: 'upload accepted', uploadId, game, files: outcome.files, bytes: outcome.bytes }));

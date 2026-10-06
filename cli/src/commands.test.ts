@@ -193,6 +193,14 @@ describe('commands', () => {
     expect(out).toContain('last backup 2026-10-04T12:01:00.000Z (3.0 MiB)');
   });
 
+  it('creates from an accepted upload', async () => {
+    const { api, posts } = fakeApi([{ status: 'RUNNING' }]);
+    const { out, cmd } = run(api);
+    await cmd.create({ game: 'minecraft-java', version: '26.3', upload: '01K6ABCDEF0123456789ABCDEF', wait: false });
+    expect(posts[0]).toBe('/admin/servers {"game":"minecraft-java","version":"26.3","upload":"01K6ABCDEF0123456789ABCDEF"}');
+    expect(out[0]).toMatch(/from upload 01K6ABCDEF0123456789ABCDEF/);
+  });
+
   it('creates on a channel and moves servers between channels', async () => {
     const { api, posts } = fakeApi([{ status: 'RUNNING', publicIp: '1.2.3.4' }]);
     const { out, cmd } = run(api);

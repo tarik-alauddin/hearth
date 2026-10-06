@@ -25,6 +25,7 @@ function fakeBackups(objects: Record<string, number> = {}): BackupStorage {
     size: async (key) => objects[key],
     list: async () => [],
     prune: async () => [],
+    copyIn: async () => {},
   };
 }
 

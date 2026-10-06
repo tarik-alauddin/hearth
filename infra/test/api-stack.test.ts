@@ -215,7 +215,11 @@ describe('ApiStack', () => {
     const s3 = statements.filter((s) => JSON.stringify(s.Action).includes('s3:'));
     expect(s3).toEqual([
       expect.objectContaining({ Action: 's3:ListBucket', Condition: { StringLike: { 's3:prefix': 'servers/*/*' } } }),
-      expect.objectContaining({ Action: 's3:PutObject', Resource: `${uploads}/landing/*` }),
+      // Copying an accepted upload in as a new server's first backup; writing landing files. (CDK merges them.)
+      expect.objectContaining({
+        Action: 's3:PutObject',
+        Resource: ['arn:aws:s3:::hearth-dev-backups-138300868928-us-west-2/servers/*/*', `${uploads}/landing/*`],
+      }),
       expect.objectContaining({
         Action: 's3:GetObject',
         Resource: [`${uploads}/accepted/*`, `${uploads}/landing/*`, `${uploads}/rejected/*`], // CDK sorts them

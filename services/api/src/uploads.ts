@@ -24,6 +24,8 @@ export interface UploadStorage {
   form(game: GameId, uploadId: string): Promise<Pick<CreateUploadResponse, 'url' | 'fields' | 'expiresAt'>>;
   /** Where repack is with an upload, read from the bucket; undefined if there's no trace of it. */
   status(uploadId: string): Promise<UploadStatus | undefined>;
+  /** Where an accepted upload's repacked archive is, to copy it from. */
+  accepted(uploadId: string): { bucket: string; key: string };
 }
 
 /**
@@ -41,10 +43,11 @@ export function s3UploadStorage(opts: {
   const client = new S3Client({ region });
   const s3 = opts.s3 ?? client;
 
-  /** The object's size, or undefined if it doesn't exist. */
-  async function size(key: string): Promise<number | undefined> {
+  /** The object's size and metadata, or undefined if it doesn't exist. */
+  async function head(key: string): Promise<{ bytes: number; metadata: Record<string, string> } | undefined> {
     try {
-      return (await s3.send(new HeadObjectCommand({ Bucket: bucket, Key: key }))).ContentLength ?? 0;
+      const out = await s3.send(new HeadObjectCommand({ Bucket: bucket, Key: key }));
+      return { bytes: out.ContentLength ?? 0, metadata: out.Metadata ?? {} };
     } catch (err) {
       if (err instanceof NotFound) return undefined;
       throw err;
@@ -52,9 +55,14 @@ export function s3UploadStorage(opts: {
   }
 
   return {
+    accepted: (uploadId) => ({ bucket, key: acceptedKey(uploadId) }),
+
     async status(uploadId) {
-      const bytes = await size(acceptedKey(uploadId));
-      if (bytes !== undefined) return { uploadId, status: 'accepted', bytes };
+      const accepted = await head(acceptedKey(uploadId));
+      if (accepted) {
+        const { game } = accepted.metadata; // set by repack
+        return { uploadId, status: 'accepted', bytes: accepted.bytes, ...(game ? { game } : {}) };
+      }
       try {
         const out = await s3.send(new GetObjectCommand({ Bucket: bucket, Key: rejectedKey(uploadId) }));
         const { reason } = JSON.parse(await out.Body!.transformToString()) as Rejection;
@@ -64,7 +72,7 @@ export function s3UploadStorage(opts: {
       }
       // Still landed and not repacked yet. The game is in the landing key; try each.
       for (const game of GAMES) {
-        if ((await size(landingKey(game, uploadId))) !== undefined) return { uploadId, status: 'repacking' };
+        if (await head(landingKey(game, uploadId))) return { uploadId, status: 'repacking' };
       }
       return undefined;
     },

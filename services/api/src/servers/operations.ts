@@ -4,8 +4,10 @@ import {
   DEFAULT_AGENT_CHANNEL,
   GAMES,
   MAX_IDLE_STOP_MINUTES,
+  backupKey,
   backupPrefix,
   isAgentChannel,
+  isUploadId,
   type CreateServerRequest,
   type GameId,
   type ListBackupsResponse,
@@ -18,6 +20,7 @@ import {
   type UpdateSettingsRequest,
 } from '@hearth/shared';
 import type { BackupStorage } from '../backups.js';
+import type { UploadStorage } from '../uploads.js';
 import type { GameVersions } from './versions.js';
 
 // The one implementation of create, start and stop. The admin routes use it now; the UI and
@@ -43,7 +46,8 @@ export class OperationError extends Error {
 export interface OperationDeps {
   store: Pick<ServersStore, 'getServer' | 'listServers' | 'createServer' | 'transition' | 'updateSettings'>;
   workflows: Workflows;
-  backups: Pick<BackupStorage, 'list'>;
+  backups: Pick<BackupStorage, 'list' | 'copyIn'>;
+  uploads: Pick<UploadStorage, 'status' | 'accepted'>;
   versions: GameVersions;
   homeRegion: string;
   /** Regions with game infrastructure. */
@@ -60,6 +64,7 @@ export function serverOperations({
   store,
   workflows,
   backups,
+  uploads,
   versions,
   homeRegion,
   gameRegions,
@@ -115,6 +120,15 @@ export function serverOperations({
     }
   }
 
+  /** Refuses an upload repack hasn't accepted, or accepted for another game. */
+  async function requireAccepted(uploadId: string, game: GameId): Promise<void> {
+    const status = isUploadId(uploadId) ? await uploads.status(uploadId) : undefined;
+    if (!status) throw new OperationError(404, `No upload ${uploadId} (never uploaded, or expired)`);
+    if (status.status === 'repacking') throw new OperationError(409, `Upload ${uploadId} is still being checked; try again shortly`);
+    if (status.status === 'rejected') throw new OperationError(409, `Upload ${uploadId} was rejected: ${status.reason}`);
+    if (status.game && status.game !== game) throw new OperationError(409, `Upload ${uploadId} is for ${status.game}, not ${game}`);
+  }
+
   return {
     getServer: requireServer,
 
@@ -132,12 +146,24 @@ export function serverOperations({
 
     /** Records a new server (PROVISIONING) and runs the create workflow, which also starts it. */
     async createServer(request: unknown, ownerId: string): Promise<ServerOperationResult> {
-      const { game, version, region = homeRegion, agentChannel = DEFAULT_AGENT_CHANNEL } = validateCreate(request);
+      const { game, version, region = homeRegion, agentChannel = DEFAULT_AGENT_CHANNEL, upload } = validateCreate(request);
       if (!gameRegions.includes(region)) throw new OperationError(400, `No game infrastructure in ${region}`);
+      if (upload !== undefined) await requireAccepted(upload, game);
       const at = now();
       const serverId = newId(at);
       const operationId = newId(at);
+
+      // Starting from an upload: copy it in as the server's first backup, and restore that on the
+      // first start (M5's restore path). It's then kept like any backup, not lost when the upload expires.
+      let restore: Pick<ServerRecord, 'restoreKey' | 'restoreRequestedAt'> = {};
+      if (upload !== undefined) {
+        const key = backupKey(serverId, at);
+        await backups.copyIn(uploads.accepted(upload), key);
+        restore = { restoreKey: key, restoreRequestedAt: at.toISOString() };
+      }
+
       await store.createServer({
+        ...restore,
         serverId,
         ownerId,
         game,
@@ -343,11 +369,18 @@ function validateCreate(request: unknown): CreateServerRequest {
   if (!(GAMES as readonly unknown[]).includes(game)) throw new OperationError(400, `Unknown game; one of ${GAMES.join(', ')}`);
   if (typeof version !== 'string' || !VERSION.test(version)) throw new OperationError(400, 'Invalid version');
   if (region !== undefined && typeof region !== 'string') throw new OperationError(400, 'Invalid region');
-  const { agentChannel } = request as Record<string, unknown>;
+  const { agentChannel, upload } = request as Record<string, unknown>;
   if (agentChannel !== undefined && !isAgentChannel(agentChannel)) {
     throw new OperationError(400, `agentChannel must be one of ${AGENT_CHANNELS.join(', ')}`);
   }
-  return { game: game as GameId, version, ...(region ? { region } : {}), ...(agentChannel ? { agentChannel } : {}) };
+  if (upload !== undefined && typeof upload !== 'string') throw new OperationError(400, 'Invalid upload');
+  return {
+    game: game as GameId,
+    version,
+    ...(region ? { region } : {}),
+    ...(agentChannel ? { agentChannel } : {}),
+    ...(upload !== undefined ? { upload } : {}),
+  };
 }
 
 function validateSettings(request: unknown): UpdateSettingsRequest {

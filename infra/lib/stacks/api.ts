@@ -192,6 +192,12 @@ export class ApiStack extends HearthStack {
       },
     });
     admin.addToRolePolicy(listServerBackups);
+    // Creating a server from an upload copies the accepted upload in as its first backup.
+    admin.addToRolePolicy(new PolicyStatement({ actions: ['s3:PutObject'], resources: [serverBackups] }));
+    Validations.of(admin).acknowledge({
+      id: `AwsSolutions-IAM5[Resource::${serverBackups}]`,
+      reason: "Copies an accepted upload in as a new server's first backup, under that server's prefix.",
+    });
     // Upload forms are signed with this role, so it may write landing files and nothing else there.
     const uploadsArn = `arn:${this.partition}:s3:::${uploads}`;
     const landing = `${uploadsArn}/landing/*`;

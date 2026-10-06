@@ -21,7 +21,7 @@ export const MAX_UPLOAD_ENTRIES = 200_000;
 /** `GET /admin/uploads/{id}`: how repack is getting on with an upload. */
 export type UploadStatus =
   | { uploadId: string; status: 'repacking' }
-  | { uploadId: string; status: 'accepted'; bytes: number }
+  | { uploadId: string; status: 'accepted'; bytes: number; game?: string }
   | { uploadId: string; status: 'rejected'; reason: string };
 
 /** What repack writes to `rejected/<uploadId>.json`. */
