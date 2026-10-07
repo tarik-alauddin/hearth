@@ -1,5 +1,8 @@
 name: Deploy
 
+# Dev only: every merge to main. Run by hand to try a branch on dev (pause merges to main while
+# dev runs it, or the next merge replaces it). Stage and prod deploy only from a GitHub Release
+# (release.yml).
 on:
   push:
     branches: [main]
@@ -8,12 +11,8 @@ on:
 permissions:
   contents: read
 
-env:
-  AWS_REGION: us-west-2
-  AWS_ACCOUNT: "138300868928"
-
 jobs:
-  # Synthesize every environment once; later jobs deploy this same assembly.
+  # Synthesize every environment once; the deploy job deploys this same assembly.
   synth:
     runs-on: ubuntu-latest
     steps:
@@ -34,27 +33,11 @@ jobs:
 
   deploy-dev:
     needs: synth
-    runs-on: ubuntu-latest
-    environment: dev
-    concurrency:
-      group: deploy-dev
-      cancel-in-progress: false
     permissions:
       contents: read
       id-token: write
-    steps:
-      - uses: actions/checkout@v7
-      - uses: ./.github/actions/setup
-      - uses: actions/download-artifact@v8
-        with:
-          name: cloud-assembly
-          path: infra/cdk.out
-      - uses: aws-actions/configure-aws-credentials@v6
-        with:
-          role-to-assume: arn:aws:iam::${{ env.AWS_ACCOUNT }}:role/github-deploy
-          aws-region: ${{ env.AWS_REGION }}
-      - name: cdk deploy
-        working-directory: infra
-        run: pnpm exec cdk deploy --app cdk.out 'hearth-dev-*' hearth-account --require-approval never --concurrency 4
-
-  # deploy-stage (+ E2E) and deploy-prod (with approval) are added once there is something to test.
+    uses: ./.github/workflows/deploy-env.yml
+    with:
+      env: dev
+      # Account-wide resources (the budget) go with dev.
+      stacks: hearth-dev-* hearth-account

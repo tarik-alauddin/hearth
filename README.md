@@ -70,7 +70,10 @@ condition. The repo was created after GitHub switched new repos to ID-based subj
    pnpm exec cdk bootstrap aws://138300868928/us-west-2 --qualifier hearthprd --toolkit-stack-name hearth-prod-CDKToolkit
    ```
 
-2. In GitHub, create Environments `dev`, `stage` and `prod`, with required reviewers on `prod`.
+2. In GitHub, create Environments `dev`, `stage` and `prod`. On `stage` and `prod`, limit deployments
+   to branch `main` (for *Promote agent*) and tags `v*` (for releases); optionally, required reviewers
+   on `prod`. Add a tag ruleset: only the owner creates `v*` tags, and none can be moved or deleted.
+   Don't enable "immutable releases": stage attaches its assembly after the release is published.
 3. Activate `app` as a cost allocation tag, so the `hearth-monthly` budget (in the `hearth-account` stack)
    counts Hearth's spend. Billing → Cost allocation tags, or:
    `aws ce update-cost-allocation-tags-status --cost-allocation-tags-status TagKey=app,Status=Active`
@@ -116,4 +119,21 @@ stop or terminate it in the EC2 console if nothing needs it.
 | Workflow | Trigger | Does |
 | --- | --- | --- |
 | `pr.yml` | Pull request | Lint, typecheck, tests + CDK assertions, synth with cdk-nag, agent build, `cdk diff` against dev posted to the PR |
-| `deploy.yml` | Merge to `main` | Synthesize all environments once, deploy that assembly to dev |
+| `deploy.yml` | Merge to `main`; by hand, to try a branch on dev | Synthesize all environments once, deploy that assembly to dev |
+| `release.yml` | A GitHub Release `v…` | Pre-release: test, synth, deploy stage, attach the assembly. Full release: deploy that assembly to prod |
+| `deploy-env.yml` | Called by the two above | Deploy one environment from the run's assembly |
+
+### Releasing to stage and prod
+
+Releases are tagged `vYYYY.MM.DD` (`.2` for a second the same day), on `main` or a `hotfix/*` branch.
+
+1. **Stage:** Releases → Draft a new release → new tag on `main` → tick **Set as a pre-release** →
+   Publish. When the run finishes, the release has `cloud-assembly.zip`: what stage runs.
+2. **Prod:** after trying it on stage, edit the release, untick **Set as a pre-release**, save. Prod
+   gets that same assembly, never a rebuild. A release published straight as a full release is
+   refused (it has no assembly).
+
+Or with the CLI: `gh release create v2026.10.07 --target main --prerelease --generate-notes`, then
+`gh release edit v2026.10.07 --prerelease=false`. A failed deploy: re-run its jobs. Agents are
+released separately (above). Hotfix while `main` holds unreleased work: branch `hotfix/<tag>` from
+the last release, cherry-pick the fix, release from that branch.
