@@ -88,14 +88,14 @@ two channels, `canary` and `stable` (SSM `/hearth/<env>/agent/<channel>`); each 
 next start. A new release that never reaches the API falls back to the previous one automatically.
 
 - **Release:** every merge to `main` that changes `agent/` publishes one, versioned by date and
-  commit (`2026.10.01-3f2a9c1`): the *Agent release* workflow runs the harness, uploads it, points
-  dev's canary at it, and creates the tag `agent-<version>` with a GitHub Release. Run the workflow
-  by hand to cut a release without an agent change. It then prunes old releases
-  (`scripts/prune-agent-releases.sh`): every channel's current release and its previous two are
-  kept, plus the newest five; pruned ones can be restored from the bucket for 30 days.
-- **Promote or roll back:** run the *Promote agent* workflow with an environment, a channel and a
-  version from the Releases page (blank stable = that environment's current canary). Prod waits for
-  approval. History:
+  commit (`2026.10.01-3f2a9c1`): the *Deploy* workflow's agent job runs the harness, uploads it,
+  points dev's canary at it, and creates the tag `agent-<version>` with a GitHub Release. To cut one
+  without an agent change, run *Deploy* by hand from `main` with "agent release". It then prunes old
+  releases (`scripts/prune-agent-releases.sh`): every channel's current release and its previous two
+  are kept, plus the newest five; pruned ones can be restored from the bucket for 30 days.
+- **Promote or roll back:** run *Promote* with "agent", an environment, a channel and a version
+  (blank stable = the previous environment's: dev ← dev's canary, stage ← dev's stable, prod ←
+  stage's stable). Prod only takes an agent stage's stable has run. History:
   `aws ssm get-parameter-history --name /hearth/<env>/agent/stable`.
 - **A new environment needs a stable release before it can run servers:** new instances download
   their first agent from `stable`. Promote one there once.
@@ -118,15 +118,17 @@ stop or terminate it in the EC2 console if nothing needs it.
 | Workflow | Trigger | Does |
 | --- | --- | --- |
 | `pr.yml` | Pull request | Lint, typecheck, tests + CDK assertions, synth with cdk-nag, agent build, `cdk diff` against dev posted to the PR |
-| `deploy.yml` | Merge to `main`; by hand, to try a branch on dev | Synthesize all environments once, deploy that assembly to dev; on `main`, publish it as a release |
-| `promote.yml` | By hand | *Promote release*: deploy a release's assembly to stage or prod |
-| `deploy-env.yml` | Called by the two above | Deploy one environment from the run's assembly; record it in `/hearth/<env>/release` |
+| `deploy.yml` | Merge to `main`; by hand, to try a branch on dev or cut an agent release | Synthesize all environments once, deploy that assembly to dev; on `main`, publish it as a release. Agent release when `agent/` changed |
+| `promote.yml` | By hand | *Promote*: a platform release to an environment, or an agent release to a channel |
+
+The deploy steps themselves are the `.github/actions/deploy` action (deploy one environment from
+the run's assembly, record it in `/hearth/<env>/release`).
 
 ### Releases
 
 Every merge to `main` deploys dev and then publishes a pre-release `v<date>-<sha7>` (e.g.
 `v2026.10.07-3f2a9c1`) with the deployed `cloud-assembly.zip` attached. To ship one, run
-**Promote release**:
+**Promote** with "platform":
 
 1. env `stage`, version blank (the newest release) or one from the Releases page. Try it on stage.
 2. env `prod`, version blank (what stage runs). Prod only takes a release stage has run, deploys

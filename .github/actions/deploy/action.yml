@@ -1,0 +1,46 @@
+name: Deploy
+description: >
+  Deploy one environment from the run's `cloud-assembly` artifact and record what was deployed in
+  SSM (/hearth/<env>/release). The calling job checks out the code (the CDK CLI comes from it),
+  sets `environment`, `concurrency` and `id-token: write`.
+inputs:
+  env:
+    description: dev, stage or prod
+    required: true
+  stacks:
+    description: Stack names or patterns to deploy, space-separated
+    required: true
+  version:
+    description: What is being deployed (a release, or branch@sha for a trial)
+    required: true
+runs:
+  using: composite
+  steps:
+    - uses: ./.github/actions/setup
+    - uses: actions/download-artifact@v8
+      with:
+        name: cloud-assembly
+        path: infra/cdk.out
+    - uses: aws-actions/configure-aws-credentials@v6
+      with:
+        role-to-assume: arn:aws:iam::138300868928:role/github-deploy
+        aws-region: us-west-2
+    - name: cdk deploy
+      shell: bash
+      working-directory: infra
+      env:
+        STACKS: ${{ inputs.stacks }}
+      # Unquoted on purpose: one argument per stack pattern. CDK matches the patterns itself.
+      run: |
+        set -f
+        # shellcheck disable=SC2086
+        pnpm exec cdk deploy --app cdk.out $STACKS --require-approval never --concurrency 4
+    - name: Record and summarize
+      shell: bash
+      env:
+        TARGET_ENV: ${{ inputs.env }}
+        VERSION: ${{ inputs.version }}
+      run: |
+        set -euo pipefail
+        aws ssm put-parameter --name "/hearth/$TARGET_ENV/release" --type String --overwrite --value "$VERSION" >/dev/null
+        echo "## Deployed $VERSION to $TARGET_ENV" >> "$GITHUB_STEP_SUMMARY"
