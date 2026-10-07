@@ -1,5 +1,5 @@
 # Hearth
-TEST
+
 Game server hosting on AWS: servers stay off unless someone is playing. Architecture lives in the
 "Hearth — Architecture" doc.
 
@@ -71,9 +71,8 @@ condition. The repo was created after GitHub switched new repos to ID-based subj
    ```
 
 2. In GitHub, create Environments `dev`, `stage` and `prod`. On `stage` and `prod`, limit deployments
-   to branch `main` (for *Promote agent*) and tags `v*` (for releases); optionally, required reviewers
-   on `prod`. Add a tag ruleset: only the owner creates `v*` tags, and none can be moved or deleted.
-   Don't enable "immutable releases": stage attaches its assembly after the release is published.
+   to branch `main`; optionally, required reviewers on `prod`. Optionally, a tag ruleset so `v*` and
+   `agent-*` tags can't be moved or deleted.
 3. Activate `app` as a cost allocation tag, so the `hearth-monthly` budget (in the `hearth-account` stack)
    counts Hearth's spend. Billing → Cost allocation tags, or:
    `aws ce update-cost-allocation-tags-status --cost-allocation-tags-status TagKey=app,Status=Active`
@@ -119,21 +118,20 @@ stop or terminate it in the EC2 console if nothing needs it.
 | Workflow | Trigger | Does |
 | --- | --- | --- |
 | `pr.yml` | Pull request | Lint, typecheck, tests + CDK assertions, synth with cdk-nag, agent build, `cdk diff` against dev posted to the PR |
-| `deploy.yml` | Merge to `main`; by hand, to try a branch on dev | Synthesize all environments once, deploy that assembly to dev |
-| `release.yml` | A GitHub Release `v…` | Pre-release: test, synth, deploy stage, attach the assembly. Full release: deploy that assembly to prod |
-| `deploy-env.yml` | Called by the two above | Deploy one environment from the run's assembly |
+| `deploy.yml` | Merge to `main`; by hand, to try a branch on dev | Synthesize all environments once, deploy that assembly to dev; on `main`, publish it as a release |
+| `promote.yml` | By hand | *Promote release*: deploy a release's assembly to stage or prod |
+| `deploy-env.yml` | Called by the two above | Deploy one environment from the run's assembly; record it in `/hearth/<env>/release` |
 
-### Releasing to stage and prod
+### Releases
 
-Releases are tagged `vYYYY.MM.DD` (`.2` for a second the same day), on `main` or a `hotfix/*` branch.
+Every merge to `main` deploys dev and then publishes a pre-release `v<date>-<sha7>` (e.g.
+`v2026.10.07-3f2a9c1`) with the deployed `cloud-assembly.zip` attached. To ship one, run
+**Promote release**:
 
-1. **Stage:** Releases → Draft a new release → new tag on `main` → tick **Set as a pre-release** →
-   Publish. When the run finishes, the release has `cloud-assembly.zip`: what stage runs.
-2. **Prod:** after trying it on stage, edit the release, untick **Set as a pre-release**, save. Prod
-   gets that same assembly, never a rebuild. A release published straight as a full release is
-   refused (it has no assembly).
+1. env `stage`, version blank (the newest release) or one from the Releases page. Try it on stage.
+2. env `prod`, version blank (what stage runs). Prod only takes a release stage has run, deploys
+   the same assembly dev and stage got (never a rebuild), and marks it **Latest** on the Releases
+   page.
 
-Or with the CLI: `gh release create v2026.10.07 --target main --prerelease --generate-notes`, then
-`gh release edit v2026.10.07 --prerelease=false`. A failed deploy: re-run its jobs. Agents are
-released separately (above). Hotfix while `main` holds unreleased work: branch `hotfix/<tag>` from
-the last release, cherry-pick the fix, release from that branch.
+Roll back by promoting an older release. What runs where:
+`aws ssm get-parameter-history --name /hearth/<env>/release`. Agents are released separately (above).

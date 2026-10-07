@@ -1,8 +1,9 @@
 name: Deploy environment
 
 # Deploys one environment from the cloud assembly (infra/cdk.out) uploaded earlier in the calling
-# run as the `cloud-assembly` artifact. Called by Deploy (dev) and Release (stage, prod); never run
-# on its own.
+# run as the `cloud-assembly` artifact, then records what it deployed in SSM
+# (/hearth/<env>/release; history: aws ssm get-parameter-history). Called by Deploy (dev) and
+# Promote release (stage, prod); never run on its own.
 on:
   workflow_call:
     inputs:
@@ -14,6 +15,14 @@ on:
         description: Stack names or patterns to deploy, space-separated
         type: string
         required: true
+      version:
+        description: What is being deployed, recorded in SSM (a release, or branch@sha for a trial)
+        type: string
+        required: true
+      ref:
+        description: Commit to check out for the CDK CLI (default, the run's own)
+        type: string
+        default: ""
 
 permissions:
   contents: read
@@ -32,6 +41,8 @@ jobs:
       cancel-in-progress: false
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref || github.sha }}
       - uses: ./.github/actions/setup
       - uses: actions/download-artifact@v8
         with:
@@ -50,7 +61,11 @@ jobs:
           set -f
           # shellcheck disable=SC2086
           pnpm exec cdk deploy --app cdk.out $STACKS --require-approval never --concurrency 4
-      - name: Summary
+      - name: Record and summarize
         env:
           TARGET_ENV: ${{ inputs.env }}
-        run: echo "## Deployed \`$GITHUB_REF_NAME\` (\`${GITHUB_SHA::7}\`) to $TARGET_ENV" >> "$GITHUB_STEP_SUMMARY"
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          aws ssm put-parameter --name "/hearth/$TARGET_ENV/release" --type String --overwrite --value "$VERSION" >/dev/null
+          echo "## Deployed $VERSION to $TARGET_ENV" >> "$GITHUB_STEP_SUMMARY"
