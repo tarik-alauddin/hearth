@@ -1,0 +1,56 @@
+name: Deploy environment
+
+# Deploys one environment from the cloud assembly (infra/cdk.out) uploaded earlier in the calling
+# run as the `cloud-assembly` artifact. Called by Deploy (dev) and Release (stage, prod); never run
+# on its own.
+on:
+  workflow_call:
+    inputs:
+      env:
+        description: dev, stage or prod
+        type: string
+        required: true
+      stacks:
+        description: Stack names or patterns to deploy, space-separated
+        type: string
+        required: true
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  AWS_REGION: us-west-2
+  AWS_ACCOUNT: "138300868928"
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.env }}
+    concurrency:
+      group: deploy-${{ inputs.env }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup
+      - uses: actions/download-artifact@v8
+        with:
+          name: cloud-assembly
+          path: infra/cdk.out
+      - uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: arn:aws:iam::${{ env.AWS_ACCOUNT }}:role/github-deploy
+          aws-region: ${{ env.AWS_REGION }}
+      - name: cdk deploy
+        working-directory: infra
+        env:
+          STACKS: ${{ inputs.stacks }}
+        # Unquoted on purpose: one argument per stack pattern. CDK matches the patterns itself.
+        run: |
+          set -f
+          # shellcheck disable=SC2086
+          pnpm exec cdk deploy --app cdk.out $STACKS --require-approval never --concurrency 4
+      - name: Summary
+        env:
+          TARGET_ENV: ${{ inputs.env }}
+        run: echo "## Deployed \`$GITHUB_REF_NAME\` (\`${GITHUB_SHA::7}\`) to $TARGET_ENV" >> "$GITHUB_STEP_SUMMARY"

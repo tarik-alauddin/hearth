@@ -47,7 +47,7 @@ as part of each PR. The repo layout and commands are in [README.md](README.md).
 | M5 Game updates and backups | Done (PR1–PR9; follow-ups under Deferred) |
 | M6 Idle shutdown | Done (PR1–PR4; join events from the log under Deferred) |
 | M7 Move your world | Done (PR1–PR4; tested on dev with a real world) |
-| Before Phase 2 | In progress: PR1–PR4b done; state-sync tweak (IP with RUNNING) in review |
+| Before Phase 2 | In progress: PR1–PR4b and 5b done; 6a (release workflows) in review |
 
 **Before Phase 2 plan** (Phase 1 ends with M7; then the UI, per the Architecture doc):
 1. M7 docs: testing guide section for uploads; Architecture roadmap and System map close-out.
@@ -70,11 +70,16 @@ as part of each PR. The repo layout and commands are in [README.md](README.md).
    deletes records any more. `GET /admin/servers?all=true` / `hearth list --all`; settings refuse a
    destroyed server.
 5. Dropped: the EC2 events router (see Decided against).
-5b. State-sync tweak (in review): `MarkRunning` reads the instance and records `publicIp` with
+5b. State-sync tweak, done (tested on dev): `MarkRunning` reads the instance and records `publicIp` with
    `RUNNING` (`NotReady` retried 5 s × 12 until EC2 has one; Status λ gets `DescribeInstances`).
    State sync no longer records the IP (a late `running` event with no IP could erase it); it
    still clears it on any other state. The CLI no longer waits separately for the IP.
-6. Stage and prod: deploy, promote the agent, check alarms reach the owner.
+6. Stage and prod (CDK already bootstrapped for both):
+   - 6a, in review: `release.yml` (pre-release `v…` → stage, then attach the assembly; full release
+     → prod from that assembly) and the reusable `deploy-env.yml`; `deploy.yml` stays dev only.
+   - Then the owner: GitHub environment rules (`stage`/`prod`: `main` + `v*` tags), the `v*` tag
+     ruleset, first release; per env: accept the SNS email, promote an agent to `stable`, try a
+     server end to end, check an alarm arrives.
 Not a PR: the owner moves off root credentials (IAM Identity Center or an admin user), before 6.
 
 **M7 plan** (create a server from a user's upload in one step; the UI will do the same):
@@ -147,7 +152,14 @@ Not a PR: the owner moves off root credentials (IAM Identity Center or an admin 
   maintenance, hard stops). The workflows record what they do themselves: `RUNNING` comes with the
   public IP, so callers never see a running server without an address.
 - **Deploys use the owner's existing `github-deploy` role** (OIDC, ID-based subject
-  `repo:tarik-alauddin@92332908/hearth@1391534026:*`): no per-environment roles.
+  `repo:tarik-alauddin@92332908/hearth@1391534026:*`): no per-environment roles. Known gap, accepted
+  while the owner is the only one with write access: it has AdministratorAccess and trusts any ref,
+  so "only a release deploys prod" is the workflows' rule, not IAM's. Closing it: a prod role
+  trusting only `…:environment:prod`.
+- **Trunk-based, releases from tags** (no develop or release branches: dev and stage are those).
+  `main` deploys dev; a GitHub pre-release `vYYYY.MM.DD[.n]` deploys stage and gets the deployed
+  assembly attached; making it a full release deploys that same assembly to prod (no rebuild), and
+  a release without one is refused. Hotfixes: `hotfix/*` from the last tag, still through stage.
 - **All Servers table writes go through `services/core`**; the API is the only entry point for callers.
 - **Instances have no S3 write access.** They read agent releases only; backups use short-lived,
   per-server credentials from the API.

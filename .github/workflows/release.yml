@@ -1,0 +1,119 @@
+name: Release
+
+# Stage and prod deploy only from GitHub Releases, tagged vYYYY.MM.DD (a second the same day: .2):
+#   1. Publish a pre-release on a commit of main (or hotfix/*): tests, synth, deploy to stage, then
+#      attach the deployed cloud assembly to the release as cloud-assembly.zip.
+#   2. Untick "pre-release" on it (making it a full release): deploys that same assembly to prod.
+#      A release with no assembly (never deployed to stage) is refused.
+# A failed deploy: re-run its jobs. This file runs from the tag's commit, as GitHub does for
+# release events.
+on:
+  release:
+    types: [prereleased, released]
+
+permissions:
+  contents: read
+
+env:
+  TAG: ${{ github.event.release.tag_name }}
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Tag and branch
+        run: |
+          set -euo pipefail
+          [[ "$TAG" =~ ^v[0-9]{4}\.[0-9]{2}\.[0-9]{2}(\.[0-9]+)?$ ]] \
+            || { echo "::error::Release tags look like v2026.10.07 (or v2026.10.07.2), not $TAG."; exit 1; }
+          git branch -r --contains "$GITHUB_SHA" | grep -Eq '^\s*origin/(main|hotfix/.+)$' \
+            || { echo "::error::$TAG is not on main or a hotfix/* branch."; exit 1; }
+
+  # Stage: a pre-release was published.
+  synth:
+    if: github.event.action == 'prereleased'
+    needs: check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup
+      - run: pnpm test
+      - name: Test summary
+        if: ${{ !cancelled() }}
+        run: node scripts/test-summary.mjs
+        env:
+          SUMMARY_SHA: ${{ github.sha }}
+      - run: pnpm synth
+      - uses: actions/upload-artifact@v7
+        with:
+          name: cloud-assembly
+          path: infra/cdk.out
+          retention-days: 30
+
+  deploy-stage:
+    needs: synth
+    permissions:
+      contents: read
+      id-token: write
+    uses: ./.github/workflows/deploy-env.yml
+    with:
+      env: stage
+      stacks: hearth-stage-*
+
+  # Only after stage deployed it: the attached assembly is what prod will deploy.
+  attach:
+    needs: deploy-stage
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: cloud-assembly
+          path: cdk.out
+      - name: Attach to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          (cd cdk.out && zip -qr ../cloud-assembly.zip .)
+          gh release upload "$TAG" cloud-assembly.zip --clobber --repo "$GITHUB_REPOSITORY"
+          {
+            echo "## $TAG is on stage"
+            echo
+            echo "Try it on stage. To ship it, edit the release, untick **Set as a pre-release** and save: that deploys it to prod."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # Prod: the pre-release became a full release.
+  fetch:
+    if: github.event.action == 'released'
+    needs: check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Stage's assembly
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release download "$TAG" --pattern cloud-assembly.zip --repo "$GITHUB_REPOSITORY" \
+            || { echo "::error::$TAG was never deployed to stage. Publish it as a pre-release first; once stage has it, make it a full release."; exit 1; }
+          mkdir cdk.out
+          unzip -q cloud-assembly.zip -d cdk.out
+      - uses: actions/upload-artifact@v7
+        with:
+          name: cloud-assembly
+          path: cdk.out
+          retention-days: 30
+
+  deploy-prod:
+    needs: fetch
+    permissions:
+      contents: read
+      id-token: write
+    uses: ./.github/workflows/deploy-env.yml
+    with:
+      env: prod
+      stacks: hearth-prod-*
