@@ -47,7 +47,7 @@ as part of each PR. The repo layout and commands are in [README.md](README.md).
 | M5 Game updates and backups | Done (PR1–PR9; follow-ups under Deferred) |
 | M6 Idle shutdown | Done (PR1–PR4; join events from the log under Deferred) |
 | M7 Move your world | Done (PR1–PR4; tested on dev with a real world) |
-| Before Phase 2 | In progress: PR1–PR4b and 5b done; 6b done (stage deployed); 6c (three workflows) in review |
+| Before Phase 2 | In progress: PR1–PR4b and 5b done; 6b done (stage deployed); 6c (three workflows, one release) in review |
 
 **Before Phase 2 plan** (Phase 1 ends with M7; then the UI, per the Architecture doc):
 1. M7 docs: testing guide section for uploads; Architecture roadmap and System map close-out.
@@ -78,13 +78,14 @@ as part of each PR. The repo layout and commands are in [README.md](README.md).
    - 6a, merged then replaced: `release.yml` (tag-triggered releases, created by hand): too heavy.
    - 6b, merged: `deploy.yml` publishes a release after each dev deploy; *Promote release*
      deploys one to stage or prod, recording `/hearth/<env>/release`. Stage deployed and checked.
-   - 6c, in review: three workflows (PR checks, Deploy, Promote). Agent release is a job in Deploy
-     (when `agent/` changed; by hand from main); Promote does platform or agent; the deploy steps
-     are the `.github/actions/deploy` composite action. Blank versions follow dev → stage → prod
-     for agents too, prod only takes an agent stage's stable ran, and a release of the wrong kind
-     is refused with the newest of the right kind (the owner's first stage agent promote failed
-     on exactly that).
-   - Then prod: promote platform and agent, accept the SNS email, try a server, check an alarm.
+   - 6c, in review: three workflows (PR checks, Deploy, Promote); one release carries platform and
+     agent (the owner's first stage agent promote failed by mixing up the two version kinds).
+     Deploy builds the agent when `agent/` changed since the newest build (dev canary) and
+     publishes `release.json` with the release's agent; Promote "release" deploys an env and sets
+     its agent canary; "agent canary → stable" per env. Deploy steps are the
+     `.github/actions/deploy` composite action. No more `agent-*` GitHub Releases.
+   - Then prod: promote the newest release to stage, then prod; canary → stable in each; accept
+     the SNS email, try a server, check an alarm.
 Not a PR: the owner moves off root credentials (IAM Identity Center or an admin user), before 6.
 
 **M7 plan** (create a server from a user's upload in one step; the UI will do the same):
@@ -162,13 +163,13 @@ Not a PR: the owner moves off root credentials (IAM Identity Center or an admin 
   so "only a release deploys prod" is the workflows' rule, not IAM's. Closing it: a prod role
   trusting only `…:environment:prod`.
 - **Trunk-based; every merge is a release** (no develop or release branches: dev and stage are
-  those), the same pattern as agent releases. A merge to `main` deploys dev, then publishes
-  pre-release `v<date>-<sha7>` carrying that cloud assembly. *Promote* (platform) deploys a
-  release's assembly to an env (built once, never rebuilt); prod only takes one in
-  `/hearth/stage/release`'s history, and marks it Latest. Fixes go through `main` like anything else.
-- **Three workflows:** PR checks, Deploy (dev, platform release, agent release), Promote (platform
-  or agent). Shared steps are composite actions (`.github/actions/`), which don't clutter the
-  Actions list the way reusable workflows do.
+  those). A merge to `main` deploys dev, then publishes pre-release `v<date>-<sha7>` carrying
+  that cloud assembly and its agent (`release.json`). *Promote* "release" deploys a release's
+  assembly to an env (built once, never rebuilt) and puts its agent on the env's canary; prod only
+  takes one in `/hearth/stage/release`'s history, and marks it Latest. Fixes go through `main`.
+- **Three workflows:** PR checks, Deploy, Promote. Shared steps are composite actions
+  (`.github/actions/`), which don't clutter the Actions list the way reusable workflows do. Deploy
+  runs one at a time (workflow concurrency), so a release's agent is the newest build at its commit.
 - **All Servers table writes go through `services/core`**; the API is the only entry point for callers.
 - **Instances have no S3 write access.** They read agent releases only; backups use short-lived,
   per-server credentials from the API.
@@ -183,10 +184,14 @@ Not a PR: the owner moves off root credentials (IAM Identity Center or an admin 
   list` hides it (`--all` shows it). No IAM role can delete Servers records. Backups are current
   objects, so no lifecycle rule expires them; deleting them is by hand. Confirm by typing the
   server ID; `--yes` skips the prompt.
-- **Agent releases:** a merge to `main` touching `agent/` cuts `YYYY.MM.DD-<sha7>` onto dev canary;
-  *Promote* (agent) moves a release to an env and channel, dev → stage → prod like the platform.
-  Kept separate from platform releases: their own schedule, and the agent alone can roll back.
-  Pruning is count-based (each channel's last 3, the newest 5).
+- **Agents ride releases:** a merge changing `agent/` (compared with the newest build's commit,
+  so a skipped run can't lose a change) builds `YYYY.MM.DD-<sha7>` onto dev canary; each release
+  names its agent, and promoting it sets that env's canary. Stable moves per env by hand
+  (canary → stable), and can roll back alone to any agent the env has run. Promote's "which"
+  (promote / roll back / specific version) saves copying versions: dispatch inputs can't list
+  releases, and running from a tag would run that tag's old workflow. Bundling's one gap: an agent
+  fix can't reach an env without the platform changes merged before it (add "agent only" if needed). Pruning is count-based
+  (each channel's last 3, the newest 5); a release whose agent was pruned can't be promoted.
 - **Backup during the stop workflow, before the instance stops**, via Run Command
   `hearth-<env>-stop-agent`. The command finishing means the agent is done; the agent's `stopped` report
   says how it went. The agent gets 5 minutes; after about 6 the workflow stops the instance anyway and

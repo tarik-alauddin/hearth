@@ -20,7 +20,7 @@ export class AccountStack extends Stack {
     Tags.of(this).add('app', 'hearth');
 
     // Agent releases: immutable, versioned binaries (agent/<version>/…) that channels point at.
-    // Written by the Deploy workflow's agent job, which also prunes releases no channel needs.
+    // Written by the Deploy workflow's agent job, which also prunes builds no channel needs.
     const releases = new Bucket(this, 'AgentReleases', {
       bucketName: agentReleasesBucket(AWS_ACCOUNT),
       blockPublicAccess: BlockPublicAccess.BLOCK_ALL,
