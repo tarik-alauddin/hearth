@@ -132,22 +132,20 @@ describe('recordBackup', () => {
 describe('recordInstanceState', () => {
   const at = new Date('2026-09-29T12:00:00Z');
 
-  it('records a running instance with its public IP and start time, ignoring older events', async () => {
+  it('records a running instance and its start time, leaving the public IP to the workflow', async () => {
     const { client, sent } = fakeClient();
-    const ok = await dynamoServersStore(client, 't').recordInstanceState('s1', 'i-1', 'running', at, '35.1.2.3');
+    const ok = await dynamoServersStore(client, 't').recordInstanceState('s1', 'i-1', 'running', at);
 
     expect(ok).toBe(true);
     expect((sent[0] as UpdateCommand).input).toMatchObject({
       Key: { serverId: 's1' },
-      UpdateExpression:
-        'SET instanceState = :state, instanceStateAt = :at, lastStartedAt = :at, publicIp = :publicIp',
+      UpdateExpression: 'SET instanceState = :state, instanceStateAt = :at, lastStartedAt = :at',
       ConditionExpression:
         'instanceId = :instanceId AND (attribute_not_exists(instanceStateAt) OR instanceStateAt < :at)',
       ExpressionAttributeValues: {
         ':state': 'running',
         ':at': '2026-09-29T12:00:00.000Z',
         ':instanceId': 'i-1',
-        ':publicIp': '35.1.2.3',
       },
     });
   });

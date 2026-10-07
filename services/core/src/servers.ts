@@ -54,13 +54,7 @@ export interface ServersStore {
    * State sync: records what EC2 says about the server's instance. Returns false if the server is
    * no longer on this instance, or a newer state is already recorded (events arrive out of order).
    */
-  recordInstanceState(
-    serverId: string,
-    instanceId: string,
-    state: InstanceState,
-    at: Date,
-    publicIp?: string,
-  ): Promise<boolean>;
+  recordInstanceState(serverId: string, instanceId: string, state: InstanceState, at: Date): Promise<boolean>;
   /** Moves `status` to `to` only if it's currently one of `from`. Returns false if it wasn't. */
   transition(serverId: string, change: Transition): Promise<boolean>;
 }
@@ -222,22 +216,16 @@ export function dynamoServersStore(
       });
     },
 
-    async recordInstanceState(serverId, instanceId, state, at, publicIp) {
+    async recordInstanceState(serverId, instanceId, state, at) {
       const set = ['instanceState = :state', 'instanceStateAt = :at'];
-      const remove: string[] = [];
       const values: Record<string, unknown> = { ':state': state, ':at': at.toISOString(), ':instanceId': instanceId };
       if (state === 'running') set.push('lastStartedAt = :at');
       if (state === 'stopped') set.push('lastStoppedAt = :at');
-      // A public IP only means something while the instance runs; each start gets a new one.
-      if (state === 'running' && publicIp) {
-        set.push('publicIp = :publicIp');
-        values[':publicIp'] = publicIp;
-      } else {
-        remove.push('publicIp');
-      }
+      // The workflow records the public IP with RUNNING; an instance that isn't running has none
+      // (each start gets a new one), so any other state clears it, however the instance stopped.
       return conditionalUpdate({
         Key: { serverId },
-        UpdateExpression: `SET ${set.join(', ')}${remove.length ? ` REMOVE ${remove.join(', ')}` : ''}`,
+        UpdateExpression: `SET ${set.join(', ')}${state === 'running' ? '' : ' REMOVE publicIp'}`,
         ConditionExpression:
           'instanceId = :instanceId AND (attribute_not_exists(instanceStateAt) OR instanceStateAt < :at)',
         ExpressionAttributeValues: values,

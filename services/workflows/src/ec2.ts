@@ -67,7 +67,11 @@ export function sdkEc2(): Ec2 {
       for (const mapping of instance.BlockDeviceMappings ?? []) {
         if (mapping.DeviceName && mapping.Ebs?.VolumeId) volumes[mapping.DeviceName] = mapping.Ebs.VolumeId;
       }
-      return { state: instance.State?.Name ?? 'unknown', volumes };
+      return {
+        state: instance.State?.Name ?? 'unknown',
+        volumes,
+        ...(instance.PublicIpAddress ? { publicIp: instance.PublicIpAddress } : {}),
+      };
     },
 
     async findInstances(region, serverId) {

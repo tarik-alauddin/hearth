@@ -47,7 +47,7 @@ as part of each PR. The repo layout and commands are in [README.md](README.md).
 | M5 Game updates and backups | Done (PR1–PR9; follow-ups under Deferred) |
 | M6 Idle shutdown | Done (PR1–PR4; join events from the log under Deferred) |
 | M7 Move your world | Done (PR1–PR4; tested on dev with a real world) |
-| Before Phase 2 | In progress: PR1–PR4 done; PR4b (keep destroyed records) in review |
+| Before Phase 2 | In progress: PR1–PR4b done; state-sync tweak (IP with RUNNING) in review |
 
 **Before Phase 2 plan** (Phase 1 ends with M7; then the UI, per the Architecture doc):
 1. M7 docs: testing guide section for uploads; Architecture roadmap and System map close-out.
@@ -69,7 +69,11 @@ as part of each PR. The repo layout and commands are in [README.md](README.md).
    `DESTROYING` → `DESTROYED`, `destroyedAt`, clearing public IP and any pending restore; nothing
    deletes records any more. `GET /admin/servers?all=true` / `hearth list --all`; settings refuse a
    destroyed server.
-5. EC2 events router (the planned fix): each environment sees only its own instances. Before 6.
+5. Dropped: the EC2 events router (see Decided against).
+5b. State-sync tweak (in review): `MarkRunning` reads the instance and records `publicIp` with
+   `RUNNING` (`NotReady` retried 5 s × 12 until EC2 has one; Status λ gets `DescribeInstances`).
+   State sync no longer records the IP (a late `running` event with no IP could erase it); it
+   still clears it on any other state. The CLI no longer waits separately for the IP.
 6. Stage and prod: deploy, promote the agent, check alarms reach the owner.
 Not a PR: the owner moves off root credentials (IAM Identity Center or an admin user), before 6.
 
@@ -136,7 +140,12 @@ Not a PR: the owner moves off root credentials (IAM Identity Center or an admin 
 ## Decisions and why
 
 - **One AWS account, envs dev/stage/prod** (only dev deployed): separate accounts are too much overhead
-  for this scale. EC2 events reach every env's rule; a router Lambda is the planned fix (not built).
+  for this scale. EC2 state-change events carry no tags, so every env's rule gets every instance's
+  events; each env's state sync ignores instances that aren't its own (one lookup, plus one
+  `DescribeInstances` for an unknown `running` one). That's correct, and costs fractions of a cent.
+- **State sync stays as the safety net** for instance changes made outside Hearth (console stops,
+  maintenance, hard stops). The workflows record what they do themselves: `RUNNING` comes with the
+  public IP, so callers never see a running server without an address.
 - **Deploys use the owner's existing `github-deploy` role** (OIDC, ID-based subject
   `repo:tarik-alauddin@92332908/hearth@1391534026:*`): no per-environment roles.
 - **All Servers table writes go through `services/core`**; the API is the only entry point for callers.
@@ -194,7 +203,7 @@ Not a PR: the owner moves off root credentials (IAM Identity Center or an admin 
 - **The fleet check reports and never fixes** (stuck, failed and mismatched servers, untracked instances).
   It is scheduled in prod only; `hearth fleet-check` runs it anywhere.
 - **Game code is not coupled to Minecraft:** one adapter per game under `agent/internal/game/`
-  (how to run it), and one set of upload rules per game under `services/uploads/src/games/` (how
+  (how to run it), and one set of upload rules per game under `services/repack/src/games/` (how
   to accept a user's upload), both keyed by `GameId`. Game-neutral code and messages never say
   "world" (that's Minecraft's word): uploads, game data, destination. Game-specific code may.
 - **Uploads get their own bucket**, not the backups bucket: untrusted content, no versioning, short
@@ -211,6 +220,10 @@ Not a PR: the owner moves off root credentials (IAM Identity Center or an admin 
 
 ## Decided against
 
+- **A shared EC2 events router** (was "PR5"): one account-level rule and Lambda forwarding each event
+  to its instance's env. It saves only the duplicate processing above, but every env would depend
+  on one component in the account stack, which the dev pipeline deploys: a dev mistake could break
+  prod's state sync. Isolation matters more. If volumes ever matter, separate accounts per env.
 - **Agent check-ins or heartbeats:** API cost at scale. Push through SSM Run Command instead; M6 idle
   detection runs on the instance.
 - **Backing up on OS shutdown:** EC2 may not wait 5 minutes; the SSM stop path is the backup path.
@@ -222,6 +235,29 @@ Not a PR: the owner moves off root credentials (IAM Identity Center or an admin 
 
 ## Deferred
 
+- **Game version catalog** (owner still deciding; replaces "create defaults to the latest version").
+  - **Today:** `create` only checks a version's format (a typo fails at first start);
+    `set-version` checks Mojang's live list (releases, 10-min cache); the image is
+    `itzg/minecraft-server` at the unpinned `latest` tag.
+  - **Plan:** a per-env `hearth-<env>-GameVersions` table (SSM's 8 KB limit is too small for ~800
+    versions): game, version, type (release / old_beta / old_alpha; no snapshots), release date
+    (orders forward-only upgrades), **image tag** (from Mojang's per-version Java requirement:
+    pins the image), enabled. Import all of Mojang's list; enable 1.7+ only, since the Minecraft
+    adapter needs the modern server list ping (1.7+) and RCON. Pre-1.7 needs adapter work (legacy
+    ping, save without RCON) before it's enabled.
+  - **"Release game version" workflow:** inputs game, version (or `all` for the first import), env.
+    Looks the version up in Mojang's live list (refuses unknown, snapshot and pre-1.7), writes it to
+    that env's table, enabled; reruns are harmless. Dev first, try it, then stage and prod.
+  - **Then:** `GET /admin/games/{game}/versions` (enabled, newest first) for the UI's picker;
+    create, set-version and uploads accept only enabled versions; create with no version uses the
+    newest enabled release; the agent config takes the version's image tag.
+  - **PRs:** V1 table, store and Mojang-to-entry mapping; V2 admin routes (list, add one or all);
+    V3 the workflow; V4 create/set-version/config use it. Later: pre-1.7 adapter support.
+  - **Owner wants to try it in dev before merging to main:** build on `feature/game-versions` with
+    V1–V4 PRed into it; deploy it with Deploy's manual run ("Use workflow from" the branch). While
+    dev runs the branch, pause merges to main (a main deploy would revert it and delete the new
+    table). A `workflow_dispatch` workflow can't be run until its file is on main: test with the CLI
+    first, or merge the workflow file early. Check the GitHub `dev` environment allows that branch.
 - **Deleting a user's data for real.** Destroyed servers keep their records and backups, so user
   data is kept by default. Before a public launch (Phase 2 accounts), add a "delete my account and
   data" path that truly deletes records and backups.

@@ -46,6 +46,8 @@ export interface InstanceInfo {
   state: string;
   /** Device name → volume ID. */
   volumes: Record<string, string>;
+  /** While running; a new one on every start. */
+  publicIp?: string;
 }
 
 export interface Ec2 {
@@ -184,13 +186,19 @@ export function workflowTasks({ env, store, ec2, ssm, gameInfra, now = () => new
       throw new NotReady(`Waiting for the agent on ${state.serverId}`);
     },
 
-    /** Create and start: STARTING → RUNNING, recording how long it took to become ready. */
+    /** Create and start: STARTING → RUNNING with its public IP, recording how long it took to become ready. */
     async markRunning(state: WorkflowState, context: TaskContext = {}): Promise<WorkflowState> {
       const record = await server(state.serverId);
+      const instanceId = requireInstance(record);
+      // Recorded here, with RUNNING, so a running server always has its address. Only this step
+      // records it; state sync clears it when the instance leaves running.
+      const instance = await ec2.describeInstance(record.region, instanceId);
+      if (!instance?.publicIp) throw new NotReady(`Instance ${instanceId} has no public IP yet`);
       await transition(state.serverId, {
         from: ['STARTING'],
         to: 'RUNNING',
-        instanceId: requireInstance(record),
+        instanceId,
+        set: { publicIp: instance.publicIp },
         remove: ['statusMessage'],
       });
       if (state.since) {

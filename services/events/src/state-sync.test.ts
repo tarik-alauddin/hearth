@@ -32,13 +32,12 @@ function fakeStore(status: ServerStatus) {
   };
   const store: StateSyncDeps['store'] = {
     findByInstance: async (id) => (id === server.instanceId ? server : undefined),
-    recordInstanceState: async (serverId, instanceId, state: InstanceState, at, publicIp) => {
+    recordInstanceState: async (serverId, instanceId, state: InstanceState, at) => {
       if (instanceId !== server.instanceId) return false;
       if (server.instanceStateAt && server.instanceStateAt >= at.toISOString()) return false;
       server.instanceState = state;
       server.instanceStateAt = at.toISOString();
-      if (state === 'running' && publicIp) server.publicIp = publicIp;
-      else delete server.publicIp;
+      if (state !== 'running') delete server.publicIp;
       return true;
     },
     transition: async (_, { from, to }) => {
@@ -64,20 +63,23 @@ describe('state sync', () => {
   });
 
   beforeEach(() => {
-    instances = { [INSTANCE]: { publicIp: '35.1.2.3', tags: { app: 'hearth', env: 'dev' } } };
+    instances = { [INSTANCE]: { tags: { app: 'hearth', env: 'dev' } } };
     described = [];
   });
 
-  it('records a running instance and its public IP', async () => {
+  it('records a running instance without asking EC2, keeping the IP the workflow recorded', async () => {
     const { server, store } = fakeStore('STARTING');
+    server.publicIp = '35.1.2.3';
     await stateSync(deps(store))(event('running'));
     expect(server.instanceState).toBe('running');
     expect(server.publicIp).toBe('35.1.2.3');
     expect(server.status).toBe('STARTING'); // the start workflow sets RUNNING once the game is ready
+    expect(described).toEqual([]);
   });
 
   it('marks a running server stopped when its instance stops outside the stop workflow', async () => {
     const { server, store } = fakeStore('RUNNING');
+    server.publicIp = '35.1.2.3';
     await stateSync(deps(store))(event('running', '2026-09-29T12:00:00Z'));
     await stateSync(deps(store))(event('stopped', '2026-09-29T13:00:00Z'));
     expect(server.status).toBe('STOPPED');
