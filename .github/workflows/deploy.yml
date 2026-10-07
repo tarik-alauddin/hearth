@@ -1,8 +1,9 @@
 name: Deploy
 
-# Dev only: every merge to main. Run by hand to try a branch on dev (pause merges to main while
-# dev runs it, or the next merge replaces it). Stage and prod deploy only from a GitHub Release
-# (release.yml).
+# Every merge to main deploys dev, then publishes a release, versioned by date and commit
+# (v2026.10.07-3f2a9c1), carrying the cloud assembly dev got. "Promote release" deploys that same
+# assembly to stage, then prod. Run by hand to try a branch on dev (no release; pause merges to
+# main while dev runs it, or the next merge replaces it).
 on:
   push:
     branches: [main]
@@ -12,12 +13,22 @@ permissions:
   contents: read
 
 jobs:
-  # Synthesize every environment once; the deploy job deploys this same assembly.
+  # Synthesize every environment once; dev, stage and prod all deploy this same assembly.
   synth:
     runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/setup
+      - name: Version
+        id: version
+        run: |
+          if [ "$GITHUB_REF" = refs/heads/main ]; then
+            echo "version=v$(date -u +%Y.%m.%d)-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=$GITHUB_REF_NAME@${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+          fi
       - run: pnpm test
       - name: Test summary
         if: ${{ !cancelled() }}
@@ -41,3 +52,34 @@ jobs:
       env: dev
       # Account-wide resources (the budget) go with dev.
       stacks: hearth-dev-* hearth-account
+      version: ${{ needs.synth.outputs.version }}
+
+  # Only once dev has it: a release is something that deployed.
+  release:
+    if: github.ref == 'refs/heads/main'
+    needs: [synth, deploy-dev]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: cloud-assembly
+          path: cdk.out
+      - name: Publish the release
+        env:
+          VERSION: ${{ needs.synth.outputs.version }}
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          (cd cdk.out && zip -qr ../cloud-assembly.zip .)
+          # Notes since the previous platform release (agent releases are tagged agent-…).
+          previous=$(gh release list --limit 100 --json tagName --jq '[.[].tagName | select(startswith("v"))][0] // ""')
+          gh release create "$VERSION" cloud-assembly.zip --target "$GITHUB_SHA" --prerelease \
+            --title "Hearth $VERSION" --generate-notes ${previous:+--notes-start-tag "$previous"}
+          {
+            echo "## Released $VERSION (on dev)"
+            echo
+            echo "Next: **Promote release** to stage, then prod."
+          } >> "$GITHUB_STEP_SUMMARY"

@@ -1,0 +1,111 @@
+name: Promote release
+
+# Deploys a release (published by Deploy on every merge to main) to stage or prod, from the cloud
+# assembly attached to it: the same one dev got, never a rebuild. Prod only takes a release stage
+# has run. Rolling back = promoting an older release. What runs where:
+#   aws ssm get-parameter-history --name /hearth/<env>/release
+on:
+  workflow_dispatch:
+    inputs:
+      env:
+        description: Environment
+        type: choice
+        options: [stage, prod]
+        required: true
+      version:
+        description: Release from the Releases page, e.g. v2026.10.07-3f2a9c1 (blank = the newest release for stage; what stage runs for prod)
+        required: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: promote-${{ inputs.env }}
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: us-west-2
+  AWS_ACCOUNT: "138300868928"
+
+jobs:
+  resolve:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      # "Run workflow" offers a branch picker (which copy of this file runs); only main's may run.
+      - name: Only from main
+        if: github.ref != 'refs/heads/main'
+        run: |
+          echo "::error::Run this workflow from main, not ${GITHUB_REF_NAME}."
+          exit 1
+      - uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: arn:aws:iam::${{ env.AWS_ACCOUNT }}:role/github-deploy
+          aws-region: ${{ env.AWS_REGION }}
+      - name: Which release
+        id: version
+        env:
+          TARGET_ENV: ${{ inputs.env }}
+          VERSION: ${{ inputs.version }}
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          staged() { aws ssm get-parameter-history --name /hearth/stage/release --query 'Parameters[].Value' --output text 2>/dev/null | tr '\t' '\n'; }
+
+          if [ -z "$VERSION" ]; then
+            if [ "$TARGET_ENV" = stage ]; then
+              VERSION=$(gh release list --limit 100 --json tagName --jq '[.[].tagName | select(startswith("v"))][0] // ""')
+            else
+              VERSION=$(aws ssm get-parameter --name /hearth/stage/release --query Parameter.Value --output text 2>/dev/null || true)
+            fi
+            [ -n "$VERSION" ] || { echo "::error::Nothing to promote: give a version."; exit 1; }
+          fi
+          VERSION=v${VERSION#v} # accept it without the v too
+          [[ "$VERSION" =~ ^v[0-9]{4}\.[0-9]{2}\.[0-9]{2}-[0-9a-f]{7}$ ]] \
+            || { echo "::error::Invalid release: $VERSION (expected e.g. v2026.10.07-3f2a9c1)"; exit 1; }
+          if [ "$TARGET_ENV" = prod ] && ! staged | grep -qx "$VERSION"; then
+            echo "::error::$VERSION has never run on stage. Promote it to stage first."
+            exit 1
+          fi
+          gh release download "$VERSION" --pattern cloud-assembly.zip \
+            || { echo "::error::No release $VERSION with a cloud assembly."; exit 1; }
+          mkdir cdk.out
+          unzip -q cloud-assembly.zip -d cdk.out
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: cloud-assembly
+          path: cdk.out
+          retention-days: 7
+
+  deploy:
+    needs: resolve
+    permissions:
+      contents: read
+      id-token: write
+    uses: ./.github/workflows/deploy-env.yml
+    with:
+      env: ${{ inputs.env }}
+      stacks: hearth-${{ inputs.env }}-*
+      version: ${{ needs.resolve.outputs.version }}
+      ref: ${{ needs.resolve.outputs.version }}
+
+  # The Releases page's "Latest" is what prod runs.
+  mark-latest:
+    if: inputs.env == 'prod'
+    needs: [resolve, deploy]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Mark the release as prod's
+        env:
+          VERSION: ${{ needs.resolve.outputs.version }}
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: gh release edit "$VERSION" --prerelease=false --latest

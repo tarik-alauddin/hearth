@@ -47,7 +47,7 @@ as part of each PR. The repo layout and commands are in [README.md](README.md).
 | M5 Game updates and backups | Done (PR1–PR9; follow-ups under Deferred) |
 | M6 Idle shutdown | Done (PR1–PR4; join events from the log under Deferred) |
 | M7 Move your world | Done (PR1–PR4; tested on dev with a real world) |
-| Before Phase 2 | In progress: PR1–PR4b and 5b done; 6a (release workflows) in review |
+| Before Phase 2 | In progress: PR1–PR4b and 5b done; 6b (automatic releases, *Promote release*) in review |
 
 **Before Phase 2 plan** (Phase 1 ends with M7; then the UI, per the Architecture doc):
 1. M7 docs: testing guide section for uploads; Architecture roadmap and System map close-out.
@@ -75,11 +75,13 @@ as part of each PR. The repo layout and commands are in [README.md](README.md).
    State sync no longer records the IP (a late `running` event with no IP could erase it); it
    still clears it on any other state. The CLI no longer waits separately for the IP.
 6. Stage and prod (CDK already bootstrapped for both):
-   - 6a, in review: `release.yml` (pre-release `v…` → stage, then attach the assembly; full release
-     → prod from that assembly) and the reusable `deploy-env.yml`; `deploy.yml` stays dev only.
-   - Then the owner: GitHub environment rules (`stage`/`prod`: `main` + `v*` tags), the `v*` tag
-     ruleset, first release; per env: accept the SNS email, promote an agent to `stable`, try a
-     server end to end, check an alarm arrives.
+   - 6a, merged then replaced: `release.yml` (tag-triggered releases, created by hand): too heavy.
+   - 6b, in review: `deploy.yml` publishes a release after each dev deploy; `promote.yml`
+     (*Promote release*) deploys one to stage or prod; the reusable `deploy-env.yml` deploys and
+     records `/hearth/<env>/release`. Agent releases no longer take "Latest".
+   - Then the owner: `stage`/`prod` environments limited to `main`; promote to stage; per env:
+     accept the SNS email, promote an agent to `stable`, try a server end to end, check an alarm
+     arrives; then prod.
 Not a PR: the owner moves off root credentials (IAM Identity Center or an admin user), before 6.
 
 **M7 plan** (create a server from a user's upload in one step; the UI will do the same):
@@ -156,10 +158,11 @@ Not a PR: the owner moves off root credentials (IAM Identity Center or an admin 
   while the owner is the only one with write access: it has AdministratorAccess and trusts any ref,
   so "only a release deploys prod" is the workflows' rule, not IAM's. Closing it: a prod role
   trusting only `…:environment:prod`.
-- **Trunk-based, releases from tags** (no develop or release branches: dev and stage are those).
-  `main` deploys dev; a GitHub pre-release `vYYYY.MM.DD[.n]` deploys stage and gets the deployed
-  assembly attached; making it a full release deploys that same assembly to prod (no rebuild), and
-  a release without one is refused. Hotfixes: `hotfix/*` from the last tag, still through stage.
+- **Trunk-based; every merge is a release** (no develop or release branches: dev and stage are
+  those), the same pattern as agent releases. A merge to `main` deploys dev, then publishes
+  pre-release `v<date>-<sha7>` carrying that cloud assembly. *Promote release* deploys a release's
+  assembly to stage or prod (built once, never rebuilt); prod only takes one in
+  `/hearth/stage/release`'s history, and marks it Latest. Fixes go through `main` like anything else.
 - **All Servers table writes go through `services/core`**; the API is the only entry point for callers.
 - **Instances have no S3 write access.** They read agent releases only; backups use short-lived,
   per-server credentials from the API.

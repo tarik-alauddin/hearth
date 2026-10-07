@@ -82,7 +82,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          gh release create "agent-$VERSION" --target "$GITHUB_SHA" --title "Agent $VERSION" --notes \
+          # Not "Latest": that marks what prod runs (Promote release).
+          gh release create "agent-$VERSION" --target "$GITHUB_SHA" --title "Agent $VERSION" --latest=false --notes \
             "Agent release \`$VERSION\` (sha256 \`$SHA256\`), on dev's canary. Promote it with **Promote agent**, version \`$VERSION\`."
           {
             echo "## Agent $VERSION released"
