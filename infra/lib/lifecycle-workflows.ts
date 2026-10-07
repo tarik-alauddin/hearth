@@ -76,6 +76,8 @@ const RETRY_STOPPED: Retry = { error: 'NotReady', interval: Duration.seconds(15)
 const RETRY_CLEANUP: Retry = { error: 'States.ALL', interval: Duration.seconds(10), maxAttempts: 18 }; // 3 min
 const RETRY_CAPACITY: Retry = { error: 'CapacityError', interval: Duration.seconds(30), maxAttempts: 4, backoffRate: 2 };
 const RETRY_TERMINATED: Retry = { error: 'NotReady', interval: Duration.seconds(10), maxAttempts: 36 }; // 6 min
+// Marking RUNNING records the public IP, which EC2 assigns as the instance starts; long there by then.
+const RETRY_PUBLIC_IP: Retry = { error: 'NotReady', interval: Duration.seconds(5), maxAttempts: 12 }; // 1 min
 // A terminated instance's volumes take a few seconds to detach.
 const RETRY_DETACHED: Retry = { error: 'NotReady', interval: Duration.seconds(10), maxAttempts: 18 }; // 3 min
 
@@ -134,17 +136,20 @@ export class LifecycleWorkflows extends Construct {
         new PolicyStatement({ actions: ['dynamodb:GetItem', 'dynamodb:UpdateItem'], resources: [table.tableArn] }),
       );
     }
+    // Status reads the public IP when it marks a server RUNNING.
+    status.addToRolePolicy(new PolicyStatement({ actions: ['ec2:DescribeInstances'], resources: ['*'] }));
+    acknowledgeWildcards(status, ['*'], 'DescribeInstances has no resource-level permissions; Status only reads.');
 
     this.createServer = this.stateMachine('Create', `hearth-${env}-create-server`, status, power, (step) =>
       step('LaunchInstance', launch, 'launchInstance', RETRY_CAPACITY)
         .next(step('RecordVolume', launch, 'recordVolume', RETRY_VOLUME))
         .next(step('WaitForAgent', status, 'waitForAgent', RETRY_AGENT))
-        .next(step('MarkRunning', status, 'markRunning')),
+        .next(step('MarkRunning', status, 'markRunning', RETRY_PUBLIC_IP)),
     );
     this.startServer = this.stateMachine('Start', `hearth-${env}-start-server`, status, power, (step) =>
       step('StartInstance', power, 'startInstance', RETRY_CAPACITY)
         .next(step('WaitForAgent', status, 'waitForAgent', RETRY_AGENT))
-        .next(step('MarkRunning', status, 'markRunning')),
+        .next(step('MarkRunning', status, 'markRunning', RETRY_PUBLIC_IP)),
     );
     this.stopServer = this.stateMachine('Stop', `hearth-${env}-stop-server`, status, undefined, (step) => {
       const stopInstance = step('StopInstance', power, 'stopInstance');

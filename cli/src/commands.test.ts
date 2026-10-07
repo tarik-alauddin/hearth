@@ -45,12 +45,11 @@ function run(api: Api) {
 }
 
 describe('commands', () => {
-  it('create waits until running with an IP and prints the join address', async () => {
+  it('create waits until running and prints the join address', async () => {
     const { api, posts } = fakeApi([
       { status: 'PROVISIONING' },
       { status: 'STARTING', agentState: 'starting' },
-      { status: 'RUNNING', agentState: 'ready' }, // no IP yet: keep waiting
-      { status: 'RUNNING', agentState: 'ready', publicIp: '35.1.2.3' },
+      { status: 'RUNNING', agentState: 'ready', publicIp: '35.1.2.3' }, // the IP comes with RUNNING
     ]);
     const { out, cmd } = run(api);
     await cmd.create({ game: 'minecraft-java', version: '1.21.4', wait: true });

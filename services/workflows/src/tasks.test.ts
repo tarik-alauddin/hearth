@@ -205,12 +205,21 @@ describe('workflow tasks', () => {
       await expect(tasks.waitForAgent({ serverId: 's1', since: NOW.toISOString() })).rejects.toThrow(AgentError);
     });
 
-    it('marks the server RUNNING', async () => {
+    it('marks the server RUNNING together with its public IP', async () => {
+      ec2.instances['i-1'] = { state: 'running', volumes: {}, publicIp: '35.1.2.3' };
       await tasks.markRunning({ serverId: 's1' });
-      expect(server.status).toBe('RUNNING');
+      expect(server).toMatchObject({ status: 'RUNNING', publicIp: '35.1.2.3' });
+    });
+
+    it('waits while the instance has no public IP yet, leaving the server STARTING', async () => {
+      ec2.instances['i-1'] = { state: 'running', volumes: {} };
+      await expect(tasks.markRunning({ serverId: 's1' })).rejects.toBeInstanceOf(NotReady);
+      expect(server.status).toBe('STARTING');
+      expect(server).not.toHaveProperty('publicIp');
     });
 
     it('records how long the server took to become ready, per workflow', async () => {
+      ec2.instances['i-1'] = { state: 'running', volumes: {}, publicIp: '35.1.2.3' };
       await tasks.markRunning({ serverId: 's1', since: '2026-09-29T11:58:30.000Z' }, { workflow: 'start' });
       expect(recorded).toEqual([{ name: 'TimeToReady', value: 90, dimensions: { Workflow: 'start' } }]);
     });

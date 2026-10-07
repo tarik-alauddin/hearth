@@ -100,8 +100,8 @@ export function commands({
       if (line !== last) print(line);
       last = line;
       if (server.status === 'FAILED') throw new CommandError(`Failed: ${server.statusMessage ?? 'no reason recorded'}`);
-      // Running also needs its public IP, which state sync records moments after EC2 reports running.
-      if (server.status === target && (target !== 'RUNNING' || server.publicIp)) return server;
+      // The workflow records RUNNING together with the public IP, so there's nothing more to wait for.
+      if (server.status === target) return server;
       await sleep(pollMs);
     }
     throw new CommandError(`Still not ${target} after ${Math.round(timeoutMs / 60_000)} minutes; check \`hearth status ${id}\``);
