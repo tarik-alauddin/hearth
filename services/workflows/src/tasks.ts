@@ -190,8 +190,8 @@ export function workflowTasks({ env, store, ec2, ssm, gameInfra, now = () => new
     async markRunning(state: WorkflowState, context: TaskContext = {}): Promise<WorkflowState> {
       const record = await server(state.serverId);
       const instanceId = requireInstance(record);
-      // Recorded here, with RUNNING, so a running server always has its address (state sync also
-      // records it from EC2's event, but that can land a moment later).
+      // Recorded here, with RUNNING, so a running server always has its address. Only this step
+      // records it; state sync clears it when the instance leaves running.
       const instance = await ec2.describeInstance(record.region, instanceId);
       if (!instance?.publicIp) throw new NotReady(`Instance ${instanceId} has no public IP yet`);
       await transition(state.serverId, {

@@ -72,7 +72,8 @@ as part of each PR. The repo layout and commands are in [README.md](README.md).
 5. Dropped: the EC2 events router (see Decided against).
 5b. State-sync tweak (in review): `MarkRunning` reads the instance and records `publicIp` with
    `RUNNING` (`NotReady` retried 5 s × 12 until EC2 has one; Status λ gets `DescribeInstances`).
-   The CLI no longer waits separately for the IP.
+   State sync no longer records the IP (a late `running` event with no IP could erase it); it
+   still clears it on any other state. The CLI no longer waits separately for the IP.
 6. Stage and prod: deploy, promote the agent, check alarms reach the owner.
 Not a PR: the owner moves off root credentials (IAM Identity Center or an admin user), before 6.
 

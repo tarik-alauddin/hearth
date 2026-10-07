@@ -23,8 +23,7 @@ async function describeInstance(region: string, instanceId: string): Promise<Ins
     const instance = out.Reservations?.[0]?.Instances?.[0];
     if (!instance) return undefined;
     return {
-      publicIp: instance.PublicIpAddress,
-      tags: Object.fromEntries((instance.Tags ?? []).map((tag) => [tag.Key ?? '', tag.Value ?? ''])),
+      tags:Object.fromEntries((instance.Tags ?? []).map((tag) => [tag.Key ?? '', tag.Value ?? ''])),
     };
   } catch (err) {
     if ((err as { name?: string }).name === 'InvalidInstanceID.NotFound') return undefined;

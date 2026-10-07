@@ -8,7 +8,6 @@ export type Ec2StateChange = EventBridgeEvent<
 >;
 
 export interface InstanceInfo {
-  publicIp?: string;
   tags: Record<string, string>;
 }
 
@@ -25,7 +24,8 @@ export class RetryLater extends Error {}
 
 /**
  * Handles EC2 instance state changes, which EventBridge delivers for every instance in the
- * account. Records the instance's state and public IP on its server, and marks a running server
+ * account. Records the instance's state on its server (the workflow records the public IP with
+ * RUNNING; any other state clears it), and marks a running server
  * STOPPED when its instance stops without the stop workflow (maintenance, a shutdown from inside,
  * idle shutdown).
  */
@@ -53,13 +53,12 @@ export function stateSync({ env, store, describeInstance, log = defaultLog }: St
     }
 
     const at = new Date(event.time);
-    const publicIp = state === 'running' ? (await describeInstance(event.region, instanceId))?.publicIp : undefined;
-    const recorded = await store.recordInstanceState(server.serverId, instanceId, state, at, publicIp);
+    const recorded = await store.recordInstanceState(server.serverId, instanceId, state, at);
     if (!recorded) {
       log({ msg: 'ignoring stale event', serverId: server.serverId, instanceId, state, at: event.time });
       return;
     }
-    log({ msg: 'instance state recorded', serverId: server.serverId, instanceId, state, publicIp });
+    log({ msg: 'instance state recorded', serverId: server.serverId, instanceId, state });
 
     // Stops through the stop workflow are STOPPING, and the workflow finishes them. A RUNNING
     // server whose instance stopped was stopped some other way.
