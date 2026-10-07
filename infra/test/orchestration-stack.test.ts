@@ -139,9 +139,9 @@ describe('OrchestrationStack', () => {
       expect(power?.Condition).toEqual({ StringEquals: { 'aws:ResourceTag/app': 'hearth', 'aws:ResourceTag/env': 'dev' } });
     });
 
-    it('destroys as terminate, wait, delete volumes, delete record; failures mark FAILED', () => {
+    it('destroys as terminate, wait, delete volumes, mark DESTROYED; failures mark FAILED', () => {
       const def = definition('hearth-dev-destroy-server');
-      const order = ['TerminateInstances', 'WaitForTerminated', 'DeleteVolumes', 'DeleteRecord'].map((s) =>
+      const order = ['TerminateInstances', 'WaitForTerminated', 'DeleteVolumes', 'MarkDestroyed'].map((s) =>
         def.indexOf(`\\"${s}\\":`),
       );
       expect(order.every((i, n) => i >= 0 && (n === 0 || i > order[n - 1]!))).toBe(true);
@@ -158,11 +158,13 @@ describe('OrchestrationStack', () => {
       expect(JSON.stringify(statements.map((s) => s.Action))).not.toMatch(/RunInstances|StartInstances|StopInstances|PassRole|UpdateItem/);
     });
 
-    it('keeps terminate, delete-volume and delete-item permissions in the destroy function alone', () => {
+    it('keeps terminate and delete-volume permissions in the destroy function alone, and lets nothing delete records', () => {
       for (const prefix of ['WorkflowsLaunchTasks', 'WorkflowsPowerTasks', 'WorkflowsStatusTasks']) {
         const actions = JSON.stringify(statementsOf(prefix).map((s) => s.Action));
-        expect(actions).not.toMatch(/TerminateInstances|DeleteVolume|DeleteItem/);
+        expect(actions).not.toMatch(/TerminateInstances|DeleteVolume/);
       }
+      // Destroyed servers keep their records.
+      expect(JSON.stringify(template.findResources('AWS::IAM::Policy'))).not.toContain('dynamodb:DeleteItem');
     });
 
     it('keeps EC2 launch permissions out of the status and power functions', () => {

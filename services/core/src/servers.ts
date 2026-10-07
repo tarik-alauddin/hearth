@@ -1,6 +1,5 @@
 import { ConditionalCheckFailedException, DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import {
-  DeleteCommand,
   DynamoDBDocumentClient,
   GetCommand,
   PutCommand,
@@ -26,11 +25,14 @@ export interface ServersStore {
   /** Strongly consistent read of one server. */
   getServer(serverId: string): Promise<ServerRecord | undefined>;
   /** One page of servers (admin use: a scan). Pass the returned cursor to get the next page. */
-  listServers(page: { limit: number; cursor?: string }): Promise<{ servers: ServerRecord[]; cursor?: string }>;
+  listServers(page: {
+    limit: number;
+    cursor?: string;
+    /** Destroyed servers too; left out by default. */
+    includeDestroyed?: boolean;
+  }): Promise<{ servers: ServerRecord[]; cursor?: string }>;
   /** Writes a new record; fails if the ID is taken. */
   createServer(server: ServerRecord): Promise<void>;
-  /** Destroy workflow: deletes the record, only while it's `status`. Returns false if it wasn't. */
-  deleteServer(serverId: string, status: ServerStatus): Promise<boolean>;
   /** API: changes user settings on an existing server. Returns false if there's no such server. */
   updateSettings(serverId: string, settings: ServerSettings): Promise<boolean>;
   findByInstance(instanceId: string): Promise<ServerRecord | undefined>;
@@ -105,9 +107,22 @@ export function dynamoServersStore(
       return Item as ServerRecord | undefined;
     },
 
-    async listServers({ limit, cursor }) {
+    async listServers({ limit, cursor, includeDestroyed = false }) {
+      // The filter applies after Limit, so a page can come back short (even empty) with a cursor.
+      const hideDestroyed = includeDestroyed
+        ? {}
+        : {
+            FilterExpression: '#status <> :destroyed',
+            ExpressionAttributeNames: { '#status': 'status' },
+            ExpressionAttributeValues: { ':destroyed': 'DESTROYED' },
+          };
       const out = await client.send(
-        new ScanCommand({ TableName: tableName, Limit: limit, ExclusiveStartKey: cursor ? decodeCursor(cursor) : undefined }),
+        new ScanCommand({
+          TableName: tableName,
+          Limit: limit,
+          ExclusiveStartKey: cursor ? decodeCursor(cursor) : undefined,
+          ...hideDestroyed,
+        }),
       );
       const next = out.LastEvaluatedKey ? encodeCursor(out.LastEvaluatedKey) : undefined;
       return { servers: (out.Items ?? []) as ServerRecord[], ...(next ? { cursor: next } : {}) };
@@ -117,24 +132,6 @@ export function dynamoServersStore(
       await client.send(
         new PutCommand({ TableName: tableName, Item: server, ConditionExpression: 'attribute_not_exists(serverId)' }),
       );
-    },
-
-    async deleteServer(serverId, status) {
-      try {
-        await client.send(
-          new DeleteCommand({
-            TableName: tableName,
-            Key: { serverId },
-            ConditionExpression: '#status = :status',
-            ExpressionAttributeNames: { '#status': 'status' },
-            ExpressionAttributeValues: { ':status': status },
-          }),
-        );
-        return true;
-      } catch (err) {
-        if (err instanceof ConditionalCheckFailedException) return false;
-        throw err;
-      }
     },
 
     async updateSettings(serverId, settings) {

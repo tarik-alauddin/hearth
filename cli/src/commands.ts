@@ -17,7 +17,7 @@ import {
   type UpdateSettingsRequest,
   type UploadStatus,
 } from '@hearth/shared';
-import { ApiError, sendUpload as defaultSendUpload, type Api } from './client.js';
+import { sendUpload as defaultSendUpload, type Api } from './client.js';
 
 async function askOnTerminal(question: string): Promise<string> {
   const terminal = createInterface({ input: process.stdin, output: process.stdout });
@@ -60,24 +60,6 @@ export function commands({
 }: CommandDeps) {
   const get = (id: string) => api.get<ServerRecord>(`/admin/servers/${encodeURIComponent(id)}`);
 
-  /** Follows a destroy until the server is gone (its record answers 404). Fails if it ends FAILED. */
-  async function waitUntilGone(id: string): Promise<void> {
-    let last = '';
-    for (let waited = 0; waited <= timeoutMs; waited += pollMs) {
-      let server: ServerRecord;
-      try {
-        server = await get(id);
-      } catch (err) {
-        if (err instanceof ApiError && err.status === 404) return;
-        throw err;
-      }
-      if (server.status !== last) print(`  ${server.status}`);
-      last = server.status;
-      if (server.status === 'FAILED') throw new CommandError(`Failed: ${server.statusMessage ?? 'no reason recorded'}`);
-      await sleep(pollMs);
-    }
-    throw new CommandError(`Still not destroyed after ${Math.round(timeoutMs / 60_000)} minutes; check \`hearth status ${id}\``);
-  }
 
   /**
    * Uploads a file of game data and waits for repack to accept it: the same steps the UI takes.
@@ -178,18 +160,18 @@ export function commands({
       await followUp(result, 'STOPPED', wait);
     },
 
-    /** Moves a server to another agent channel; it runs that channel's release from its next start. */
     /**
-     * Destroys a stopped server: its instance, data volume and record; its backups are kept. Shows
-     * what will go and asks for the server ID back, unless `yes`.
+     * Destroys a stopped server: its instance and data volume. Its record (now DESTROYED) and
+     * backups are kept. Shows what will go and asks for the server ID back, unless `yes`.
      */
     async destroy(id: string, opts: { yes: boolean; wait: boolean }) {
       const server = await get(id);
+      if (server.status === 'DESTROYED') return print(`${id} was already destroyed on ${server.destroyedAt ?? 'an unknown date'}.`);
       if (!['STOPPED', 'FAILED', 'DESTROYING'].includes(server.status)) {
         throw new CommandError(`${id} is ${server.status}; stop it before destroying it (\`hearth stop ${id}\`)`);
       }
       if (server.status !== 'DESTROYING') {
-        print(`This destroys ${id} (${server.game} ${server.version}, ${server.status}): its instance, data volume and record.`);
+        print(`This destroys ${id} (${server.game} ${server.version}, ${server.status}): its instance and data volume.`);
         print(
           server.lastBackupAt
             ? `Its backups are kept; the newest is from ${server.lastBackupAt}.`
@@ -202,10 +184,11 @@ export function commands({
       const result = await api.post<ServerOperationResult>(`/admin/servers/${encodeURIComponent(id)}/destroy`);
       print(result.unchanged ? `${id} is already being destroyed.` : `Destroying ${id}.`);
       if (!opts.wait) return;
-      await waitUntilGone(id);
-      print(`Destroyed. Its backups stay in the backups bucket under servers/${id}/.`);
+      await waitFor(id, 'DESTROYED');
+      print(`Destroyed. Its backups are kept: \`hearth backups ${id}\`.`);
     },
 
+    /** Moves a server to another agent channel; it runs that channel's release from its next start. */
     async setChannel(id: string, channel: string) {
       const server = await api.post<ServerRecord>(`/admin/servers/${encodeURIComponent(id)}/settings`, { agentChannel: channel });
       print(`${server.serverId} is on the ${server.agentChannel} channel; it takes effect on the next start.`);
@@ -245,6 +228,7 @@ export function commands({
         ],
         ['last backup', s.lastBackupAt && `${s.lastBackupAt} (${mebibytes(s.lastBackupBytes ?? 0)})`],
         ['restore', s.restoreKey && `${restoreName(s)} on the next start`],
+        ['destroyed', s.destroyedAt],
       ];
       for (const [k, v] of rows) if (v) print(`${k.padEnd(11)} ${v}`);
     },
@@ -266,11 +250,12 @@ export function commands({
       if (r.stuck.length + r.failed.length + r.mismatched.length + r.untracked.length === 0) print('All clear.');
     },
 
-    async list() {
+    /** Servers, sorted by ID; destroyed ones only with `all`. */
+    async list(all = false) {
       const servers: ServerRecord[] = [];
       let cursor: string | undefined;
       do {
-        const page: ListServersResponse = await api.get('/admin/servers', { limit: '100', cursor });
+        const page: ListServersResponse = await api.get('/admin/servers', { limit: '100', cursor, ...(all ? { all: 'true' } : {}) });
         servers.push(...page.servers);
         cursor = page.cursor;
       } while (cursor);

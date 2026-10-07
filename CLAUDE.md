@@ -47,25 +47,28 @@ as part of each PR. The repo layout and commands are in [README.md](README.md).
 | M5 Game updates and backups | Done (PR1–PR9; follow-ups under Deferred) |
 | M6 Idle shutdown | Done (PR1–PR4; join events from the log under Deferred) |
 | M7 Move your world | Done (PR1–PR4; tested on dev with a real world) |
-| Before Phase 2 | In progress: PR1–PR2 done; PR3 (destroy workflow) testing; PR4 (destroy command) in review |
+| Before Phase 2 | In progress: PR1–PR4 done; PR4b (keep destroyed records) in review |
 
 **Before Phase 2 plan** (Phase 1 ends with M7; then the UI, per the Architecture doc):
 1. M7 docs: testing guide section for uploads; Architecture roadmap and System map close-out.
 2. Neutral wording: "world" out of game-neutral code; agent release. Words: "game data" (what's
    stored), "save the game", "data volume". Kept: Minecraft-specific code (adapter, upload rules,
    `TestMinecraft`, repack's Minecraft tests) and test fixture paths like `world/region/…`.
-3. Destroy, part 1 (testing): `hearth-<env>-destroy-server` and its `DestroyTasks` λ, the only
-   function that can terminate instances, delete volumes (both only tagged `app=hearth`,
-   `env=<env>`) and delete records. Status `DESTROYING` (in the fleet check's stuck list). Steps:
-   terminate the record's instance and any tagged with the server (noting each one's data volume
-   first: volumes survive termination), wait (6 min), delete the volumes (retried while detaching,
-   3 min; already gone = done), delete the record only if still `DESTROYING`. Failure → `FAILED`.
-   Backups untouched. In the failed-workflow alarm and dashboard. Nothing starts it until PR4.
-4. Destroy, part 2 (in review): `destroyServer` claims STOPPED, or FAILED with its instance not
-   running/pending, as `DESTROYING` (anything else: 409 "stop it before destroying it"; repeated
-   while under way: unchanged). `POST /admin/servers/{id}/destroy`. `hearth destroy <id>` shows what
-   goes (warning plainly when there are no backups), asks for the ID back (`--yes` skips), follows
-   until the record 404s. `scripts/dev-server.sh` is deleted.
+3. Destroy, part 1, done: `hearth-<env>-destroy-server` and its `DestroyTasks` λ, the only function
+   that can terminate instances and delete volumes (both only tagged `app=hearth`, `env=<env>`).
+   Status `DESTROYING` (in the fleet check's stuck list). Steps: terminate the record's instance
+   and any tagged with the server (noting each one's data volume first: volumes survive
+   termination), wait (6 min), delete the volumes (retried while detaching, 3 min; already gone =
+   done), then mark it destroyed (4b). Failure → `FAILED`. In the failed-workflow alarm and dashboard.
+4. Destroy, part 2, done: `destroyServer` claims STOPPED, or FAILED with its instance not
+   running/pending, as `DESTROYING` (anything else: 409 "stop it before destroying it"; repeated:
+   unchanged). `POST /admin/servers/{id}/destroy`. `hearth destroy <id>` shows what goes (warning
+   plainly when there are no backups), asks for the ID back (`--yes` skips), follows it through.
+   `scripts/dev-server.sh` is deleted.
+4b. Keep destroyed records (in review): the last step is `MarkDestroyed` (Status λ):
+   `DESTROYING` → `DESTROYED`, `destroyedAt`, clearing public IP and any pending restore; nothing
+   deletes records any more. `GET /admin/servers?all=true` / `hearth list --all`; settings refuse a
+   destroyed server.
 5. EC2 events router (the planned fix): each environment sees only its own instances. Before 6.
 6. Stage and prod: deploy, promote the agent, check alarms reach the owner.
 Not a PR: the owner moves off root credentials (IAM Identity Center or an admin user), before 6.
@@ -143,11 +146,13 @@ Not a PR: the owner moves off root credentials (IAM Identity Center or an admin 
   change doesn't redeploy the stack that consumes it.
 - **A failed workflow never leaves an instance running.** Create/start failure paths stop the instance;
   instances are tagged with `serverId` at launch.
-- **Destroy** (planned): never a running server (refused: stop it first, which also saves and backs
-  it up). It removes the instance, data volume and record, and **keeps the server's backups**, so
-  someone with a problem can still get their data back. Those backups are current objects, so no
-  lifecycle rule expires them; deleting them is by hand. Confirm by typing the server ID; `--yes`
-  skips the prompt.
+- **Destroy:** never a running server (refused: stop it first, which also saves and backs it up). It
+  removes the instance and data volume, and **keeps the server's backups and its record**, marked
+  `DESTROYED` with `destroyedAt`: for history ("how many servers has Hearth run?") and so
+  `hearth backups <id>` still finds its backups. Nothing else works on a destroyed server; `hearth
+  list` hides it (`--all` shows it). No IAM role can delete Servers records. Backups are current
+  objects, so no lifecycle rule expires them; deleting them is by hand. Confirm by typing the
+  server ID; `--yes` skips the prompt.
 - **Agent releases:** a merge to `main` touching `agent/` cuts `YYYY.MM.DD-<sha7>` onto dev canary;
   "Promote agent" moves any release to any env and channel. Pruning is count-based (each channel's last
   3, the newest 5).
@@ -217,6 +222,9 @@ Not a PR: the owner moves off root credentials (IAM Identity Center or an admin 
 
 ## Deferred
 
+- **Deleting a user's data for real.** Destroyed servers keep their records and backups, so user
+  data is kept by default. Before a public launch (Phase 2 accounts), add a "delete my account and
+  data" path that truly deletes records and backups.
 - **Version rollback.** Upgrades are one-way (the game converts the world), so `set-version` is
   forward only. Restoring a pre-upgrade backup does *not* put the server back on the old version:
   backups don't record their game version, so the old world would just be upgraded again. To roll

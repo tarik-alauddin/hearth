@@ -10,14 +10,14 @@ const USAGE = `Usage: hearth <command> [options]
   create --version <v> [--game minecraft-java] [--game-region <region>] [--channel canary|stable]
          [--upload <file.zip|file.tar.gz>]   start with this game data (e.g. a zipped Minecraft world); max 4 GiB
          [--from-upload <uploadId>]          start with an upload already accepted
-  list
+  list [--all]                             servers; --all includes destroyed ones
   status <serverId>
   backups <serverId>                       the server's backups, newest first
   restore <serverId> [<key>] [--force]     replace the game data with a backup (default: newest) on the next start
   restore <serverId> --cancel              cancel a requested restore
   start  <serverId>
   stop   <serverId>
-  destroy <serverId> [--yes]               delete a stopped server (instance, data volume, record); keeps its backups
+  destroy <serverId> [--yes]               delete a stopped server's instance and data volume; keeps its backups and record
   set-channel <serverId> <canary|stable>   agent releases to follow, from the next start
   set-version <serverId> <version>         a newer game release, from the next start (forward only)
   set-idle <serverId> <minutes|off>        stop after this long with nobody playing, from the next start
@@ -46,6 +46,7 @@ async function main(argv: string[]): Promise<number> {
       force: { type: 'boolean', default: false },
       cancel: { type: 'boolean', default: false },
       yes: { type: 'boolean', default: false },
+      all: { type: 'boolean', default: false },
       help: { type: 'boolean', short: 'h', default: false },
     },
   });
@@ -81,7 +82,7 @@ async function main(argv: string[]): Promise<number> {
       });
       return 0;
     case 'list':
-      await run.list();
+      await run.list(values.all);
       return 0;
     case 'status':
       await run.status(needId());
