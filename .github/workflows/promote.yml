@@ -143,9 +143,9 @@ jobs:
       contents: read
       id-token: write
     steps:
+      # main's checkout (this run's), not the release's: older releases lack today's deploy action.
+      # The release itself is the downloaded assembly; main's CDK CLI deploys older assemblies too.
       - uses: actions/checkout@v7
-        with:
-          ref: ${{ needs.resolve.outputs.version }}
       - uses: ./.github/actions/deploy
         with:
           env: ${{ inputs.env }}
