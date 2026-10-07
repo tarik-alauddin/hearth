@@ -1,40 +1,44 @@
 name: Promote
 
-# Moves a release on, dev → stage → prod. Two kinds, both published by Deploy:
-#   - platform (v2026.10.07-3f2a9c1): deploys the cloud assembly attached to the release (the
-#     one dev got, never a rebuild). History: aws ssm get-parameter-history --name /hearth/<env>/release
-#   - agent (agent-2026.10.07-3f2a9c1): points a channel at it; servers on that channel run it from
-#     their next start. History: aws ssm get-parameter-history --name /hearth/<env>/agent/<channel>
-# Blank version = the previous environment's: platform stage = the newest release, prod = stage's;
-# agent stable dev = dev's canary, stage = dev's stable, prod = stage's stable. Prod only takes
-# what stage has run. Rolling back = promoting an older version.
+# Two moves, both per environment (dev → stage → prod):
+#   - release: deploys a release (published by Deploy on every merge to main) from its attached
+#     cloud assembly (the one dev got, never a rebuild), and puts its agent on the env's canary.
+#     Prod only takes a release stage has run; it becomes "Latest" on the Releases page.
+#   - agent canary → stable: puts the env's canary agent on its stable channel, the default for
+#     servers.
+# Which: "promote" (release: the newest, or for prod what stage runs; agent: the env's canary),
+# "roll back" (what the env ran before its current one) or "specific version" (typed below; an
+# agent must be one this env has run). Servers pick up their channel's agent on their next start.
+# What runs where (history: aws ssm get-parameter-history):
+#   /hearth/<env>/release, /hearth/<env>/agent/canary, /hearth/<env>/agent/stable
 on:
   workflow_dispatch:
     inputs:
       what:
         description: What to promote
         type: choice
-        options: [platform, agent]
+        options: [release, agent canary → stable]
         required: true
       env:
         description: Environment
         type: choice
         options: [stage, prod, dev]
         required: true
-      channel:
-        description: Agent channel (agent only)
+      which:
+        description: "Which: promote = newest release (prod: what stage runs) / the env's canary agent"
         type: choice
-        options: [stable, canary]
-        default: stable
+        options: [promote, roll back, specific version]
+        default: promote
+        required: true
       version:
-        description: From the Releases page (v… platform, agent-… agent). Blank = the previous environment's.
+        description: Only for "specific version" (release v2026.10.07-3f2a9c1, or agent 2026.10.07-3f2a9c1)
         required: false
 
 permissions:
   contents: read
 
 concurrency:
-  group: promote-${{ inputs.what }}-${{ inputs.env }}
+  group: promote-${{ inputs.env }}
   cancel-in-progress: false
 
 env:
@@ -43,15 +47,16 @@ env:
   BUCKET: hearth-agent-releases-138300868928
 
 jobs:
-  # Platform: find the release and its assembly; deploy runs next.
+  # Release: find it, its assembly and its agent; deploy runs next.
   resolve:
-    if: inputs.what == 'platform'
+    if: inputs.what == 'release'
     runs-on: ubuntu-latest
     permissions:
       contents: read
       id-token: write
     outputs:
-      version: ${{ steps.version.outputs.version }}
+      version: ${{ steps.release.outputs.version }}
+      agent: ${{ steps.release.outputs.agent }}
     steps:
       # "Run workflow" offers a branch picker (which copy of this file runs); only main's may run.
       - name: Only from main
@@ -64,9 +69,10 @@ jobs:
           role-to-assume: arn:aws:iam::${{ env.AWS_ACCOUNT }}:role/github-deploy
           aws-region: ${{ env.AWS_REGION }}
       - name: Which release
-        id: version
+        id: release
         env:
           TARGET_ENV: ${{ inputs.env }}
+          WHICH: ${{ inputs.which }}
           VERSION: ${{ inputs.version }}
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
@@ -74,37 +80,51 @@ jobs:
           set -euo pipefail
           current() { aws ssm get-parameter --name "/hearth/$1/release" --query Parameter.Value --output text 2>/dev/null || true; }
           newest() { gh release list --limit 100 --json tagName --jq '[.[].tagName | select(startswith("v"))][0] // ""'; }
+          # Every release the env has run, oldest first (dev's also has branch@sha trials: skipped).
+          ran() { aws ssm get-parameter-history --name "/hearth/$1/release" --query 'Parameters[].Value' --output text 2>/dev/null | tr '\t' '\n' | grep '^v' || true; }
 
-          if [ -z "$VERSION" ]; then
-            case "$TARGET_ENV" in
-              prod) VERSION=$(current stage) ;;
-              *) VERSION=$(newest) ;;
-            esac
-            [ -n "$VERSION" ] || { echo "::error::Nothing to promote: give a version."; exit 1; }
-          fi
-          if [[ "$VERSION" == agent-* ]]; then
-            echo "::error::$VERSION is an agent release: choose \"agent\". The newest platform release is $(newest)."
-            exit 1
-          fi
-          VERSION=v${VERSION#v} # accept it without the v too
+          case "$WHICH" in
+            "specific version")
+              [ -n "$VERSION" ] || { echo "::error::Type a version for \"specific version\"."; exit 1; } ;;
+            *)
+              [ -z "$VERSION" ] || { echo "::error::The version field is only for \"specific version\"."; exit 1; } ;;
+          esac
+          case "$WHICH" in
+            promote)
+              if [ "$TARGET_ENV" = prod ]; then VERSION=$(current stage); else VERSION=$(newest); fi
+              [ -n "$VERSION" ] || { echo "::error::Nothing to promote yet."; exit 1; } ;;
+            "roll back")
+              now=$(current "$TARGET_ENV")
+              VERSION=$(ran "$TARGET_ENV" | grep -vx "$now" | tail -n 1 || true)
+              [ -n "$VERSION" ] || { echo "::error::$TARGET_ENV has run no release before $now."; exit 1; }
+              echo "Rolling $TARGET_ENV back: $now → $VERSION" ;;
+          esac
+          [[ "$VERSION" == v* ]] \
+            || { echo "::error::$VERSION isn't a release (they start with v; agents move with \"agent canary → stable\"). The newest release is $(newest)."; exit 1; }
           [[ "$VERSION" =~ ^v[0-9]{4}\.[0-9]{2}\.[0-9]{2}-[0-9a-f]{7}$ ]] \
-            || { echo "::error::Invalid platform release: $VERSION (expected e.g. v2026.10.07-3f2a9c1)"; exit 1; }
+            || { echo "::error::Invalid release: $VERSION (expected e.g. v2026.10.07-3f2a9c1)"; exit 1; }
           if [ "$TARGET_ENV" = prod ] && ! aws ssm get-parameter-history --name /hearth/stage/release \
               --query 'Parameters[].Value' --output text 2>/dev/null | tr '\t' '\n' | grep -qx "$VERSION"; then
             echo "::error::$VERSION has never run on stage. Promote it to stage first (stage runs $(current stage))."
             exit 1
           fi
-          if ! gh release download "$VERSION" --pattern cloud-assembly.zip; then
-            if gh release view "agent-${VERSION#v}" >/dev/null 2>&1; then
-              echo "::error::agent-${VERSION#v} is an agent release: choose \"agent\". The newest platform release is $(newest)."
-            else
-              echo "::error::No platform release $VERSION with a cloud assembly. The newest is $(newest)."
-            fi
-            exit 1
-          fi
+          gh release download "$VERSION" --pattern cloud-assembly.zip \
+            || { echo "::error::No release $VERSION with a cloud assembly. The newest is $(newest)."; exit 1; }
           mkdir cdk.out
           unzip -q cloud-assembly.zip -d cdk.out
+
+          # Releases made before agents joined them have no release.json: their agent stays as is.
+          agent=""
+          if gh release download "$VERSION" --pattern release.json; then
+            agent=$(jq -c .agent release.json)
+            agent_version=$(jq -r .version <<<"$agent")
+            aws s3api head-object --bucket "$BUCKET" --key "agent/$agent_version/hearth-agent-linux-arm64" >/dev/null 2>&1 \
+              || { echo "::error::$VERSION's agent $agent_version was pruned from $BUCKET (recoverable for 30 days: restore its objects' previous versions), or promote a newer release."; exit 1; }
+          else
+            echo "::warning::$VERSION has no release.json (made before agents joined releases): $TARGET_ENV's agent canary is left as is."
+          fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "agent=$agent" >> "$GITHUB_OUTPUT"
       - uses: actions/upload-artifact@v7
         with:
           name: cloud-assembly
@@ -131,6 +151,22 @@ jobs:
           env: ${{ inputs.env }}
           stacks: hearth-${{ inputs.env }}-*
           version: ${{ needs.resolve.outputs.version }}
+      - name: Agent canary
+        if: needs.resolve.outputs.agent != ''
+        env:
+          TARGET_ENV: ${{ inputs.env }}
+          AGENT: ${{ needs.resolve.outputs.agent }}
+        run: |
+          set -euo pipefail
+          name="/hearth/$TARGET_ENV/agent/canary"
+          version=$(jq -r .version <<<"$AGENT")
+          previous=$(aws ssm get-parameter --name "$name" --query Parameter.Value --output text 2>/dev/null || true)
+          if [ "$(jq -r '.version // ""' <<<"${previous:-{\}}")" = "$version" ]; then
+            echo "$TARGET_ENV canary already runs agent $version." >> "$GITHUB_STEP_SUMMARY"
+          else
+            aws ssm put-parameter --name "$name" --type String --overwrite --value "$AGENT" >/dev/null
+            echo "$TARGET_ENV canary → agent $version. When it looks good: **Promote** \"agent canary → stable\"." >> "$GITHUB_STEP_SUMMARY"
+          fi
 
   # The Releases page's "Latest" is what prod runs.
   mark-latest:
@@ -147,8 +183,8 @@ jobs:
           GH_REPO: ${{ github.repository }}
         run: gh release edit "$VERSION" --prerelease=false --latest
 
-  agent:
-    if: inputs.what == 'agent'
+  stable:
+    if: inputs.what != 'release'
     runs-on: ubuntu-latest
     # Required reviewers on the prod environment gate prod promotions.
     environment: ${{ inputs.env }}
@@ -165,63 +201,59 @@ jobs:
         with:
           role-to-assume: arn:aws:iam::${{ env.AWS_ACCOUNT }}:role/github-deploy
           aws-region: ${{ env.AWS_REGION }}
-      - name: Point the channel at the release
+      - name: Point stable at the agent
         env:
           TARGET_ENV: ${{ inputs.env }}
-          CHANNEL: ${{ inputs.channel }}
+          WHICH: ${{ inputs.which }}
           VERSION: ${{ inputs.version }}
         run: |
           set -euo pipefail
-          param() { aws ssm get-parameter --name "/hearth/$1/agent/$2" --query Parameter.Value --output text 2>/dev/null || true; }
-          newest() {
-            aws s3api list-objects-v2 --bucket "$BUCKET" --prefix agent/ \
-              --query "Contents[?ends_with(Key, '/hearth-agent-linux-arm64')].[LastModified,Key]" --output text |
-              sort | tail -n 1 | cut -f2 | cut -d/ -f2
+          param() { aws ssm get-parameter --name "/hearth/$TARGET_ENV/agent/$1" --query Parameter.Value --output text 2>/dev/null || true; }
+          ran() { # every agent version this env's channel has had, oldest first
+            aws ssm get-parameter-history --name "/hearth/$TARGET_ENV/agent/$1" --query 'Parameters[].Value' \
+              --output json 2>/dev/null | jq -r '.[] | fromjson | .version'
           }
 
-          if [ -z "$VERSION" ]; then
-            [ "$CHANNEL" = stable ] || { echo "::error::Give a version to put on canary. The newest agent release is $(newest)."; exit 1; }
-            case "$TARGET_ENV" in
-              dev) from="dev canary"; target=$(param dev canary) ;;
-              stage) from="dev stable"; target=$(param dev stable) ;;
-              prod) from="stage stable"; target=$(param stage stable) ;;
-            esac
-            [ -n "$target" ] || { echo "::error::$from has no agent release to promote."; exit 1; }
+          case "$WHICH" in
+            "specific version")
+              [ -n "$VERSION" ] || { echo "::error::Type a version for \"specific version\"."; exit 1; } ;;
+            *)
+              [ -z "$VERSION" ] || { echo "::error::The version field is only for \"specific version\"."; exit 1; } ;;
+          esac
+          if [ "$WHICH" = "roll back" ]; then
+            now=$(jq -r '.version // ""' <<<"$(param stable)")
+            VERSION=$(ran stable | grep -vx "$now" | tail -n 1 || true)
+            [ -n "$VERSION" ] || { echo "::error::$TARGET_ENV stable has run no agent before ${now:-this}."; exit 1; }
+            echo "Rolling $TARGET_ENV stable back: $now → $VERSION"
+          fi
+
+          if [ "$WHICH" = promote ]; then
+            target=$(param canary)
+            [ -n "$target" ] || { echo "::error::$TARGET_ENV has no canary agent. Promote a release there first."; exit 1; }
           else
-            if [[ "$VERSION" == v* ]]; then
-              echo "::error::$VERSION is a platform release: choose \"platform\". The newest agent release is $(newest)."
-              exit 1
-            fi
-            VERSION=${VERSION#agent-} # accept the tag name too
+            [[ "$VERSION" != v* ]] \
+              || { echo "::error::$VERSION is a release: choose \"release\"."; exit 1; }
+            VERSION=${VERSION#agent-} # accept the old tag name too
             [[ "$VERSION" =~ ^[0-9]{4}\.[0-9]{2}\.[0-9]{2}-[0-9a-f]{7}$ ]] \
-              || { echo "::error::Invalid agent release: $VERSION (expected e.g. agent-2026.10.07-3f2a9c1)"; exit 1; }
-            if ! sha=$(aws s3 cp "s3://$BUCKET/agent/$VERSION/hearth-agent-linux-arm64.sha256" - 2>/dev/null); then
-              if aws ssm get-parameter-history --name /hearth/dev/release --query 'Parameters[].Value' --output text 2>/dev/null | tr '\t' '\n' | grep -qx "v$VERSION"; then
-                echo "::error::v$VERSION is a platform release: choose \"platform\". The newest agent release is $(newest)."
-              else
-                echo "::error::No agent release $VERSION. The newest is $(newest)."
-              fi
-              exit 1
-            fi
+              || { echo "::error::Invalid agent version: $VERSION (expected e.g. 2026.10.07-3f2a9c1)"; exit 1; }
+            { ran canary; ran stable; } | grep -qx "$VERSION" \
+              || { echo "::error::Agent $VERSION has never run in $TARGET_ENV. Agents reach an env with a release."; exit 1; }
+            sha=$(aws s3 cp "s3://$BUCKET/agent/$VERSION/hearth-agent-linux-arm64.sha256" - 2>/dev/null) \
+              || { echo "::error::Agent $VERSION was pruned from $BUCKET."; exit 1; }
             target=$(jq -nc --arg v "$VERSION" --arg s "$sha" '{version: $v, sha256: $s}')
           fi
           version=$(jq -r .version <<<"$target")
           aws s3api head-object --bucket "$BUCKET" --key "agent/$version/hearth-agent-linux-arm64" >/dev/null \
-            || { echo "::error::Release $version has no binary in $BUCKET"; exit 1; }
-          if [ "$TARGET_ENV" = prod ] && ! aws ssm get-parameter-history --name /hearth/stage/agent/stable \
-              --query 'Parameters[].Value' --output json 2>/dev/null | jq -r '.[] | fromjson | .version' | grep -qx "$version"; then
-            echo "::error::Agent $version has never been stage's stable. Promote it there first."
-            exit 1
-          fi
+            || { echo "::error::Agent $version has no binary in $BUCKET"; exit 1; }
 
-          previous=$(param "$TARGET_ENV" "$CHANNEL")
-          aws ssm put-parameter --name "/hearth/$TARGET_ENV/agent/$CHANNEL" --type String --overwrite --value "$target" >/dev/null
+          previous=$(param stable)
+          aws ssm put-parameter --name "/hearth/$TARGET_ENV/agent/stable" --type String --overwrite --value "$target" >/dev/null
 
           from=$(jq -r '.version // "none"' <<<"${previous:-{\}}")
           {
-            echo "## Agent promoted: $TARGET_ENV $CHANNEL"
+            echo "## Agent promoted: $TARGET_ENV stable"
             echo
             echo "**$from → $version** (sha256 \`$(jq -r .sha256 <<<"$target")\`)"
             echo
-            echo "Servers on $CHANNEL in $TARGET_ENV run it from their next start. To roll back, promote version \`$from\`."
+            echo "Servers on stable in $TARGET_ENV run it from their next start. To undo: \"agent canary → stable\", \"roll back\"."
           } >> "$GITHUB_STEP_SUMMARY"

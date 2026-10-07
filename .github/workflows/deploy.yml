@@ -1,70 +1,73 @@
 name: Deploy
 
-# Every merge to main:
-#   - deploys dev, then publishes a platform release, versioned by date and commit
-#     (v2026.10.07-3f2a9c1), carrying the cloud assembly dev got;
-#   - if it changed agent/, also publishes an agent release (2026.10.07-3f2a9c1, tagged agent-…):
-#     harness-tested, uploaded to the releases bucket, placed on dev's canary; old ones are pruned.
-# "Promote" then moves either to stage and prod. Run by hand to try a branch on dev (no release;
-# pause merges to main while dev runs it, or the next merge replaces it), or, from main, to cut an
-# agent release without an agent change.
+# Every merge to main deploys dev and publishes one release, v<date>-<sha7> (e.g.
+# v2026.10.07-3f2a9c1), carrying:
+#   - cloud-assembly.zip: the cloud assembly dev got;
+#   - release.json: the agent that goes with it. When agent/ changed since the newest agent build,
+#     a new agent is built (harness-tested, uploaded to the releases bucket, put on dev's canary);
+#     otherwise it's that newest build.
+# "Promote" then deploys the release to stage and prod (each env's agent canary too), and moves an
+# env's agent from canary to stable. Run by hand to try a branch on dev (no agent, no release; pause
+# merges to main while dev runs it, or the next merge replaces it).
 on:
   push:
     branches: [main]
   workflow_dispatch:
-    inputs:
-      run:
-        description: What to run
-        type: choice
-        options: [deploy dev from this branch, agent release (main only)]
-        default: deploy dev from this branch
 
 permissions:
   contents: read
 
+# One run at a time, so each release's agent is the newest build at its commit. A run waiting
+# behind another may be replaced by a newer one; the newer run covers its changes (agent changes
+# are found against the newest agent build, release notes against the previous release).
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: false
+
 env:
   AWS_REGION: us-west-2
   AWS_ACCOUNT: "138300868928"
+  BUCKET: hearth-agent-releases-138300868928
 
 jobs:
   plan:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
     outputs:
-      deploy: ${{ steps.plan.outputs.deploy }}
-      agent: ${{ steps.plan.outputs.agent }}
+      build-agent: ${{ steps.plan.outputs.build-agent }}
+      newest-agent: ${{ steps.plan.outputs.newest-agent }}
     steps:
       - uses: actions/checkout@v7
         with:
-          fetch-depth: 0 # to compare with the push's previous commit
-      - name: What runs
+          fetch-depth: 0 # to compare with the newest agent build's commit
+      - uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: arn:aws:iam::${{ env.AWS_ACCOUNT }}:role/github-deploy
+          aws-region: ${{ env.AWS_REGION }}
+      - name: Agent
         id: plan
-        env:
-          EVENT: ${{ github.event_name }}
-          RUN: ${{ inputs.run }}
-          BEFORE: ${{ github.event.before }}
         run: |
           set -euo pipefail
-          if [ "$EVENT" = push ]; then
-            echo deploy=true >> "$GITHUB_OUTPUT"
-            # A first push has no previous commit (all zeros): treat the agent as changed.
-            if git cat-file -e "$BEFORE^{commit}" 2>/dev/null && git diff --quiet "$BEFORE" "$GITHUB_SHA" -- agent/; then
-              echo agent=false >> "$GITHUB_OUTPUT"
-            else
-              echo agent=true >> "$GITHUB_OUTPUT"
-            fi
-          elif [ "$RUN" = "agent release (main only)" ]; then
-            [ "$GITHUB_REF" = refs/heads/main ] || { echo "::error::Agent releases come from main, not ${GITHUB_REF_NAME}."; exit 1; }
-            echo deploy=false >> "$GITHUB_OUTPUT"
-            echo agent=true >> "$GITHUB_OUTPUT"
+          newest=$(bash scripts/newest-agent-release.sh)
+          echo "newest-agent=$newest" >> "$GITHUB_OUTPUT"
+          if [ "$GITHUB_EVENT_NAME" != push ]; then
+            echo build-agent=false >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # Versions end in their commit (2026.10.07-3f2a9c1). No build yet, or its commit unknown: build.
+          sha=$(jq -r '.version // "" | sub("^.*-"; "")' <<<"$newest")
+          if [ -n "$sha" ] && commit=$(git rev-parse -q --verify "$sha^{commit}") \
+              && git diff --quiet "$commit" "$GITHUB_SHA" -- agent/; then
+            echo build-agent=false >> "$GITHUB_OUTPUT"
+            echo "Agent unchanged since $(jq -r .version <<<"$newest")."
           else
-            echo deploy=true >> "$GITHUB_OUTPUT"
-            echo agent=false >> "$GITHUB_OUTPUT"
+            echo build-agent=true >> "$GITHUB_OUTPUT"
           fi
 
   # Synthesize every environment once; dev, stage and prod all deploy this same assembly.
   synth:
-    needs: plan
-    if: needs.plan.outputs.deploy == 'true'
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.version.outputs.version }}
@@ -74,7 +77,7 @@ jobs:
       - name: Version
         id: version
         run: |
-          if [ "$GITHUB_REF" = refs/heads/main ]; then
+          if [ "$GITHUB_EVENT_NAME" = push ]; then
             echo "version=v$(date -u +%Y.%m.%d)-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
           else
             echo "version=$GITHUB_REF_NAME@${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
@@ -111,50 +114,17 @@ jobs:
           stacks: hearth-dev-* hearth-account
           version: ${{ needs.synth.outputs.version }}
 
-  # Only once dev has it: a release is something that deployed.
-  release:
-    needs: [synth, deploy-dev]
-    if: github.event_name == 'push'
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/download-artifact@v8
-        with:
-          name: cloud-assembly
-          path: cdk.out
-      - name: Publish the release
-        env:
-          VERSION: ${{ needs.synth.outputs.version }}
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
-        run: |
-          set -euo pipefail
-          (cd cdk.out && zip -qr ../cloud-assembly.zip .)
-          # Notes since the previous platform release (agent releases are tagged agent-…).
-          previous=$(gh release list --limit 100 --json tagName --jq '[.[].tagName | select(startswith("v"))][0] // ""')
-          gh release create "$VERSION" cloud-assembly.zip --target "$GITHUB_SHA" --prerelease \
-            --title "Hearth $VERSION" --generate-notes ${previous:+--notes-start-tag "$previous"}
-          {
-            echo "## Released $VERSION (on dev)"
-            echo
-            echo "Next: **Promote** (platform) to stage, then prod."
-          } >> "$GITHUB_STEP_SUMMARY"
-
   agent:
     needs: plan
-    if: needs.plan.outputs.agent == 'true'
+    if: needs.plan.outputs.build-agent == 'true'
     runs-on: ubuntu-latest
     environment: dev
     timeout-minutes: 40
-    concurrency:
-      group: agent-release
-      cancel-in-progress: false
     permissions:
-      contents: write # the tag and GitHub Release
+      contents: read
       id-token: write
-    env:
-      BUCKET: hearth-agent-releases-138300868928
+    outputs:
+      release: ${{ steps.upload.outputs.release }}
     defaults:
       run:
         working-directory: agent
@@ -185,7 +155,7 @@ jobs:
           set -euo pipefail
           key="agent/$VERSION/hearth-agent-linux-arm64"
           if aws s3api head-object --bucket "$BUCKET" --key "$key" >/dev/null 2>&1; then
-            echo "::error::Release $VERSION already exists; releases are immutable."
+            echo "::error::Agent $VERSION already exists; releases are immutable."
             exit 1
           fi
           sha=$(sha256sum bin/hearth-agent | cut -d' ' -f1)
@@ -193,27 +163,51 @@ jobs:
           printf '%s' "$sha" | aws s3 cp --only-show-errors - "s3://$BUCKET/$key.sha256"
           release=$(jq -nc --arg v "$VERSION" --arg s "$sha" '{version: $v, sha256: $s}')
           aws ssm put-parameter --name /hearth/dev/agent/canary --type String --overwrite --value "$release" >/dev/null
-          echo "sha256=$sha" >> "$GITHUB_OUTPUT"
-      - name: Tag and GitHub Release
-        env:
-          VERSION: ${{ steps.version.outputs.version }}
-          SHA256: ${{ steps.upload.outputs.sha256 }}
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          # Not "Latest": that marks what prod runs.
-          gh release create "agent-$VERSION" --target "$GITHUB_SHA" --title "Agent $VERSION" --latest=false --notes \
-            "Agent release \`$VERSION\` (sha256 \`$SHA256\`), on dev's canary. Move it on with **Promote** (agent)."
-          {
-            echo "## Agent $VERSION released"
-            echo
-            echo "sha256 \`$SHA256\` · tag \`agent-$VERSION\` · **dev canary → $VERSION**"
-            echo
-            echo "Next: **Promote** (agent) to dev stable, then stage and prod."
-          } >> "$GITHUB_STEP_SUMMARY"
-      # Keeps every channel's current release and its previous two, plus the newest five.
-      - name: Prune old releases
+          echo "release=$release" >> "$GITHUB_OUTPUT"
+          echo "## Agent $VERSION built: dev canary → $VERSION" >> "$GITHUB_STEP_SUMMARY"
+      # Keeps every channel's current agent and its previous two, plus the newest five.
+      - name: Prune old agents
         working-directory: .
         env:
           GH_TOKEN: ${{ github.token }}
         run: bash scripts/prune-agent-releases.sh
+
+  # Only once dev has it (and the agent, if one was built): a release is something that deployed.
+  release:
+    needs: [plan, synth, deploy-dev, agent]
+    if: >-
+      always() && github.event_name == 'push' && needs.deploy-dev.result == 'success'
+      && (needs.agent.result == 'success' || needs.agent.result == 'skipped')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: cloud-assembly
+          path: cdk.out
+      - name: Publish the release
+        env:
+          VERSION: ${{ needs.synth.outputs.version }}
+          BUILT: ${{ needs.agent.outputs.release }}
+          NEWEST: ${{ needs.plan.outputs.newest-agent }}
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          agent=${BUILT:-$NEWEST}
+          [ -n "$agent" ] && [ "$agent" != null ] || { echo "::error::No agent build to release with."; exit 1; }
+          agent_version=$(jq -r .version <<<"$agent")
+          jq -n --arg v "$VERSION" --argjson a "$agent" '{version: $v, agent: $a}' > release.json
+          (cd cdk.out && zip -qr ../cloud-assembly.zip .)
+          if [ -n "$BUILT" ]; then note="new in this release, on dev's canary"; else note="unchanged"; fi
+          # Notes since the previous release (older agent-only releases are tagged agent-…).
+          previous=$(gh release list --limit 100 --json tagName --jq '[.[].tagName | select(startswith("v"))][0] // ""')
+          gh release create "$VERSION" cloud-assembly.zip release.json --target "$GITHUB_SHA" --prerelease \
+            --title "Hearth $VERSION" --notes "Agent \`$agent_version\` ($note)." \
+            --generate-notes ${previous:+--notes-start-tag "$previous"}
+          {
+            echo "## Released $VERSION (on dev), agent $agent_version ($note)"
+            echo
+            echo "Next: **Promote** it to stage, then prod."
+          } >> "$GITHUB_STEP_SUMMARY"

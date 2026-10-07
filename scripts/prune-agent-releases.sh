@@ -3,8 +3,8 @@
 #   - what any channel (canary, stable) in any environment points at now,
 #   - one of a channel's previous KEEP_PREVIOUS releases (rollback targets), or
 #   - one of the newest KEEP_NEWEST releases (recent builds still worth promoting).
-# Deleted releases stay recoverable for 30 days (the bucket is versioned), and their GitHub
-# Release is removed so the Releases page only lists what "Promote" accepts; tags are kept.
+# Deleted releases stay recoverable for 30 days (the bucket is versioned). Agents built before they
+# joined platform releases also had a GitHub Release (agent-<version>); it's removed too; tags are kept.
 #
 #   BUCKET=hearth-agent-releases-<account> scripts/prune-agent-releases.sh [--dry-run]
 #

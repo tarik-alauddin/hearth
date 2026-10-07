@@ -80,25 +80,24 @@ condition. The repo was created after GitHub switched new repos to ID-based subj
 4. After each environment's first deploy, accept the SNS confirmation email for `hearth-<env>-alerts`;
    alarms aren't delivered until then.
 
-## Agent releases
+## Agents
 
-Agents are versioned releases in the `hearth-agent-releases-<account>` bucket. Each environment has
-two channels, `canary` and `stable` (SSM `/hearth/<env>/agent/<channel>`); each server follows one
-(`hearth set-channel <id> canary|stable`, default stable) and picks up its channel's release on its
-next start. A new release that never reaches the API falls back to the previous one automatically.
+Agent builds are versioned binaries in the `hearth-agent-releases-<account>` bucket, versioned by
+date and commit (`2026.10.07-3f2a9c1`). Each environment has two channels, `canary` and `stable`
+(SSM `/hearth/<env>/agent/<channel>`); each server follows one (`hearth set-channel <id>
+canary|stable`, default stable) and picks up its channel's agent on its next start. A new agent that
+never reaches the API falls back to the previous one automatically.
 
-- **Release:** every merge to `main` that changes `agent/` publishes one, versioned by date and
-  commit (`2026.10.01-3f2a9c1`): the *Deploy* workflow's agent job runs the harness, uploads it,
-  points dev's canary at it, and creates the tag `agent-<version>` with a GitHub Release. To cut one
-  without an agent change, run *Deploy* by hand from `main` with "agent release". It then prunes old
-  releases (`scripts/prune-agent-releases.sh`): every channel's current release and its previous two
-  are kept, plus the newest five; pruned ones can be restored from the bucket for 30 days.
-- **Promote or roll back:** run *Promote* with "agent", an environment, a channel and a version
-  (blank stable = the previous environment's: dev ← dev's canary, stage ← dev's stable, prod ←
-  stage's stable). Prod only takes an agent stage's stable has run. History:
-  `aws ssm get-parameter-history --name /hearth/<env>/agent/stable`.
-- **A new environment needs a stable release before it can run servers:** new instances download
-  their first agent from `stable`. Promote one there once.
+- **Build:** a merge to `main` that changed `agent/` since the newest build makes a new one (the
+  *Deploy* workflow: harness, upload, dev's canary). Every release carries an agent (see
+  [Releases](#releases)); promoting a release puts its agent on that env's canary.
+- **Canary → stable:** run *Promote* with "agent canary → stable" and an env. "roll back" returns
+  stable to its previous agent; "specific version", to any agent that env has run.
+- **Pruning** (`scripts/prune-agent-releases.sh`, after each build): every channel's current agent
+  and its previous two are kept, plus the newest five; pruned ones can be restored from the bucket
+  for 30 days.
+- **A new environment needs a stable agent before it can run servers:** new instances download
+  their first agent from `stable`. Promote a release there, then canary → stable.
 
 ## Monitoring
 
@@ -118,22 +117,26 @@ stop or terminate it in the EC2 console if nothing needs it.
 | Workflow | Trigger | Does |
 | --- | --- | --- |
 | `pr.yml` | Pull request | Lint, typecheck, tests + CDK assertions, synth with cdk-nag, agent build, `cdk diff` against dev posted to the PR |
-| `deploy.yml` | Merge to `main`; by hand, to try a branch on dev or cut an agent release | Synthesize all environments once, deploy that assembly to dev; on `main`, publish it as a release. Agent release when `agent/` changed |
-| `promote.yml` | By hand | *Promote*: a platform release to an environment, or an agent release to a channel |
+| `deploy.yml` | Merge to `main`; by hand, to try a branch on dev | Synthesize all environments once, deploy that assembly to dev, build the agent if it changed, publish a release |
+| `promote.yml` | By hand | *Promote*: a release to an env, or an env's agent from canary to stable |
 
 The deploy steps themselves are the `.github/actions/deploy` action (deploy one environment from
 the run's assembly, record it in `/hearth/<env>/release`).
 
 ### Releases
 
-Every merge to `main` deploys dev and then publishes a pre-release `v<date>-<sha7>` (e.g.
-`v2026.10.07-3f2a9c1`) with the deployed `cloud-assembly.zip` attached. To ship one, run
-**Promote** with "platform":
+Every merge to `main` deploys dev and publishes one pre-release `v<date>-<sha7>` (e.g.
+`v2026.10.07-3f2a9c1`) with `cloud-assembly.zip` (what dev deployed) and `release.json` (its agent:
+new if `agent/` changed, else the newest build). To ship it, run **Promote** (which: "promote"):
 
-1. env `stage`, version blank (the newest release) or one from the Releases page. Try it on stage.
-2. env `prod`, version blank (what stage runs). Prod only takes a release stage has run, deploys
-   the same assembly dev and stage got (never a rebuild), and marks it **Latest** on the Releases
-   page.
+1. "release", env `stage` (the newest release). Deploys stage and puts the release's agent on
+   stage's canary. Try it.
+2. "agent canary → stable", env `stage`, when the agent looks good (skip if it didn't change).
+3. "release", env `prod` (what stage runs). Prod only takes a release stage has run, deploys the
+   same assembly (never a rebuild), and marks it **Latest** on the Releases page.
+4. "agent canary → stable", env `prod`.
 
-Roll back by promoting an older release. What runs where:
-`aws ssm get-parameter-history --name /hearth/<env>/release`. Agents are released separately (above).
+Dev's agent goes the same way: a build lands on dev's canary; "agent canary → stable", env `dev`.
+Roll back with which "roll back" (the env's previous release, or stable's previous agent), or
+"specific version" and a version typed from the Releases page. What runs where:
+`aws ssm get-parameter-history --name /hearth/<env>/release` (and `…/agent/canary`, `…/agent/stable`).
