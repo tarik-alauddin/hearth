@@ -47,7 +47,7 @@ as part of each PR. The repo layout and commands are in [README.md](README.md).
 | M5 Game updates and backups | Done (PR1–PR9; follow-ups under Deferred) |
 | M6 Idle shutdown | Done (PR1–PR4; join events from the log under Deferred) |
 | M7 Move your world | Done (PR1–PR4; tested on dev with a real world) |
-| Before Phase 2 | In progress: PR1–PR4b and 5b done; 6b (automatic releases, *Promote release*) in review |
+| Before Phase 2 | In progress: PR1–PR4b and 5b done; 6b done (stage deployed); 6c (three workflows) in review |
 
 **Before Phase 2 plan** (Phase 1 ends with M7; then the UI, per the Architecture doc):
 1. M7 docs: testing guide section for uploads; Architecture roadmap and System map close-out.
@@ -76,12 +76,15 @@ as part of each PR. The repo layout and commands are in [README.md](README.md).
    still clears it on any other state. The CLI no longer waits separately for the IP.
 6. Stage and prod (CDK already bootstrapped for both):
    - 6a, merged then replaced: `release.yml` (tag-triggered releases, created by hand): too heavy.
-   - 6b, in review: `deploy.yml` publishes a release after each dev deploy; `promote.yml`
-     (*Promote release*) deploys one to stage or prod; the reusable `deploy-env.yml` deploys and
-     records `/hearth/<env>/release`. Agent releases no longer take "Latest".
-   - Then the owner: `stage`/`prod` environments limited to `main`; promote to stage; per env:
-     accept the SNS email, promote an agent to `stable`, try a server end to end, check an alarm
-     arrives; then prod.
+   - 6b, merged: `deploy.yml` publishes a release after each dev deploy; *Promote release*
+     deploys one to stage or prod, recording `/hearth/<env>/release`. Stage deployed and checked.
+   - 6c, in review: three workflows (PR checks, Deploy, Promote). Agent release is a job in Deploy
+     (when `agent/` changed; by hand from main); Promote does platform or agent; the deploy steps
+     are the `.github/actions/deploy` composite action. Blank versions follow dev → stage → prod
+     for agents too, prod only takes an agent stage's stable ran, and a release of the wrong kind
+     is refused with the newest of the right kind (the owner's first stage agent promote failed
+     on exactly that).
+   - Then prod: promote platform and agent, accept the SNS email, try a server, check an alarm.
 Not a PR: the owner moves off root credentials (IAM Identity Center or an admin user), before 6.
 
 **M7 plan** (create a server from a user's upload in one step; the UI will do the same):
@@ -160,9 +163,12 @@ Not a PR: the owner moves off root credentials (IAM Identity Center or an admin 
   trusting only `…:environment:prod`.
 - **Trunk-based; every merge is a release** (no develop or release branches: dev and stage are
   those), the same pattern as agent releases. A merge to `main` deploys dev, then publishes
-  pre-release `v<date>-<sha7>` carrying that cloud assembly. *Promote release* deploys a release's
-  assembly to stage or prod (built once, never rebuilt); prod only takes one in
+  pre-release `v<date>-<sha7>` carrying that cloud assembly. *Promote* (platform) deploys a
+  release's assembly to an env (built once, never rebuilt); prod only takes one in
   `/hearth/stage/release`'s history, and marks it Latest. Fixes go through `main` like anything else.
+- **Three workflows:** PR checks, Deploy (dev, platform release, agent release), Promote (platform
+  or agent). Shared steps are composite actions (`.github/actions/`), which don't clutter the
+  Actions list the way reusable workflows do.
 - **All Servers table writes go through `services/core`**; the API is the only entry point for callers.
 - **Instances have no S3 write access.** They read agent releases only; backups use short-lived,
   per-server credentials from the API.
@@ -178,8 +184,9 @@ Not a PR: the owner moves off root credentials (IAM Identity Center or an admin 
   objects, so no lifecycle rule expires them; deleting them is by hand. Confirm by typing the
   server ID; `--yes` skips the prompt.
 - **Agent releases:** a merge to `main` touching `agent/` cuts `YYYY.MM.DD-<sha7>` onto dev canary;
-  "Promote agent" moves any release to any env and channel. Pruning is count-based (each channel's last
-  3, the newest 5).
+  *Promote* (agent) moves a release to an env and channel, dev → stage → prod like the platform.
+  Kept separate from platform releases: their own schedule, and the agent alone can roll back.
+  Pruning is count-based (each channel's last 3, the newest 5).
 - **Backup during the stop workflow, before the instance stops**, via Run Command
   `hearth-<env>-stop-agent`. The command finishing means the agent is done; the agent's `stopped` report
   says how it went. The agent gets 5 minutes; after about 6 the workflow stops the instance anyway and
