@@ -29,7 +29,7 @@ export function adminHandler({ operations, uploads, instanceRoleNames, log = def
       switch (event.routeKey) {
         case 'GET /admin/servers': {
           const query = event.queryStringParameters ?? {};
-          const body: ListServersResponse = await operations.listServers(query.limit, query.cursor);
+          const body: ListServersResponse = await operations.listServers(query.limit, query.cursor, query.all === 'true');
           return json(200, body);
         }
         case 'POST /admin/servers': {

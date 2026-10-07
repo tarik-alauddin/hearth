@@ -1,7 +1,7 @@
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import type { FleetReport, ServerRecord, UploadStatus } from '@hearth/shared';
-import { ApiError, type Api } from './client.js';
+import type { Api } from './client.js';
 import { CommandError, commands } from './commands.js';
 
 function server(overrides: Partial<ServerRecord>): ServerRecord {
@@ -204,16 +204,12 @@ describe('commands', () => {
   });
 
   describe('destroy', () => {
-    /** An API whose GET walks through `states` (then 404: destroyed), recording POSTs. */
+    /** An API whose GET walks through `states` (the last one repeats), recording POSTs. */
     function destroyApi(states: Partial<ServerRecord>[]) {
       const posts: string[] = [];
       let i = 0;
       const api = {
-        get: async () => {
-          const state = states[i++];
-          if (!state) throw new ApiError(404, 'No server s1');
-          return server(state);
-        },
+        get: async () => server(states[Math.min(i++, states.length - 1)] ?? {}),
         post: async (path: string) => {
           posts.push(path);
           return { serverId: 's1', status: 'DESTROYING' };
@@ -238,19 +234,29 @@ describe('commands', () => {
 
     const stopped = { status: 'STOPPED' as const, lastBackupAt: '2026-10-06T10:00:00.000Z' };
 
-    it('shows what goes, asks for the ID back, destroys, and follows it until gone', async () => {
-      const { api, posts } = destroyApi([stopped, { status: 'DESTROYING' }]);
+    it('shows what goes, asks for the ID back, destroys, and follows it to DESTROYED', async () => {
+      const { api, posts } = destroyApi([stopped, { status: 'DESTROYING' }, { status: 'DESTROYED' }]);
       const { out, asked, cmd } = runDestroy(api);
       await cmd.destroy('s1', { yes: false, wait: true });
       expect(asked).toEqual(['Type the server ID to destroy it: ']);
       expect(posts).toEqual(['/admin/servers/s1/destroy']);
       expect(out).toEqual([
-        'This destroys s1 (minecraft-java 1.21.4, STOPPED): its instance, data volume and record.',
+        'This destroys s1 (minecraft-java 1.21.4, STOPPED): its instance and data volume.',
         'Its backups are kept; the newest is from 2026-10-06T10:00:00.000Z.',
         'Destroying s1.',
         '  DESTROYING',
-        'Destroyed. Its backups stay in the backups bucket under servers/s1/.',
+        '  DESTROYED',
+        'Destroyed. Its backups are kept: `hearth backups s1`.',
       ]);
+    });
+
+    it('says when a server was already destroyed, asking nothing', async () => {
+      const { api, posts } = destroyApi([{ status: 'DESTROYED', destroyedAt: '2026-10-06T11:00:00.000Z' }]);
+      const { out, asked, cmd } = runDestroy(api);
+      await cmd.destroy('s1', { yes: false, wait: true });
+      expect(out).toEqual(['s1 was already destroyed on 2026-10-06T11:00:00.000Z.']);
+      expect(asked).toEqual([]);
+      expect(posts).toEqual([]);
     });
 
     it('warns plainly when there are no backups', async () => {
@@ -415,6 +421,21 @@ describe('commands', () => {
     expect(out[0]).toMatch(/^SERVER\s+GAME\s+VERSION\s+STATUS\s+AGENT\s+ADDRESS$/);
     expect(out[1]).toMatch(/^a\s+minecraft-java\s+1\.21\.4\s+STOPPED\s+-\s+-$/);
     expect(out[2]).toMatch(/^b .*RUNNING\s+ready\s+35\.1\.2\.3:25565$/);
+  });
+
+  it('list --all asks for destroyed servers too', async () => {
+    const { api, gets } = fakeApi([], [[server({ serverId: 'gone', status: 'DESTROYED' })]]);
+    const { out, cmd } = run(api);
+    await cmd.list(true);
+    expect(gets).toEqual(['/admin/servers {"limit":"100","all":"true"}']);
+    expect(out[1]).toMatch(/^gone .*DESTROYED/);
+  });
+
+  it('status shows when a server was destroyed', async () => {
+    const { api } = fakeApi([{ status: 'DESTROYED', destroyedAt: '2026-10-06T11:00:00.000Z' }]);
+    const { out, cmd } = run(api);
+    await cmd.status('s1');
+    expect(out).toContain('destroyed   2026-10-06T11:00:00.000Z');
   });
 
   it('fleet-check prints each finding, with the untracked instances to fix', async () => {

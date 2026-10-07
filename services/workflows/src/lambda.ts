@@ -32,6 +32,6 @@ function dispatcher(allowed: readonly TaskName[]) {
 
 export const launchHandler = dispatcher(['launchInstance', 'recordVolume']);
 export const powerHandler = dispatcher(['startInstance', 'stopAgent', 'waitForAgentStop', 'stopInstance', 'waitForStopped', 'stopAfterFailure']);
-export const statusHandler = dispatcher(['waitForAgent', 'markRunning', 'markStopped', 'markFailed']);
-// The only function that can terminate instances, delete volumes and delete records.
-export const destroyHandler = dispatcher(['terminateInstances', 'waitForTerminated', 'deleteVolumes', 'deleteRecord']);
+export const statusHandler = dispatcher(['waitForAgent', 'markRunning', 'markStopped', 'markDestroyed', 'markFailed']);
+// The only function that can terminate instances and delete volumes.
+export const destroyHandler = dispatcher(['terminateInstances', 'waitForTerminated', 'deleteVolumes']);

@@ -157,12 +157,12 @@ export class LifecycleWorkflows extends Construct {
         .next(step('WaitForStopped', power, 'waitForStopped', RETRY_STOPPED))
         .next(step('MarkStopped', status, 'markStopped'));
     });
-    // Destroy: the API only claims STOPPED or FAILED servers. Backups are left in place.
+    // Destroy: the API only claims STOPPED or FAILED servers. Backups, and the record (now DESTROYED), are kept.
     this.destroyServer = this.stateMachine('Destroy', `hearth-${env}-destroy-server`, status, undefined, (step) =>
       step('TerminateInstances', destroy, 'terminateInstances')
         .next(step('WaitForTerminated', destroy, 'waitForTerminated', RETRY_TERMINATED))
         .next(step('DeleteVolumes', destroy, 'deleteVolumes', RETRY_DETACHED))
-        .next(step('DeleteRecord', destroy, 'deleteRecord')),
+        .next(step('MarkDestroyed', status, 'markDestroyed')),
     );
   }
 
@@ -295,7 +295,7 @@ export class LifecycleWorkflows extends Construct {
 
   /**
    * Destroy: terminate instances and delete volumes, only this environment's Hearth ones (enforced
-   * by tag, as for Power), and delete Servers records. No other function can do any of these.
+   * by tag, as for Power). No other function can do either. Marking the server DESTROYED is Status's.
    */
   private grantDestroy(fn: NodejsFunction, props: LifecycleWorkflowsProps) {
     const { env } = props.config;
@@ -307,7 +307,7 @@ export class LifecycleWorkflows extends Construct {
     fn.addToRolePolicy(new PolicyStatement({ actions: ['ec2:DeleteVolume'], resources: [volumes], conditions: ours }));
     fn.addToRolePolicy(new PolicyStatement({ actions: ['ec2:DescribeInstances'], resources: ['*'] }));
     fn.addToRolePolicy(
-      new PolicyStatement({ actions: ['dynamodb:GetItem', 'dynamodb:DeleteItem'], resources: [props.serversTable.tableArn] }),
+      new PolicyStatement({ actions: ['dynamodb:GetItem'], resources: [props.serversTable.tableArn] }),
     );
     acknowledgeWildcards(
       fn,

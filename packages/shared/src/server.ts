@@ -11,7 +11,8 @@ export const SERVER_STATUSES = [
   'ARCHIVING',
   'ARCHIVED',
   'RESTORING',
-  'DESTROYING', // the destroy workflow is removing it; the record is deleted at the end
+  'DESTROYING', // the destroy workflow is removing its instance and data volume
+  'DESTROYED', // gone, except its backups; the record is kept for history (and to find the backups)
   'FAILED',
 ] as const;
 
@@ -69,6 +70,7 @@ export interface ServerRecord {
   lastStartedAt?: string;
   lastStoppedAt?: string;
   createdAt?: string; // ISO 8601 UTC
+  destroyedAt?: string; // ISO 8601 UTC; set when the destroy workflow finishes
   statusChangedAt?: string; // ISO 8601 UTC; set by every status change
   lastOperationId?: string; // the latest create/start/stop claim; names its workflow execution
   // Written by the lifecycle workflows.

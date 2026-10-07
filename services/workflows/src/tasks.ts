@@ -86,7 +86,7 @@ export type GameInfra = Record<
 
 export interface TaskDeps {
   env: string;
-  store: Pick<ServersStore, 'getServer' | 'transition' | 'deleteServer'>;
+  store: Pick<ServersStore, 'getServer' | 'transition'>;
   ec2: Ec2;
   ssm: Ssm;
   gameInfra: GameInfra;
@@ -325,11 +325,17 @@ export function workflowTasks({ env, store, ec2, ssm, gameInfra, now = () => new
       return state;
     },
 
-    /** Destroy, last: delete the record. The server's backups are kept, so its data can still be retrieved. */
-    async deleteRecord(state: WorkflowState): Promise<WorkflowState> {
-      if (!(await store.deleteServer(state.serverId, 'DESTROYING'))) {
-        throw new Error(`Server ${state.serverId} is no longer DESTROYING; its record was kept`);
-      }
+    /**
+     * Destroy, last: DESTROYING → DESTROYED. The record stays, for history and to find the server's
+     * backups (kept too); what no longer applies to it is cleared.
+     */
+    async markDestroyed(state: WorkflowState): Promise<WorkflowState> {
+      await transition(state.serverId, {
+        from: ['DESTROYING'],
+        to: 'DESTROYED',
+        set: { destroyedAt: now().toISOString() },
+        remove: ['publicIp', 'restoreKey', 'restoreSource', 'restoreRequestedAt', 'statusMessage'],
+      });
       console.log(JSON.stringify({ msg: 'server destroyed', ...state }));
       return { serverId: state.serverId };
     },

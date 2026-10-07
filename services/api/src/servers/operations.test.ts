@@ -29,9 +29,10 @@ function fakeStore(initial: ServerRecord[] = []) {
   const servers = new Map(initial.map((s) => [s.serverId, { ...s }]));
   const store: OperationDeps['store'] = {
     getServer: async (id) => (servers.has(id) ? { ...servers.get(id)! } : undefined),
-    listServers: async ({ limit, cursor }) => {
+    listServers: async ({ limit, cursor, includeDestroyed }) => {
       if (cursor === 'bad') throw new InvalidCursor('Invalid cursor');
-      return { servers: [...servers.values()].slice(0, limit) };
+      const shown = [...servers.values()].filter((s) => includeDestroyed || s.status !== 'DESTROYED');
+      return { servers: shown.slice(0, limit) };
     },
     createServer: async (server) => {
       if (servers.has(server.serverId)) throw new Error('exists');
@@ -254,6 +255,12 @@ describe('server operations', () => {
     it('rejects an invalid cursor with 400', async () => {
       await expect(ops(fakeStore(three).store).listServers(undefined, 'bad')).rejects.toMatchObject({ statusCode: 400 });
     });
+
+    it('leaves destroyed servers out unless all are asked for', async () => {
+      const { store } = fakeStore([...three, server({ serverId: 'gone', status: 'DESTROYED' })]);
+      expect((await ops(store).listServers(undefined, undefined)).servers.map((s) => s.serverId)).toEqual(['a', 'b', 'c']);
+      expect((await ops(store).listServers(undefined, undefined, true)).servers).toHaveLength(4);
+    });
   });
 
   describe('settings', () => {
@@ -338,10 +345,26 @@ describe('server operations', () => {
       expect(started).toEqual([]);
     });
 
-    it('does nothing more while a destroy is under way', async () => {
-      const { store } = fakeStore([server({ status: 'DESTROYING' })]);
-      expect((await ops(store).destroyServer('s1')).unchanged).toBe(true);
+    it.each(['DESTROYING', 'DESTROYED'] as const)('does nothing more for a %s server', async (status) => {
+      const { store } = fakeStore([server({ status })]);
+      expect(await ops(store).destroyServer('s1')).toEqual({ serverId: 's1', status, unchanged: true });
       expect(started).toEqual([]);
+    });
+
+    it('a destroyed server can no longer be started, stopped, restored, upgraded or reconfigured', async () => {
+      const { store } = fakeStore([server({ status: 'DESTROYED', lastStopClean: true })]);
+      const o = ops(store);
+      for (const attempt of [
+        o.startServer('s1'),
+        o.stopServer('s1'),
+        o.requestRestore('s1', {}),
+        o.setVersion('s1', { version: '26.3' }),
+        o.updateSettings('s1', { agentChannel: 'canary' }),
+      ]) {
+        await expect(attempt).rejects.toMatchObject({ statusCode: 409 });
+      }
+      expect(started).toEqual([]);
+      expect((await o.listBackups('s1')).backups).toEqual(BACKUPS); // its backups are still listed
     });
 
     it('puts the server back if the workflow cannot start', async () => {

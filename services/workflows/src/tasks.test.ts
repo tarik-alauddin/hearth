@@ -31,15 +31,10 @@ function newServer(overrides: Partial<ServerRecord> = {}): ServerRecord {
   };
 }
 
-/** One server in memory, with the store's conditional transition rules. `deleted` marks it gone. */
-function fakeStore(server: ServerRecord): TaskDeps['store'] & { deleted?: boolean } {
-  const store: TaskDeps['store'] & { deleted?: boolean } = {
-    deleteServer: async (id, status) => {
-      if (id !== server.serverId || store.deleted || server.status !== status) return false;
-      store.deleted = true;
-      return true;
-    },
-    getServer: async (id) => (id === server.serverId && !store.deleted ? { ...server } : undefined),
+/** One server in memory, with the store's conditional transition rules. */
+function fakeStore(server: ServerRecord): TaskDeps['store'] {
+  const store: TaskDeps['store'] = {
+    getServer: async (id) => (id === server.serverId ? { ...server } : undefined),
     transition: async (_, { from, to, instanceId, set = {}, remove = [] }) => {
       if (!from.includes(server.status)) return false;
       if (instanceId !== undefined && server.instanceId !== instanceId) return false;
@@ -297,7 +292,7 @@ describe('workflow tasks', () => {
   describe('destroy', () => {
     const destroying = { status: 'DESTROYING' as const, instanceId: 'i-1', volumeId: 'vol-1' };
 
-    it('terminates the instance, waits, deletes its volume, then deletes the record', async () => {
+    it('terminates the instance, waits, deletes its volume, then marks the server DESTROYED', async () => {
       setup(destroying);
       ec2.instances['i-1'] = { state: 'stopped', volumes: { '/dev/xvda': 'vol-root', '/dev/sdf': 'vol-1' } };
       ec2.volumes['vol-1'] = { attached: true };
@@ -316,8 +311,16 @@ describe('workflow tasks', () => {
       await tasks.deleteVolumes(terminated); // a retry after it's gone is fine
       expect(ec2.calls).toEqual(['terminate i-1', 'delete vol-1']);
 
-      expect(await tasks.deleteRecord(terminated)).toEqual({ serverId: 's1' });
-      expect(store.deleted).toBe(true);
+      expect(await tasks.markDestroyed(terminated)).toEqual({ serverId: 's1' });
+      expect(server).toMatchObject({ status: 'DESTROYED', destroyedAt: NOW.toISOString(), instanceId: 'i-1', volumeId: 'vol-1' }); // kept for history
+    });
+
+    it('clears what no longer applies to a destroyed server', async () => {
+      setup({ ...destroying, publicIp: '1.2.3.4', restoreKey: 'k', restoreSource: 'upload', restoreRequestedAt: NOW.toISOString() });
+      await tasks.markDestroyed({ serverId: 's1' });
+      for (const field of ['publicIp', 'restoreKey', 'restoreSource', 'restoreRequestedAt', 'statusMessage']) {
+        expect(server).not.toHaveProperty(field);
+      }
     });
 
     it('also removes an instance the record never learned of, and its unrecorded volume', async () => {
@@ -335,8 +338,8 @@ describe('workflow tasks', () => {
       expect(terminated).toEqual({ serverId: 's1', instanceIds: [], volumeIds: [] });
       await tasks.waitForTerminated(terminated);
       await tasks.deleteVolumes(terminated);
-      await tasks.deleteRecord(terminated);
-      expect(store.deleted).toBe(true);
+      await tasks.markDestroyed(terminated);
+      expect(server.status).toBe('DESTROYED');
       expect(ec2.calls).toEqual([]);
     });
 
@@ -351,9 +354,9 @@ describe('workflow tasks', () => {
       setup({ ...destroying, status });
       ec2.instances['i-1'] = { state: 'stopped', volumes: {} };
       await expect(tasks.terminateInstances({ serverId: 's1' })).rejects.toThrow(/expected DESTROYING/);
-      await expect(tasks.deleteRecord({ serverId: 's1' })).rejects.toThrow(/record was kept/);
+      await expect(tasks.markDestroyed({ serverId: 's1' })).rejects.toThrow(/its state changed/);
       expect(ec2.calls).toEqual([]);
-      expect(store.deleted).toBeUndefined();
+      expect(server.status).toBe(status);
     });
 
     it('a failed destroy marks the server FAILED, keeping its record', async () => {

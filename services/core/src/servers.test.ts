@@ -1,5 +1,5 @@
 import { ConditionalCheckFailedException } from '@aws-sdk/client-dynamodb';
-import { DeleteCommand, QueryCommand, UpdateCommand } from '@aws-sdk/lib-dynamodb';
+import { QueryCommand, UpdateCommand } from '@aws-sdk/lib-dynamodb';
 import { describe, expect, it } from 'vitest';
 import { InvalidCursor, dynamoServersStore } from './servers.js';
 
@@ -72,28 +72,6 @@ describe('dynamoServersStore', () => {
       new Date(),
     );
     expect(ok).toBe(false);
-  });
-});
-
-describe('deleteServer', () => {
-  it('deletes the record only while it has the expected status', async () => {
-    const { client, sent } = fakeClient();
-    expect(await dynamoServersStore(client, 't').deleteServer('s1', 'DESTROYING')).toBe(true);
-    expect(sent[0]).toBeInstanceOf(DeleteCommand);
-    expect((sent[0] as DeleteCommand).input).toMatchObject({
-      TableName: 't',
-      Key: { serverId: 's1' },
-      ConditionExpression: '#status = :status',
-      ExpressionAttributeNames: { '#status': 'status' },
-      ExpressionAttributeValues: { ':status': 'DESTROYING' },
-    });
-  });
-
-  it('returns false when the status changed', async () => {
-    const { client } = fakeClient(() => {
-      throw new ConditionalCheckFailedException({ message: 'no', $metadata: {} });
-    });
-    expect(await dynamoServersStore(client, 't').deleteServer('s1', 'DESTROYING')).toBe(false);
   });
 });
 
@@ -268,6 +246,19 @@ describe('createServer and listServers', () => {
     await store.listServers({ limit: 1, cursor: first.cursor });
     expect((sent[0] as { input: { Limit: number } }).input.Limit).toBe(1);
     expect((sent[1] as { input: { ExclusiveStartKey: unknown } }).input.ExclusiveStartKey).toEqual({ serverId: 's1' });
+  });
+
+  it('leaves destroyed servers out unless asked for them', async () => {
+    const { client, sent } = fakeClient(() => ({ Items: [] }));
+    const store = dynamoServersStore(client, 't');
+    await store.listServers({ limit: 50 });
+    expect((sent[0] as { input: unknown }).input).toMatchObject({
+      FilterExpression: '#status <> :destroyed',
+      ExpressionAttributeNames: { '#status': 'status' },
+      ExpressionAttributeValues: { ':destroyed': 'DESTROYED' },
+    });
+    await store.listServers({ limit: 50, includeDestroyed: true });
+    expect((sent[1] as { input: object }).input).not.toHaveProperty('FilterExpression');
   });
 
   it('has no cursor on the last page', async () => {

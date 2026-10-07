@@ -74,7 +74,10 @@ export interface ListBackupsResponse {
   backups: BackupSummary[];
 }
 
-/** `GET /admin/servers?limit=&cursor=` (limit 1–100, default 50) */
+/**
+ * `GET /admin/servers?limit=&cursor=&all=` (limit 1–100, default 50). Destroyed servers are left
+ * out unless `all=true`; a page can then hold fewer than `limit` servers, so follow the cursor.
+ */
 export interface ListServersResponse {
   servers: ServerRecord[];
   /** Present when there are more servers; pass it back as `cursor` for the next page. */

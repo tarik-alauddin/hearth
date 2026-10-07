@@ -136,9 +136,10 @@ hearth stop <serverId>              # destroy refuses a server that isn't stoppe
 hearth destroy <serverId>           # shows what goes, then asks you to type the ID; --yes skips that
 ```
 
-Expect `DESTROYING`, then `Destroyed.` The instance and data volume are deleted (EC2 console);
-`hearth status <serverId>` now answers 404. Its backups are kept under `servers/<serverId>/` in the
-backups bucket.
+Expect `DESTROYING` → `DESTROYED`, then `Destroyed.` The instance and data volume are deleted (EC2
+console). The record stays: `hearth status <serverId>` shows `DESTROYED` and when, `hearth backups
+<serverId>` still lists its backups, and `hearth list` leaves it out (`hearth list --all` shows it).
+Destroying it again says it was already destroyed.
 
 Refused: `hearth destroy` on a running server (`stop it before destroying it`), and a typed ID that
 doesn't match (`Not destroyed`).

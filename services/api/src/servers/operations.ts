@@ -131,12 +131,12 @@ export function serverOperations({
   return {
     getServer: requireServer,
 
-    /** One page of servers: `limit` 1–100 (default 50), `cursor` from the previous page. */
-    async listServers(limit: string | undefined, cursor: string | undefined): Promise<ListServersResponse> {
+    /** One page of servers: `limit` 1–100 (default 50), `cursor` from the previous page; destroyed ones only with `all`. */
+    async listServers(limit: string | undefined, cursor: string | undefined, all = false): Promise<ListServersResponse> {
       const size = limit === undefined ? DEFAULT_PAGE : Number(limit);
       if (!Number.isInteger(size) || size < 1 || size > MAX_PAGE) throw new OperationError(400, `limit must be 1–${MAX_PAGE}`);
       try {
-        return await store.listServers({ limit: size, ...(cursor ? { cursor } : {}) });
+        return await store.listServers({ limit: size, ...(cursor ? { cursor } : {}), ...(all ? { includeDestroyed: true } : {}) });
       } catch (err) {
         if (err instanceof InvalidCursor) throw new OperationError(400, 'Invalid cursor');
         throw err;
@@ -197,6 +197,9 @@ export function serverOperations({
     /** Changes settings; they apply from the server's next start. */
     async updateSettings(serverId: string, request: unknown): Promise<ServerRecord> {
       const settings = validateSettings(request);
+      if ((await requireServer(serverId)).status === 'DESTROYED') {
+        throw new OperationError(409, `Server ${serverId} is DESTROYED; its settings can't change`);
+      }
       if (!(await store.updateSettings(serverId, settings))) throw new OperationError(404, `No server ${serverId}`);
       return requireServer(serverId);
     },
@@ -220,7 +223,7 @@ export function serverOperations({
      */
     async destroyServer(serverId: string): Promise<ServerOperationResult> {
       const server = await requireServer(serverId);
-      if (server.status === 'DESTROYING') return { serverId, status: server.status, unchanged: true };
+      if (server.status === 'DESTROYING' || server.status === 'DESTROYED') return { serverId, status: server.status, unchanged: true };
       const instanceUp = server.instanceState === 'running' || server.instanceState === 'pending';
       if (server.status === 'STOPPED' || (server.status === 'FAILED' && !instanceUp)) {
         return claimAndRun(server, 'destroy', [server.status], 'DESTROYING');
