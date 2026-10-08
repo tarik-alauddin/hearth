@@ -67,13 +67,23 @@ describe('ApiStack', () => {
       expect(authorizer?.Properties.JwtConfiguration.Audience).toHaveLength(2); // the CLI's and (on dev) the web app's clients
     });
 
-    it('runs the user routes in their own Lambda, which may only read and update the Users table', () => {
+    it('runs the user routes in their own Lambda: Users read and updated; Servers and ServerAccess only read', () => {
       template.hasResourceProperties('AWS::Lambda::Function', {
-        Environment: { Variables: Match.objectLike({ USERS_TABLE: Match.anyValue() }) },
+        Environment: {
+          Variables: Match.objectLike({ USERS_TABLE: Match.anyValue(), SERVERS_TABLE: Match.anyValue(), ACCESS_TABLE: Match.anyValue() }),
+        },
       });
-      expect(policyStatements('UserServiceRoleDefaultPolicy')).toEqual([
-        expect.objectContaining({ Action: ['dynamodb:GetItem', 'dynamodb:UpdateItem'], Effect: 'Allow' }),
-      ]);
+      const statements = policyStatements('UserServiceRoleDefaultPolicy') as { Action: string | string[]; Resource: unknown }[];
+      // DataStack's tables arrive as stack outputs named after the table's logical ID (Users0A0EEA89…);
+      // a lone action is a string.
+      const on = (table: string) =>
+        statements
+          .filter((s) => new RegExp(`FnGetAtt${table}[0-9A-F]{8}`).test(JSON.stringify(s.Resource)))
+          .map((s) => [s.Action].flat());
+      expect(on('Users')).toEqual([['dynamodb:GetItem', 'dynamodb:UpdateItem']]);
+      expect(on('Servers')).toEqual([['dynamodb:GetItem']]);
+      expect(on('ServerAccess')).toEqual([['dynamodb:GetItem', 'dynamodb:Query']]);
+      expect(statements).toHaveLength(3);
     });
   });
 

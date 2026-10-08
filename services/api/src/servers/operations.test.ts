@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import type { ServerRecord, UploadStatus } from '@hearth/shared';
+import type { ServerAccessRecord, ServerRecord, UploadStatus } from '@hearth/shared';
 import { InvalidCursor } from '@hearth/core';
 import type { Actor } from '../authz.js';
 import { OperationError, serverOperations, type OperationDeps, type WorkflowName } from './operations.js';
@@ -589,17 +589,54 @@ describe('server operations', () => {
   });
 
   describe('for signed-in users', () => {
-    // u1 owns s1, u2 is a member of it, u3 has no access.
+    // u1 owns s1, u2 is a member of it, u3 has no access. For listing: u1 also owns s2 (newer)
+    // and s3 (destroyed), and has a row for s9, a server that's gone from the table.
+    const rows: ServerAccessRecord[] = [
+      { userId: 'u1', serverId: 's1', role: 'owner', addedAt: NOW.toISOString(), addedBy: 'u1' },
+      { userId: 'u2', serverId: 's1', role: 'member', addedAt: NOW.toISOString(), addedBy: 'u1' },
+      { userId: 'u1', serverId: 's2', role: 'owner', addedAt: NOW.toISOString(), addedBy: 'u1' },
+      { userId: 'u1', serverId: 's3', role: 'owner', addedAt: NOW.toISOString(), addedBy: 'u1' },
+      { userId: 'u1', serverId: 's9', role: 'owner', addedAt: NOW.toISOString(), addedBy: 'u1' },
+    ];
     const access: OperationDeps['access'] = {
       getAccess: async (userId, serverId) => {
         if (serverId !== 's1') return undefined;
-        const role = ({ u1: 'owner', u2: 'member' } as const)[userId as 'u1' | 'u2'];
-        return role && { userId, serverId, role, addedAt: NOW.toISOString(), addedBy: 'u1' };
+        return rows.find((r) => r.userId === userId && r.serverId === serverId);
       },
+      listForUser: async (userId) => rows.filter((r) => r.userId === userId),
     };
     const owner: Actor = { kind: 'user', userId: 'u1' };
     const member: Actor = { kind: 'user', userId: 'u2' };
     const stranger: Actor = { kind: 'user', userId: 'u3' };
+
+    describe('listing my servers', () => {
+      const servers = () =>
+        fakeStore([
+          server({ serverId: 's1', createdAt: '2026-10-01T00:00:00.000Z' }),
+          server({ serverId: 's2', createdAt: '2026-10-05T00:00:00.000Z' }),
+          server({ serverId: 's3', status: 'DESTROYED', createdAt: '2026-10-03T00:00:00.000Z' }),
+        ]).store;
+
+      it('lists the servers I own or am a member of, newest first, with my role on each', async () => {
+        const mine = await ops(servers(), access).listMyServers(owner);
+        expect(mine.map((m) => [m.server.serverId, m.relation])).toEqual([
+          ['s2', 'owner'],
+          ['s1', 'owner'],
+        ]);
+        const theirs = await ops(servers(), access).listMyServers(member);
+        expect(theirs.map((m) => [m.server.serverId, m.relation])).toEqual([['s1', 'member']]);
+      });
+
+      it('shows destroyed servers only when asked, and skips rows whose server is gone', async () => {
+        const all = await ops(servers(), access).listMyServers(owner, true);
+        expect(all.map((m) => m.server.serverId)).toEqual(['s2', 's3', 's1']);
+      });
+
+      it('lists nothing for someone with no access, and refuses agents', async () => {
+        expect(await ops(servers(), access).listMyServers(stranger)).toEqual([]);
+        await expect(ops(servers(), access).listMyServers(agent('s1', 'i-1'))).rejects.toMatchObject({ statusCode: 403 });
+      });
+    });
 
     it('lets a member start and stop the server', async () => {
       const { store, servers } = fakeStore([server({ status: 'STOPPED' })]);

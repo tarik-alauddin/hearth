@@ -23,6 +23,7 @@ export type {
   ErrorResponse,
   IdleReport,
   ListBackupsResponse,
+  ListMyServersResponse,
   ListServersResponse,
   MeResponse,
   RestoreDoneReport,

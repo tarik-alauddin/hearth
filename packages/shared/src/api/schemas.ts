@@ -37,7 +37,11 @@ export const AgentChannelSchema = named(z.enum(AGENT_CHANNELS), 'AgentChannel', 
 export const ServerStatusSchema = named(z.enum(SERVER_STATUSES), 'ServerStatus');
 export const AgentStateSchema = named(z.enum(AGENT_STATES), 'AgentState', 'What the agent says the game is doing.');
 export const InstanceStateSchema = named(z.enum(INSTANCE_STATES), 'InstanceState', "EC2's state of the instance.");
-const ServerRoleSchema = named(z.enum(['owner', 'member']), 'ServerRole', 'What the caller is to a server.');
+const ServerRelationSchema = named(
+  z.enum(['owner', 'member', 'admin']),
+  'ServerRelation',
+  "What the caller is to a server: its owner, a member, or an admin (who reaches every server).",
+);
 
 export const ErrorResponseSchema = named(
   z.object({ message: z.string().describe('What went wrong, for people') }),
@@ -90,7 +94,7 @@ export const ServerRecordSchema = named(
 export const ServerViewSchema = named(
   z.object({
     serverId: z.string(),
-    role: ServerRoleSchema,
+    role: ServerRelationSchema,
     game: GameIdSchema,
     region: z.string(),
     version: z.string(),
@@ -174,6 +178,16 @@ export const ListServersResponseSchema = named(
     cursor: z.string().optional().describe('Present when there are more; pass it back for the next page'),
   }),
   'ListServersResponse',
+);
+
+export const MyServersQuerySchema = z.object({
+  all: z.enum(['true', 'false']).optional().describe('Include destroyed servers'),
+});
+
+export const ListMyServersResponseSchema = named(
+  z.object({ servers: z.array(ServerViewSchema).describe('Newest first') }),
+  'ListMyServersResponse',
+  'The servers the caller owns or is a member of.',
 );
 
 export const BackupSummarySchema = named(
@@ -340,4 +354,5 @@ export type RestoreDoneReport = z.infer<typeof RestoreDoneReportSchema>;
 export type IdleReport = z.infer<typeof IdleReportSchema>;
 export type ErrorResponse = z.infer<typeof ErrorResponseSchema>;
 export type MeResponse = z.infer<typeof MeResponseSchema>;
+export type ListMyServersResponse = z.infer<typeof ListMyServersResponseSchema>;
 export type SetApprovalRequest = z.infer<typeof SetApprovalRequestSchema>;

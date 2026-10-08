@@ -28,6 +28,7 @@ import { HearthStack, type HearthStackProps } from '../hearth-stack.js';
 export interface ApiStackProps extends HearthStackProps {
   readonly serversTable: ITableV2;
   readonly usersTable: ITableV2;
+  readonly serverAccessTable: ITableV2;
   /** AuthStack's user pool and clients: /v1 routes take ID tokens they issue. */
   readonly userPool: IUserPool;
   readonly userPoolClients: readonly IUserPoolClient[];
@@ -245,16 +246,27 @@ export class ApiStack extends HearthStack {
         resources: Object.values(props.workflows).map((machine) => machine.stateMachineArn),
       }),
     );
-    // User routes (/v1): signed-in users, through the web app and later the CLI. For now it only
-    // records who they are (the Users table); server routes join it with M8 PR5c–e.
+    // User routes (/v1): signed-in users, through the web app and later the CLI. Who they are (the
+    // Users table) and the servers they can reach (read only, through their ServerAccess rows);
+    // acting on servers joins it with M8 PR5d–e.
     const user = hearthFunction(this, 'User', {
       config: props.config,
       entry: 'api/src/user/lambda.ts',
       handler: 'handler',
-      environment: { USERS_TABLE: props.usersTable.tableName },
+      environment: {
+        USERS_TABLE: props.usersTable.tableName,
+        SERVERS_TABLE: props.serversTable.tableName,
+        ACCESS_TABLE: props.serverAccessTable.tableName,
+        HOME_REGION: props.config.homeRegion,
+      },
     });
     user.addToRolePolicy(
       new PolicyStatement({ actions: ['dynamodb:GetItem', 'dynamodb:UpdateItem'], resources: [props.usersTable.tableArn] }),
+    );
+    user.addToRolePolicy(new PolicyStatement({ actions: ['dynamodb:GetItem'], resources: [props.serversTable.tableArn] }));
+    // A user's rows are one Query on the table's key; one row is a GetItem.
+    user.addToRolePolicy(
+      new PolicyStatement({ actions: ['dynamodb:GetItem', 'dynamodb:Query'], resources: [props.serverAccessTable.tableArn] }),
     );
 
     // Every route comes from the shared route list (packages/shared/src/api/routes.ts), which also
