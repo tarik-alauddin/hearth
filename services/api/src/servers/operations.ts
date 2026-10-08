@@ -1,25 +1,25 @@
 import { InvalidCursor, newId as defaultNewId, type AccessStore, type ServersStore, type Transition } from '@hearth/core';
 import {
-  AGENT_CHANNELS,
   DEFAULT_AGENT_CHANNEL,
-  GAMES,
-  MAX_IDLE_STOP_MINUTES,
   backupPrefix,
-  isAgentChannel,
   isUploadId,
-  type CreateServerRequest,
   type GameId,
   type ListBackupsResponse,
   type ListServersResponse,
-  type RestoreRequest,
   type ServerOperationResult,
   type ServerAction,
   type ServerRecord,
   type ServerStatus,
-  type SetVersionRequest,
-  type UpdateSettingsRequest,
 } from '@hearth/shared';
+import {
+  CreateServerRequestSchema,
+  RestoreRequestSchema,
+  SetVersionRequestSchema,
+  UpdateSettingsRequestSchema,
+} from '@hearth/shared/api';
+import type { z } from 'zod';
 import { actorId, requireAdmin, serverAuthorizer, type Actor, type Relation } from '../authz.js';
+import { check } from '../validation.js';
 import type { BackupStorage } from '../backups.js';
 import type { UploadStorage } from '../uploads.js';
 import type { GameVersions } from './versions.js';
@@ -60,7 +60,6 @@ export interface OperationDeps {
   newId?: (now: Date) => string;
 }
 
-const VERSION = /^[0-9A-Za-z._-]{1,32}$/;
 const DEFAULT_PAGE = 50;
 const MAX_PAGE = 100;
 
@@ -173,7 +172,7 @@ export function serverOperations({
     async createServer(actor: Actor, request: unknown): Promise<ServerOperationResult> {
       requireAdmin(actor);
       const ownerId = actorId(actor);
-      const { game, version, region = homeRegion, agentChannel = DEFAULT_AGENT_CHANNEL, upload } = validateCreate(request);
+      const { game, version, region = homeRegion, agentChannel = DEFAULT_AGENT_CHANNEL, upload } = parse(CreateServerRequestSchema, request);
       if (!gameRegions.includes(region)) throw new OperationError(400, `No game infrastructure in ${region}`);
       if (upload !== undefined) await requireAccepted(upload, game);
       const at = now();
@@ -224,7 +223,7 @@ export function serverOperations({
 
     /** Changes settings; they apply from the server's next start. */
     async updateSettings(actor: Actor, serverId: string, request: unknown): Promise<ServerRecord> {
-      const settings = validateSettings(request);
+      const settings = parse(UpdateSettingsRequestSchema, request);
       // Which agent releases a server follows is an admin's call: it's how releases are tried out.
       if (settings.agentChannel !== undefined) requireAdmin(actor);
       if ((await serverFor(actor, 'settings', serverId)).status === 'DESTROYED') {
@@ -289,7 +288,7 @@ export function serverOperations({
      * last stop with a backup since the server last ran, so the data before the upgrade is kept.
      */
     async setVersion(actor: Actor, serverId: string, request: unknown): Promise<ServerRecord> {
-      const { version } = validateSetVersion(request);
+      const { version } = parse(SetVersionRequestSchema, request);
       const server = await serverFor(actor, 'version', serverId);
       if (server.version === version) return server;
       if (server.status !== 'STOPPED') {
@@ -341,7 +340,7 @@ export function serverOperations({
      * no backup.
      */
     async requestRestore(actor: Actor, serverId: string, request: unknown): Promise<ServerRecord> {
-      const { key, force } = validateRestore(request);
+      const { key, force } = parse(RestoreRequestSchema, request);
       const server = await serverFor(actor, 'restore', serverId);
       if (!restorable(server)) {
         throw new OperationError(409, `Server ${serverId} is ${server.status}; stop it before restoring`);
@@ -395,65 +394,9 @@ function restorable(server: ServerRecord): boolean {
   return server.status === 'FAILED' && (!server.instanceId || server.instanceState === 'stopped');
 }
 
-function validateSetVersion(request: unknown): SetVersionRequest {
-  if (typeof request !== 'object' || request === null) throw new OperationError(400, 'Body must be a JSON object');
-  const { version, ...rest } = request as Record<string, unknown>;
-  const unknown = Object.keys(rest);
-  if (unknown.length) throw new OperationError(400, `Unknown fields: ${unknown.join(', ')}`);
-  if (typeof version !== 'string' || !VERSION.test(version)) throw new OperationError(400, 'Invalid version');
-  return { version };
-}
-
-function validateRestore(request: unknown): RestoreRequest {
-  if (typeof request !== 'object' || request === null) throw new OperationError(400, 'Body must be a JSON object');
-  const { key, force, ...rest } = request as Record<string, unknown>;
-  const unknown = Object.keys(rest);
-  if (unknown.length) throw new OperationError(400, `Unknown fields: ${unknown.join(', ')}`);
-  if (key !== undefined && (typeof key !== 'string' || !key)) throw new OperationError(400, 'Invalid key');
-  if (force !== undefined && typeof force !== 'boolean') throw new OperationError(400, 'force must be true or false');
-  return { ...(key !== undefined ? { key } : {}), ...(force ? { force } : {}) };
-}
-
-function validateCreate(request: unknown): CreateServerRequest {
-  if (typeof request !== 'object' || request === null) throw new OperationError(400, 'Body must be a JSON object');
-  const { game, version, region } = request as Record<string, unknown>;
-  if (!(GAMES as readonly unknown[]).includes(game)) throw new OperationError(400, `Unknown game; one of ${GAMES.join(', ')}`);
-  if (typeof version !== 'string' || !VERSION.test(version)) throw new OperationError(400, 'Invalid version');
-  if (region !== undefined && typeof region !== 'string') throw new OperationError(400, 'Invalid region');
-  const { agentChannel, upload } = request as Record<string, unknown>;
-  if (agentChannel !== undefined && !isAgentChannel(agentChannel)) {
-    throw new OperationError(400, `agentChannel must be one of ${AGENT_CHANNELS.join(', ')}`);
-  }
-  if (upload !== undefined && typeof upload !== 'string') throw new OperationError(400, 'Invalid upload');
-  return {
-    game: game as GameId,
-    version,
-    ...(region ? { region } : {}),
-    ...(agentChannel ? { agentChannel } : {}),
-    ...(upload !== undefined ? { upload } : {}),
-  };
-}
-
-function validateSettings(request: unknown): UpdateSettingsRequest {
-  if (typeof request !== 'object' || request === null) throw new OperationError(400, 'Body must be a JSON object');
-  const { agentChannel, idleStopMinutes, ...rest } = request as Record<string, unknown>;
-  const unknown = Object.keys(rest);
-  if (unknown.length) throw new OperationError(400, `Unknown settings: ${unknown.join(', ')}`);
-  if (agentChannel === undefined && idleStopMinutes === undefined) throw new OperationError(400, 'No settings given');
-  if (agentChannel !== undefined && !isAgentChannel(agentChannel)) {
-    throw new OperationError(400, `agentChannel must be one of ${AGENT_CHANNELS.join(', ')}`);
-  }
-  if (
-    idleStopMinutes !== undefined &&
-    (typeof idleStopMinutes !== 'number' ||
-      !Number.isInteger(idleStopMinutes) ||
-      idleStopMinutes < 0 ||
-      idleStopMinutes > MAX_IDLE_STOP_MINUTES)
-  ) {
-    throw new OperationError(400, `idleStopMinutes must be a whole number from 0 (never) to ${MAX_IDLE_STOP_MINUTES}`);
-  }
-  return {
-    ...(agentChannel !== undefined ? { agentChannel } : {}),
-    ...(idleStopMinutes !== undefined ? { idleStopMinutes: idleStopMinutes as number } : {}),
-  };
+/** The request, checked against its schema (`@hearth/shared/api`), or a 400 saying what's wrong. */
+function parse<T>(schema: z.ZodType<T>, request: unknown): T {
+  const result = check(schema, request);
+  if (!result.ok) throw new OperationError(400, result.message);
+  return result.value;
 }

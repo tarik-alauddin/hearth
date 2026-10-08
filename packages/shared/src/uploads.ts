@@ -18,12 +18,6 @@ export const MAX_UNPACKED_BYTES = 8 * 1024 ** 3;
 /** The most files and folders an upload may hold. */
 export const MAX_UPLOAD_ENTRIES = 200_000;
 
-/** `GET /admin/uploads/{id}`: how repack is getting on with an upload. */
-export type UploadStatus =
-  | { uploadId: string; status: 'repacking' }
-  | { uploadId: string; status: 'accepted'; bytes: number; game?: string }
-  | { uploadId: string; status: 'rejected'; reason: string };
-
 /** What repack writes to `rejected/<uploadId>.json`. */
 export interface Rejection {
   reason: string;

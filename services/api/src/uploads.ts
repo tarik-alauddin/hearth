@@ -14,7 +14,9 @@ import {
   type Rejection,
   type UploadStatus,
 } from '@hearth/shared';
+import { CreateUploadRequestSchema } from '@hearth/shared/api';
 import { OperationError } from './servers/operations.js';
+import { check } from './validation.js';
 
 // Forms and download links are short-lived: they're used right after they're made.
 const FORM_SECONDS = 900;
@@ -109,13 +111,10 @@ export function uploadOperations({
   return {
     /** A new upload ID and the form to upload to it. The ID is unguessable: it names the upload later. */
     async createUpload(request: unknown): Promise<CreateUploadResponse> {
-      if (typeof request !== 'object' || request === null) throw new OperationError(400, 'Body must be a JSON object');
-      const { game, ...rest } = request as Record<string, unknown>;
-      const unknown = Object.keys(rest);
-      if (unknown.length) throw new OperationError(400, `Unknown fields: ${unknown.join(', ')}`);
-      if (!(GAMES as readonly unknown[]).includes(game)) throw new OperationError(400, `Unknown game; one of ${GAMES.join(', ')}`);
+      const parsed = check(CreateUploadRequestSchema, request);
+      if (!parsed.ok) throw new OperationError(400, parsed.message);
       const uploadId = newId(now());
-      return { uploadId, maxBytes: MAX_UPLOAD_BYTES, ...(await uploads.form(game as GameId, uploadId)) };
+      return { uploadId, maxBytes: MAX_UPLOAD_BYTES, ...(await uploads.form(parsed.value.game, uploadId)) };
     },
 
     /** Whether repack has accepted or rejected an upload yet; 404 if it was never uploaded or has expired. */

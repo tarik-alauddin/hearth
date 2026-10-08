@@ -1,0 +1,2132 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Hearth API",
+    "version": "1",
+    "description": "Hearth's HTTP API. Each environment serves it at the address in SSM `/hearth/<env>/api-url`. Generated from packages/shared/src/api (routes.ts, schemas.ts): edit those, then `pnpm api:spec`."
+  },
+  "servers": [
+    {
+      "url": "{apiUrl}",
+      "description": "An environment's API",
+      "variables": {
+        "apiUrl": {
+          "default": "https://example.execute-api.us-west-2.amazonaws.com",
+          "description": "The value of SSM /hearth/<env>/api-url"
+        }
+      }
+    }
+  ],
+  "tags": [
+    {
+      "name": "admin",
+      "description": "Hearth admins (the hearth CLI): every server, uploads"
+    },
+    {
+      "name": "agent",
+      "description": "Game instances' agents, about their own server"
+    }
+  ],
+  "paths": {
+    "/admin/servers": {
+      "get": {
+        "operationId": "adminListServers",
+        "summary": "List every server",
+        "description": "Destroyed servers only with `all=true`; a page can then be short, so follow the cursor.",
+        "tags": [
+          "admin"
+        ],
+        "security": [
+          {
+            "awsSigV4": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "description": "1–100, default 50",
+            "schema": {
+              "description": "1–100, default 50",
+              "type": "string"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "description": "From the previous page",
+            "schema": {
+              "description": "From the previous page",
+              "type": "string"
+            }
+          },
+          {
+            "name": "all",
+            "in": "query",
+            "required": false,
+            "description": "Include destroyed servers",
+            "schema": {
+              "description": "Include destroyed servers",
+              "type": "string",
+              "enum": [
+                "true",
+                "false"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "One page of servers",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListServersResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request is malformed (the message says how)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The caller may not do this",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "operationId": "adminCreateServer",
+        "summary": "Create a server",
+        "description": "Records it (PROVISIONING) and runs the create workflow, which also starts it.",
+        "tags": [
+          "admin"
+        ],
+        "security": [
+          {
+            "awsSigV4": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateServerRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Created; the create workflow is running",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ServerOperationResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request is malformed (the message says how)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The caller may not do this",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such upload (never uploaded, or expired)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The upload is still being checked, was rejected, or is for another game",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/servers/{id}": {
+      "get": {
+        "operationId": "adminGetServer",
+        "summary": "Get a server",
+        "tags": [
+          "admin"
+        ],
+        "security": [
+          {
+            "awsSigV4": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The server",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ServerRecord"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The caller may not do this",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such server (or none the caller can reach)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/servers/{id}/backups": {
+      "get": {
+        "operationId": "adminListBackups",
+        "summary": "List a server's backups",
+        "tags": [
+          "admin"
+        ],
+        "security": [
+          {
+            "awsSigV4": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Newest first",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListBackupsResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The caller may not do this",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such server (or none the caller can reach)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/servers/{id}/destroy": {
+      "post": {
+        "operationId": "adminDestroyServer",
+        "summary": "Destroy a stopped server's instance and data volume",
+        "description": "Its backups and record are kept; the record is marked DESTROYED.",
+        "tags": [
+          "admin"
+        ],
+        "security": [
+          {
+            "awsSigV4": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Nothing to do: the server was already there (`unchanged`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ServerOperationResult"
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "The workflow started",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ServerOperationResult"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The caller may not do this",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such server (or none the caller can reach)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Not stopped: stop it first",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/servers/{id}/restore": {
+      "post": {
+        "operationId": "adminRequestRestore",
+        "summary": "Restore a backup on the next start",
+        "tags": [
+          "admin"
+        ],
+        "security": [
+          {
+            "awsSigV4": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RestoreRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The server, with the restore pending",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ServerRecord"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request is malformed (the message says how)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The caller may not do this",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such server (or none the caller can reach)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Not stopped, no backups, or an unclean last stop (unless forced)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/servers/{id}/restore/cancel": {
+      "post": {
+        "operationId": "adminCancelRestore",
+        "summary": "Cancel a pending restore",
+        "tags": [
+          "admin"
+        ],
+        "security": [
+          {
+            "awsSigV4": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The server, with no restore pending",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ServerRecord"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The caller may not do this",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such server (or none the caller can reach)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "No longer stopped",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/servers/{id}/settings": {
+      "post": {
+        "operationId": "adminUpdateSettings",
+        "summary": "Change a server's settings",
+        "tags": [
+          "admin"
+        ],
+        "security": [
+          {
+            "awsSigV4": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateSettingsRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The server, with its new settings",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ServerRecord"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request is malformed (the message says how)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The caller may not do this",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such server (or none the caller can reach)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "It's destroyed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/servers/{id}/start": {
+      "post": {
+        "operationId": "adminStartServer",
+        "summary": "Start a server",
+        "tags": [
+          "admin"
+        ],
+        "security": [
+          {
+            "awsSigV4": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Nothing to do: the server was already there (`unchanged`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ServerOperationResult"
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "The workflow started",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ServerOperationResult"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The caller may not do this",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such server (or none the caller can reach)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "It's in a state that can't be started",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/servers/{id}/stop": {
+      "post": {
+        "operationId": "adminStopServer",
+        "summary": "Stop a server (saving and backing it up)",
+        "tags": [
+          "admin"
+        ],
+        "security": [
+          {
+            "awsSigV4": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Nothing to do: the server was already there (`unchanged`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ServerOperationResult"
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "The workflow started",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ServerOperationResult"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The caller may not do this",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such server (or none the caller can reach)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "It's in a state that can't be stopped",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/servers/{id}/version": {
+      "post": {
+        "operationId": "adminSetVersion",
+        "summary": "Move a stopped server to a newer game version",
+        "description": "From its next start. Forward only, and only after a clean stop with a backup.",
+        "tags": [
+          "admin"
+        ],
+        "security": [
+          {
+            "awsSigV4": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetVersionRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The server, with its new version",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ServerRecord"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request is malformed (the message says how)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The caller may not do this",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such server (or none the caller can reach)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Not stopped, not newer, or no backup since it last ran",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/uploads": {
+      "post": {
+        "operationId": "adminCreateUpload",
+        "summary": "Start an upload of game data",
+        "tags": [
+          "admin"
+        ],
+        "security": [
+          {
+            "awsSigV4": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateUploadRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "A form to upload the file with",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CreateUploadResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request is malformed (the message says how)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The caller may not do this",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/uploads/{id}": {
+      "get": {
+        "operationId": "adminGetUpload",
+        "summary": "How the check of an upload is going",
+        "tags": [
+          "admin"
+        ],
+        "security": [
+          {
+            "awsSigV4": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Repacking, accepted or rejected",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UploadStatus"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The caller may not do this",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such server (or none the caller can reach)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/agent/backup-credentials": {
+      "post": {
+        "operationId": "agentBackupCredentials",
+        "summary": "Where to upload a new backup, with credentials for that key only",
+        "tags": [
+          "agent"
+        ],
+        "security": [
+          {
+            "awsSigV4": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The upload target",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BackupTarget"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The caller is not a game instance",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No server is assigned to this instance",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/agent/backups": {
+      "post": {
+        "operationId": "agentBackupDone",
+        "summary": "A backup finished uploading: record it, and prune old ones",
+        "tags": [
+          "agent"
+        ],
+        "security": [
+          {
+            "awsSigV4": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BackupDoneReport"
+              }
+            }
+          }
+        },
+        "responses": {
+          "204": {
+            "description": "Recorded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request is malformed (the message says how)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The caller is not a game instance",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No server is assigned to this instance",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The server is no longer on this instance",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/agent/config": {
+      "get": {
+        "operationId": "agentGetConfig",
+        "summary": "The instance's server: what to run, and any pending restore",
+        "tags": [
+          "agent"
+        ],
+        "security": [
+          {
+            "awsSigV4": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The config",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentConfig"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The caller is not a game instance",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No server is assigned to this instance",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/agent/idle": {
+      "post": {
+        "operationId": "agentIdleStop",
+        "summary": "Nobody is playing: stop the server through the stop workflow",
+        "tags": [
+          "agent"
+        ],
+        "security": [
+          {
+            "awsSigV4": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/IdleReport"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Nothing to do: the server was already there (`unchanged`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ServerOperationResult"
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "The workflow started",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ServerOperationResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request is malformed (the message says how)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The caller is not a game instance",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No server is assigned to this instance",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Not running, or no longer on this instance",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/agent/restored": {
+      "post": {
+        "operationId": "agentRestoreDone",
+        "summary": "The requested restore is done: clear it",
+        "tags": [
+          "agent"
+        ],
+        "security": [
+          {
+            "awsSigV4": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RestoreDoneReport"
+              }
+            }
+          }
+        },
+        "responses": {
+          "204": {
+            "description": "Cleared",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request is malformed (the message says how)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The caller is not a game instance",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No server is assigned to this instance",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "No restore of that key is pending",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/agent/status": {
+      "post": {
+        "operationId": "agentReportStatus",
+        "summary": "Report the game's state",
+        "tags": [
+          "agent"
+        ],
+        "security": [
+          {
+            "awsSigV4": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AgentStatusReport"
+              }
+            }
+          }
+        },
+        "responses": {
+          "204": {
+            "description": "Recorded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request is malformed (the message says how)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The caller is not a game instance",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No server is assigned to this instance",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The server is no longer on this instance",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "awsSigV4": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "Authorization",
+        "description": "AWS Signature Version 4 (IAM): admins with their AWS credentials, agents with their instance role"
+      }
+    },
+    "schemas": {
+      "AgentChannel": {
+        "type": "string",
+        "enum": [
+          "canary",
+          "stable"
+        ]
+      },
+      "AgentConfig": {
+        "type": "object",
+        "properties": {
+          "serverId": {
+            "type": "string"
+          },
+          "game": {
+            "$ref": "#/components/schemas/GameId"
+          },
+          "version": {
+            "type": "string"
+          },
+          "image": {
+            "type": "string"
+          },
+          "port": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "agent": {
+            "description": "The release this server's channel points at",
+            "$ref": "#/components/schemas/AgentTarget"
+          },
+          "restore": {
+            "description": "Replace the game data with this before starting the game",
+            "$ref": "#/components/schemas/RestoreTarget"
+          },
+          "idleStopMinutes": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991,
+            "description": "0 = never"
+          }
+        },
+        "required": [
+          "serverId",
+          "game",
+          "version",
+          "image",
+          "port",
+          "idleStopMinutes"
+        ],
+        "additionalProperties": false
+      },
+      "AgentState": {
+        "type": "string",
+        "enum": [
+          "starting",
+          "ready",
+          "stopping",
+          "stopped",
+          "error"
+        ]
+      },
+      "AgentStatusReport": {
+        "type": "object",
+        "properties": {
+          "state": {
+            "$ref": "#/components/schemas/AgentState"
+          },
+          "agentVersion": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64
+          },
+          "message": {
+            "description": "Short detail, e.g. the error",
+            "type": "string",
+            "maxLength": 500
+          }
+        },
+        "required": [
+          "state",
+          "agentVersion"
+        ],
+        "additionalProperties": false
+      },
+      "AgentTarget": {
+        "type": "object",
+        "properties": {
+          "version": {
+            "type": "string"
+          },
+          "sha256": {
+            "type": "string"
+          },
+          "url": {
+            "type": "string",
+            "description": "s3://bucket/key of the binary"
+          }
+        },
+        "required": [
+          "version",
+          "sha256",
+          "url"
+        ],
+        "additionalProperties": false
+      },
+      "BackupDoneReport": {
+        "type": "object",
+        "properties": {
+          "key": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "key"
+        ],
+        "additionalProperties": false
+      },
+      "BackupSummary": {
+        "type": "object",
+        "properties": {
+          "key": {
+            "type": "string"
+          },
+          "takenAt": {
+            "type": "string",
+            "description": "When the upload finished (ISO 8601, UTC)"
+          },
+          "bytes": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          }
+        },
+        "required": [
+          "key",
+          "takenAt",
+          "bytes"
+        ],
+        "additionalProperties": false
+      },
+      "BackupTarget": {
+        "type": "object",
+        "properties": {
+          "bucket": {
+            "type": "string"
+          },
+          "key": {
+            "type": "string"
+          },
+          "region": {
+            "type": "string"
+          },
+          "credentials": {
+            "type": "object",
+            "properties": {
+              "accessKeyId": {
+                "type": "string"
+              },
+              "secretAccessKey": {
+                "type": "string"
+              },
+              "sessionToken": {
+                "type": "string"
+              },
+              "expiration": {
+                "type": "string",
+                "description": "When they stop working (ISO 8601, UTC)"
+              }
+            },
+            "required": [
+              "accessKeyId",
+              "secretAccessKey",
+              "sessionToken",
+              "expiration"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "bucket",
+          "key",
+          "region",
+          "credentials"
+        ],
+        "additionalProperties": false
+      },
+      "CreateServerRequest": {
+        "type": "object",
+        "properties": {
+          "game": {
+            "$ref": "#/components/schemas/GameId"
+          },
+          "version": {
+            "type": "string",
+            "pattern": "^[0-9A-Za-z._-]{1,32}$"
+          },
+          "region": {
+            "description": "Defaults to the home region",
+            "type": "string",
+            "minLength": 1
+          },
+          "agentChannel": {
+            "description": "Defaults to stable",
+            "$ref": "#/components/schemas/AgentChannel"
+          },
+          "upload": {
+            "description": "An accepted upload to start with, instead of new game data",
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "game",
+          "version"
+        ],
+        "additionalProperties": false
+      },
+      "CreateUploadRequest": {
+        "type": "object",
+        "properties": {
+          "game": {
+            "$ref": "#/components/schemas/GameId"
+          }
+        },
+        "required": [
+          "game"
+        ],
+        "additionalProperties": false
+      },
+      "CreateUploadResponse": {
+        "type": "object",
+        "properties": {
+          "uploadId": {
+            "type": "string"
+          },
+          "url": {
+            "type": "string",
+            "description": "POST a multipart/form-data form here: every field in `fields`, then the file last as `file`"
+          },
+          "fields": {
+            "type": "object",
+            "propertyNames": {
+              "type": "string"
+            },
+            "additionalProperties": {
+              "type": "string"
+            }
+          },
+          "maxBytes": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991,
+            "description": "S3 refuses larger files"
+          },
+          "expiresAt": {
+            "type": "string",
+            "description": "When the form stops working (ISO 8601, UTC)"
+          }
+        },
+        "required": [
+          "uploadId",
+          "url",
+          "fields",
+          "maxBytes",
+          "expiresAt"
+        ],
+        "additionalProperties": false
+      },
+      "ErrorResponse": {
+        "type": "object",
+        "properties": {
+          "message": {
+            "type": "string",
+            "description": "What went wrong, for people"
+          }
+        },
+        "required": [
+          "message"
+        ],
+        "additionalProperties": false
+      },
+      "GameId": {
+        "type": "string",
+        "enum": [
+          "minecraft-java"
+        ]
+      },
+      "IdleReport": {
+        "type": "object",
+        "properties": {
+          "idleMinutes": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1440
+          }
+        },
+        "required": [
+          "idleMinutes"
+        ],
+        "additionalProperties": false
+      },
+      "InstanceState": {
+        "type": "string",
+        "enum": [
+          "pending",
+          "running",
+          "stopping",
+          "stopped",
+          "shutting-down",
+          "terminated"
+        ]
+      },
+      "ListBackupsResponse": {
+        "type": "object",
+        "properties": {
+          "backups": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BackupSummary"
+            }
+          }
+        },
+        "required": [
+          "backups"
+        ],
+        "additionalProperties": false
+      },
+      "ListServersResponse": {
+        "type": "object",
+        "properties": {
+          "servers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ServerRecord"
+            }
+          },
+          "cursor": {
+            "description": "Present when there are more; pass it back for the next page",
+            "type": "string"
+          }
+        },
+        "required": [
+          "servers"
+        ],
+        "additionalProperties": false
+      },
+      "RestoreDoneReport": {
+        "type": "object",
+        "properties": {
+          "key": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "key"
+        ],
+        "additionalProperties": false
+      },
+      "RestoreRequest": {
+        "type": "object",
+        "properties": {
+          "key": {
+            "description": "A key from the backups list, or its file name; default the newest",
+            "type": "string",
+            "minLength": 1
+          },
+          "force": {
+            "description": "Restore even though the last stop wasn't clean",
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      },
+      "RestoreTarget": {
+        "type": "object",
+        "properties": {
+          "key": {
+            "type": "string"
+          },
+          "url": {
+            "type": "string",
+            "description": "Presigned download link, valid 15 minutes"
+          }
+        },
+        "required": [
+          "key",
+          "url"
+        ],
+        "additionalProperties": false
+      },
+      "ServerOperationResult": {
+        "type": "object",
+        "properties": {
+          "serverId": {
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/ServerStatus"
+          },
+          "unchanged": {
+            "description": "Nothing was started: the server was already in that state",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "serverId",
+          "status"
+        ],
+        "additionalProperties": false
+      },
+      "ServerRecord": {
+        "type": "object",
+        "properties": {
+          "serverId": {
+            "type": "string",
+            "description": "ULID"
+          },
+          "ownerId": {
+            "type": "string",
+            "description": "The owner's id: a Cognito sub, or an admin's IAM ARN"
+          },
+          "game": {
+            "$ref": "#/components/schemas/GameId"
+          },
+          "region": {
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/ServerStatus"
+          },
+          "version": {
+            "type": "string",
+            "description": "Game version"
+          },
+          "autoUpdate": {
+            "type": "boolean"
+          },
+          "agentChannel": {
+            "description": "Default stable",
+            "$ref": "#/components/schemas/AgentChannel"
+          },
+          "idleStopMinutes": {
+            "description": "Stop after this long with nobody playing; 0 = never; default 30",
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "instanceId": {
+            "type": "string"
+          },
+          "volumeId": {
+            "type": "string"
+          },
+          "agentState": {
+            "$ref": "#/components/schemas/AgentState"
+          },
+          "agentVersion": {
+            "type": "string"
+          },
+          "agentReportedAt": {
+            "type": "string",
+            "description": "When the agent last reported (ISO 8601, UTC)"
+          },
+          "agentMessage": {
+            "type": "string"
+          },
+          "instanceState": {
+            "$ref": "#/components/schemas/InstanceState"
+          },
+          "instanceStateAt": {
+            "type": "string",
+            "description": "The EC2 event's time (ISO 8601, UTC)"
+          },
+          "publicIp": {
+            "description": "Only while running; changes on every start",
+            "type": "string"
+          },
+          "lastStartedAt": {
+            "type": "string"
+          },
+          "lastStoppedAt": {
+            "type": "string"
+          },
+          "createdAt": {
+            "type": "string",
+            "description": "Created (ISO 8601, UTC)"
+          },
+          "destroyedAt": {
+            "type": "string",
+            "description": "When the destroy workflow finished (ISO 8601, UTC)"
+          },
+          "statusChangedAt": {
+            "type": "string",
+            "description": "Set by every status change (ISO 8601, UTC)"
+          },
+          "lastOperationId": {
+            "description": "The latest claim; names its workflow execution",
+            "type": "string"
+          },
+          "statusMessage": {
+            "description": "Why the server is FAILED",
+            "type": "string"
+          },
+          "lastStopClean": {
+            "description": "The agent reported a clean stop (game saved)",
+            "type": "boolean"
+          },
+          "stopReason": {
+            "description": "Why the last stop happened, when not asked for",
+            "type": "string"
+          },
+          "lastBackupKey": {
+            "type": "string"
+          },
+          "lastBackupAt": {
+            "type": "string",
+            "description": "When the newest backup finished (ISO 8601, UTC)"
+          },
+          "lastBackupBytes": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "restoreKey": {
+            "description": "A pending restore: replaces the game data on the next start",
+            "type": "string"
+          },
+          "restoreSource": {
+            "description": "restoreKey is an accepted upload; unset = a backup",
+            "type": "string",
+            "const": "upload"
+          },
+          "restoreRequestedAt": {
+            "type": "string",
+            "description": "When the restore was requested (ISO 8601, UTC)"
+          }
+        },
+        "required": [
+          "serverId",
+          "ownerId",
+          "game",
+          "region",
+          "status",
+          "version",
+          "autoUpdate"
+        ],
+        "additionalProperties": false
+      },
+      "ServerRole": {
+        "type": "string",
+        "enum": [
+          "owner",
+          "member"
+        ]
+      },
+      "ServerStatus": {
+        "type": "string",
+        "enum": [
+          "PROVISIONING",
+          "STOPPED",
+          "STARTING",
+          "RUNNING",
+          "STOPPING",
+          "ARCHIVING",
+          "ARCHIVED",
+          "RESTORING",
+          "DESTROYING",
+          "DESTROYED",
+          "FAILED"
+        ]
+      },
+      "ServerView": {
+        "type": "object",
+        "properties": {
+          "serverId": {
+            "type": "string"
+          },
+          "role": {
+            "$ref": "#/components/schemas/ServerRole"
+          },
+          "game": {
+            "$ref": "#/components/schemas/GameId"
+          },
+          "region": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/ServerStatus"
+          },
+          "statusMessage": {
+            "description": "Why it's FAILED",
+            "type": "string"
+          },
+          "address": {
+            "description": "Where players connect: the public IP, while it runs",
+            "type": "string"
+          },
+          "gameState": {
+            "description": "The game inside, while it starts or runs",
+            "$ref": "#/components/schemas/AgentState"
+          },
+          "idleStopMinutes": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991,
+            "description": "0 = never"
+          },
+          "stopReason": {
+            "type": "string"
+          },
+          "lastStartedAt": {
+            "type": "string"
+          },
+          "lastStoppedAt": {
+            "type": "string"
+          },
+          "lastBackupAt": {
+            "type": "string"
+          },
+          "restorePending": {
+            "type": "boolean",
+            "description": "A restore will replace the game data on the next start"
+          },
+          "createdAt": {
+            "type": "string"
+          },
+          "destroyedAt": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "serverId",
+          "role",
+          "game",
+          "region",
+          "version",
+          "status",
+          "idleStopMinutes",
+          "restorePending"
+        ],
+        "additionalProperties": false
+      },
+      "SetVersionRequest": {
+        "type": "object",
+        "properties": {
+          "version": {
+            "type": "string",
+            "pattern": "^[0-9A-Za-z._-]{1,32}$",
+            "description": "A newer release of the game"
+          }
+        },
+        "required": [
+          "version"
+        ],
+        "additionalProperties": false
+      },
+      "UpdateSettingsRequest": {
+        "type": "object",
+        "properties": {
+          "agentChannel": {
+            "description": "Admins only",
+            "$ref": "#/components/schemas/AgentChannel"
+          },
+          "idleStopMinutes": {
+            "description": "Stop after this long with nobody playing (1–1440); 0 = never",
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1440
+          }
+        },
+        "additionalProperties": false
+      },
+      "UploadStatus": {
+        "oneOf": [
+          {
+            "type": "object",
+            "properties": {
+              "uploadId": {
+                "type": "string"
+              },
+              "status": {
+                "type": "string",
+                "const": "repacking"
+              }
+            },
+            "required": [
+              "uploadId",
+              "status"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "uploadId": {
+                "type": "string"
+              },
+              "status": {
+                "type": "string",
+                "const": "accepted"
+              },
+              "bytes": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              },
+              "game": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "uploadId",
+              "status",
+              "bytes"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "uploadId": {
+                "type": "string"
+              },
+              "status": {
+                "type": "string",
+                "const": "rejected"
+              },
+              "reason": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "uploadId",
+              "status",
+              "reason"
+            ],
+            "additionalProperties": false
+          }
+        ]
+      }
+    }
+  }
+}

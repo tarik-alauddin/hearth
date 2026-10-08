@@ -40,6 +40,12 @@ as part of each PR. The repo layout and commands are in [README.md](README.md).
 - Lambdas bundle as ESM: a function bundling CommonJS packages (e.g. yauzl) needs
   `commonJsDependencies: true` in `hearthFunction`, or it fails at runtime with "Dynamic require"
   (unit tests and `node -e` don't show it). Load the synthesized bundle as ESM to check.
+- API routes and bodies live in `packages/shared/src/api` only: add or change a route in
+  `routes.ts` (a body in `schemas.ts`), handle it, then `pnpm api:spec` and commit
+  `docs/api/openapi.json`. Import Zod as `import * as z from 'zod'` (the named `{ z }` import
+  bundles all of Zod: 800 KB Lambdas). Code that only needs types imports them from `@hearth/shared`.
+- In Git Bash, `node` is a `winpty` alias that swallows output and can't take piped input: use
+  `node.exe`, or run a script file.
 - S3 answers a missing key with 403, not 404, unless the caller (or a link's signer) has
   `s3:ListBucket` on the bucket.
 
@@ -53,7 +59,7 @@ as part of each PR. The repo layout and commands are in [README.md](README.md).
 | M7 Move your world | Done (PR1–PR4; tested on dev with a real world) |
 | Before Phase 2 | Done: M7 docs, neutral wording, destroy (records kept as `DESTROYED`), state-sync tweak, stage and prod live with the release flow (details under Decisions) |
 | **Phase 1** | **Complete** (2026-10-07): dev, stage and prod run `v2026.10.07-3461efe`, agent `2026.10.06-de42566` |
-| M8 Accounts and access | In progress: PR1a–PR1c done (sign-in with password, Google, Discord, tested on dev); PR2 (access data) done; PR3 (authorization) in review |
+| M8 Accounts and access | In progress: PR1a–PR1c done (sign-in with password, Google, Discord, tested on dev); PR2 (access data) and PR3 (authorization) done; PR4 (API contract) in review |
 | M9 Game version catalog | Planned (Deferred's plan, V1–V4) |
 | M10 Web UI | Planned |
 
@@ -99,7 +105,7 @@ the CLI signs in the same way; backend only):
     `newInviteCode` / `formatInviteCode` / `parseInviteCode` (forgiving: dashes, case, O→0, I/L→1),
     `ServersStore.countActiveOwned`. Types in `packages/shared/src/access.ts`. Left for PR5: the
     server and its owner access written in one transaction at create; what destroy does to access.
-- PR3 Authorization, in review (callers see no change: every existing test passes as it was):
+- PR3 Authorization, done (callers see no change: every existing test passes as it was):
   - **The rules:** `SERVER_PERMISSIONS` in `packages/shared/src/permissions.ts` (action → roles;
     `roleCan`), the one place they're written; the UI will read it to show only allowed actions.
   - **`services/api/src/authz.ts`:** `Actor` (`admin` with an id, `user` with a userId, `agent`
@@ -116,11 +122,28 @@ the CLI signs in the same way; backend only):
   - Tests: the full role × action matrix spelled out (changing a rule must change the test),
     404/403 wording, no access reads for admins and agents, shaping, and operations refusing a
     member the owner's actions before changing anything.
-- PR4 API contract (agreed): Zod 4 schemas in `packages/shared` validate requests and give the
-  types (replacing the hand-written validators); a route registry (method, path, schemas,
-  permission) generates the committed `openapi.json`, and the CDK builds the API's routes from it,
-  so no route exists undocumented; a test fails if the file is stale. `pnpm api:docs` opens Swagger
-  UI locally. Hosted docs come with M10: on in dev and stage, off in prod (see Decisions).
+- PR4 API contract, in review. A refactor: the deployed routes, integrations and IAM are
+  identical (checked against the previous synth); only Lambda code changes.
+  - `packages/shared/src/api` (imported as `@hearth/shared/api`): `schemas.ts` (Zod 4.6: every
+    request and response body, named in a registry; the types keep their names, re-exported
+    type-only from `@hearth/shared`, so Lambdas that don't check requests don't bundle Zod),
+    `routes.ts` (`API_ROUTES`: id, method, path, caller, handler Lambda, bodies, responses),
+    `openapi.ts` (OpenAPI 3.1 from Zod's JSON Schema; no extra library). `admin-api.ts` is gone;
+    `ServerView`, `UploadStatus` and the agent bodies moved into the schemas. `ServerRecord` stays
+    core's interface; its schema documents it and a type test keeps the two equal.
+  - The API's checks go through the schemas (`services/api/src/validation.ts`): the four
+    `validate*` functions and the agent handlers' parsers are gone. Behaviour kept (limits, the
+    agent's caller-then-body order), except: create now refuses unknown fields like the others.
+  - The CDK builds every route from `API_ROUTES` (unknown handler or a user route fails synth);
+    tests: deployed routes equal the list both ways, each reaches its named Lambda.
+  - `docs/api/openapi.json` (committed; `pnpm api:spec`; `infra/test/api-spec.test.ts` fails when
+    stale; valid per Redocly). `pnpm api:docs`: Swagger UI from `swagger-ui-dist` on 127.0.0.1:8090,
+    "try it out" off (SigV4). `@scarf/scarf` (its analytics install script) is denied in `allowBuilds`.
+  - **Import Zod as `import * as z from 'zod'`**, never `import { z }`: only the namespace import
+    lets esbuild drop unused parts. With `import { z }` the Admin and agent bundles were 800 KB;
+    now about 250 KB (the code was 41–45 KB; Zod adds about 130 KB unminified, ~80 KB minified).
+    `zod/mini` would be 13 KB but means rewriting the schemas in its functional style.
+  - Hosted docs come with M10: on in dev and stage, off in prod (see Decisions).
 - PR5 `/v1` server routes: the JWT authorizer, a User λ, `GET /v1/me`, the server routes; create
   checks approval and the cap; admin routes to approve a user (by email) and set agent channels;
   API Gateway throttling on `/v1` (caps abuse and cost).

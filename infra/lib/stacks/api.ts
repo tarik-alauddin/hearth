@@ -20,6 +20,7 @@ import {
   backupPrefix,
   uploadsBucket,
 } from '@hearth/shared';
+import { API_ROUTES, type RouteHandler } from '@hearth/shared/api';
 import { hearthFunction } from '../hearth-function.js';
 import { HearthStack, type HearthStackProps } from '../hearth-stack.js';
 
@@ -164,24 +165,6 @@ export class ApiStack extends HearthStack {
       });
     }
 
-    const authorizer = new HttpIamAuthorizer();
-    const agentRoutes = [
-      ['/agent/config', HttpMethod.GET, configFunction],
-      ['/agent/status', HttpMethod.POST, statusFunction],
-      ['/agent/backup-credentials', HttpMethod.POST, backupCredentialsFunction],
-      ['/agent/backups', HttpMethod.POST, backupDoneFunction],
-      ['/agent/restored', HttpMethod.POST, restoredFunction],
-      ['/agent/idle', HttpMethod.POST, idleFunction],
-    ] as const;
-    for (const [path, method, fn] of agentRoutes) {
-      this.api.addRoutes({
-        path,
-        methods: [method],
-        integration: new HttpLambdaIntegration(`${fn.node.id}Integration`, fn),
-        authorizer,
-      });
-    }
-
     // Admin routes: server operations for the hearth CLI, signed with your own AWS credentials.
     const admin = hearthFunction(this, 'Admin', {
       config: props.config,
@@ -257,25 +240,36 @@ export class ApiStack extends HearthStack {
         resources: Object.values(props.workflows).map((machine) => machine.stateMachineArn),
       }),
     );
-    this.functions = [...agentRoutes.map(([, , fn]) => fn), admin, repack];
-    const adminIntegration = new HttpLambdaIntegration('AdminIntegration', admin);
-    for (const [path, method] of [
-      ['/admin/servers', HttpMethod.GET],
-      ['/admin/servers', HttpMethod.POST],
-      ['/admin/uploads', HttpMethod.POST],
-      ['/admin/uploads/{id}', HttpMethod.GET],
-      ['/admin/servers/{id}', HttpMethod.GET],
-      ['/admin/servers/{id}/backups', HttpMethod.GET],
-      ['/admin/servers/{id}/version', HttpMethod.POST],
-      ['/admin/servers/{id}/restore', HttpMethod.POST],
-      ['/admin/servers/{id}/restore/cancel', HttpMethod.POST],
-      ['/admin/servers/{id}/start', HttpMethod.POST],
-      ['/admin/servers/{id}/stop', HttpMethod.POST],
-      ['/admin/servers/{id}/destroy', HttpMethod.POST],
-      ['/admin/servers/{id}/settings', HttpMethod.POST],
-    ] as const) {
-      this.api.addRoutes({ path, methods: [method], integration: adminIntegration, authorizer });
+    // Every route comes from the shared route list (packages/shared/src/api/routes.ts), which also
+    // generates the API's documentation: no route exists without its entry there.
+    const handlers: Record<RouteHandler, NodejsFunction> = {
+      agentConfig: configFunction,
+      agentStatus: statusFunction,
+      agentBackupCredentials: backupCredentialsFunction,
+      agentBackupDone: backupDoneFunction,
+      agentRestored: restoredFunction,
+      agentIdle: idleFunction,
+      admin,
+    };
+    this.functions = [...Object.values(handlers), repack];
+    const integrations = new Map<NodejsFunction, HttpLambdaIntegration>();
+    const integration = (fn: NodejsFunction) => {
+      let i = integrations.get(fn);
+      if (!i) integrations.set(fn, (i = new HttpLambdaIntegration(`${fn.node.id}Integration`, fn)));
+      return i;
+    };
+    // Admins sign with their own AWS credentials, agents with their instance role.
+    const authorizer = new HttpIamAuthorizer();
+    for (const route of API_ROUTES) {
+      if (route.caller.kind === 'user') throw new Error(`${route.id}: routes for signed-in users need the Cognito authorizer`);
+      this.api.addRoutes({
+        path: route.path,
+        methods: [HttpMethod[route.method]],
+        integration: integration(handlers[route.handler]),
+        authorizer,
+      });
     }
+    const agentRoutes = API_ROUTES.filter((route) => route.caller.kind === 'agent');
 
     this.apiUrlParameter = new StringParameter(this, 'ApiUrl', {
       parameterName: `/hearth/${env}/api-url`,
@@ -290,7 +284,7 @@ export class ApiStack extends HearthStack {
       statements: [
         new PolicyStatement({
           actions: ['execute-api:Invoke'],
-          resources: agentRoutes.map(([path, method]) => this.api.arnForExecuteApi(method, path, '$default')),
+          resources: agentRoutes.map(({ path, method }) => this.api.arnForExecuteApi(method, path, '$default')),
         }),
         new PolicyStatement({ actions: ['ssm:GetParameter'], resources: [this.apiUrlParameter.parameterArn] }),
       ],
