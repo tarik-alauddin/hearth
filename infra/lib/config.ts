@@ -25,7 +25,14 @@ export interface EnvConfig {
    * origin). Empty = no web sign-in client yet. The deployed site's origin joins these in M10.
    */
   readonly webOrigins: readonly string[];
+  /**
+   * Outside sign-in providers on. Each needs its secret (`hearth/<env>/<provider>`, created by the
+   * owner) before it's turned on here, or the deploy fails reading it.
+   */
+  readonly signInProviders: readonly SignInProvider[];
 }
+
+export type SignInProvider = 'google';
 
 /** The CLI's sign-in callback: a fixed loopback port, as Cognito matches callback URLs exactly. */
 export const CLI_CALLBACK_URL = 'http://localhost:8976/callback';
@@ -35,6 +42,13 @@ const QUALIFIERS: Record<EnvName, string> = {
   dev: 'hearthdev',
   stage: 'hearthstg',
   prod: 'hearthprd',
+};
+
+// Turned on per env once its secrets exist.
+const SIGN_IN_PROVIDERS: Record<EnvName, readonly SignInProvider[]> = {
+  dev: ['google'],
+  stage: [],
+  prod: [],
 };
 
 export function envConfig(env: EnvName): EnvConfig {
@@ -48,6 +62,7 @@ export function envConfig(env: EnvName): EnvConfig {
     fleetCheckScheduled: env === 'prod',
     // Vite's dev server, for building the UI against dev.
     webOrigins: env === 'dev' ? ['http://localhost:5173'] : [],
+    signInProviders: SIGN_IN_PROVIDERS[env],
   };
 }
 

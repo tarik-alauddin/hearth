@@ -1,24 +1,29 @@
 # Sign-in check
 
 Checks that an environment's Cognito user pool signs a user in through its managed login pages
-and issues tokens. Rerun after changes to the Auth stack. Google and Discord sections join this
-guide as those providers are added.
+and issues tokens, with a password (steps 1–5) and with Google (step 6). Rerun after changes to
+the Auth stack.
 
-**Where to run:** your own terminal (Git Bash on Windows: prefix AWS commands with
-`MSYS_NO_PATHCONV=1`, as the parameter names start with `/`) or AWS CloudShell in `us-west-2`,
-plus a browser. **Costs:** none at this scale.
+**Where to run:** your own terminal or AWS CloudShell in `us-west-2`, plus a browser. Git Bash on
+Windows: prefix AWS commands with `MSYS_NO_PATHCONV=1` (the parameter names start with `/`). JSON is
+read with Node (`jq` isn't in Git Bash; and there, `node` is a `winpty` alias that can't take piped
+input, so the helper calls `node.exe`). **Costs:** none at this scale.
 
 ## 0. Before you start
 
 - The change is deployed (for dev: merged to `main`, Deploy workflow green; stage and prod: promoted).
 
 ```bash
+# js '<json>' '<expression on j>': reads a JSON value without jq or pipes.
+NODE=$(command -v node.exe || command -v node)
+js() { J="$1" "$NODE" -p "const j = JSON.parse(process.env.J); $2"; }
+
 ENV=dev
-AUTH=$(aws ssm get-parameter --name "/hearth/$ENV/auth" --query Parameter.Value --output text)
+AUTH=$(aws ssm get-parameter --region us-west-2 --name "/hearth/$ENV/auth" --query Parameter.Value --output text)
 echo "$AUTH"
-POOL=$(echo "$AUTH" | jq -r .userPoolId)
-DOMAIN=$(echo "$AUTH" | jq -r .domain)
-CLIENT=$(echo "$AUTH" | jq -r .cliClientId)
+POOL=$(js "$AUTH" j.userPoolId)
+DOMAIN=$(js "$AUTH" j.domain)
+CLIENT=$(js "$AUTH" j.cliClientId)
 ```
 
 Expect `region`, `userPoolId`, `issuer`, `domain`, `cliClientId`, and on dev also `webClientId`.
@@ -27,9 +32,9 @@ Expect `region`, `userPoolId`, `issuer`, `domain`, `cliClientId`, and on dev als
 
 ```bash
 EMAIL=you@example.com
-aws cognito-idp admin-create-user --user-pool-id "$POOL" --username "$EMAIL" \
+aws cognito-idp admin-create-user --region us-west-2 --user-pool-id "$POOL" --username "$EMAIL" \
   --user-attributes Name=email,Value="$EMAIL" Name=email_verified,Value=true
-aws cognito-idp admin-add-user-to-group --user-pool-id "$POOL" --username "$EMAIL" --group-name admin
+aws cognito-idp admin-add-user-to-group --region us-west-2 --user-pool-id "$POOL" --username "$EMAIL" --group-name admin
 ```
 
 Expect an email from Cognito with a temporary password (check spam).
@@ -57,21 +62,21 @@ CODE=<the code>
 TOKENS=$(curl -s -X POST "$DOMAIN/oauth2/token" -H 'Content-Type: application/x-www-form-urlencoded' \
   -d grant_type=authorization_code -d client_id="$CLIENT" -d code="$CODE" \
   -d redirect_uri=http://localhost:8976/callback)
-echo "$TOKENS" | jq 'keys'
-echo "$TOKENS" | jq -r .id_token | node -e \
-  "process.stdin.on('data', t => console.log(JSON.parse(Buffer.from(String(t).split('.')[1], 'base64url'))))"
+js "$TOKENS" 'j.error ?? Object.keys(j)'
+js "$TOKENS" "JSON.parse(Buffer.from(j.id_token.split('.')[1], 'base64url'))"
 ```
 
-- Expect `access_token`, `expires_in`, `id_token`, `refresh_token`, `token_type`.
+- Expect `access_token`, `expires_in`, `id_token`, `refresh_token`, `token_type`. `invalid_grant`
+  instead = the code was used or expired: sign in again (step 2) for a new one.
 - The ID token's claims show your `email` and `cognito:groups: [ 'admin' ]`. Decode tokens
   locally like this; don't paste them into websites.
 
 ## 4. Refresh
 
 ```bash
-curl -s -X POST "$DOMAIN/oauth2/token" -H 'Content-Type: application/x-www-form-urlencoded' \
-  -d grant_type=refresh_token -d client_id="$CLIENT" \
-  -d refresh_token="$(echo "$TOKENS" | jq -r .refresh_token)" | jq 'keys'
+REFRESHED=$(curl -s -X POST "$DOMAIN/oauth2/token" -H 'Content-Type: application/x-www-form-urlencoded' \
+  -d grant_type=refresh_token -d client_id="$CLIENT" -d refresh_token="$(js "$TOKENS" j.refresh_token)")
+js "$REFRESHED" 'j.error ?? Object.keys(j)'
 ```
 
 Expect new `access_token` and `id_token` (no new refresh token).
@@ -84,3 +89,26 @@ echo "$DOMAIN/logout?client_id=$CLIENT&logout_uri=http://localhost:8976/callback
 
 Open it: the browser goes to the callback ("can't connect" again). Opening the sign-in URL from
 step 2 now asks for your password again.
+
+## 6. Google
+
+For environments with Google on (`signInProviders` in `infra/lib/config.ts`; setup:
+[docs/setup/google.md](../setup/google.md)). Sign out first (step 5), so the page doesn't reuse
+your password session.
+
+1. Open the sign-in URL from step 2: the page now has **Continue with Google**. Choose it and pick
+   your Google account (in Testing mode, it must be one of the app's test users).
+2. Back at the callback, exchange the code as in step 3. The ID token shows your Gmail `email`,
+   `email_verified: true`, `name`, `picture`, and an `identities` claim with
+   `providerName: 'Google'`. No `cognito:groups`: this is a new user, separate from your password
+   user (Cognito doesn't link them).
+3. Make that user an admin too. Its username is in the token's `cognito:username`
+   (`google_<number>`):
+
+```bash
+GOOGLE_USER=google_<number>
+aws cognito-idp admin-add-user-to-group --region us-west-2 --user-pool-id "$POOL" \
+  --username "$GOOGLE_USER" --group-name admin
+```
+
+Sign in with Google again: the new ID token has `cognito:groups: [ 'admin' ]`.

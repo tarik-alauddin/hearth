@@ -8,11 +8,15 @@ import {
   ManagedLoginVersion,
   Mfa,
   OAuthScope,
+  ProviderAttribute,
   UserPool,
   UserPoolClient,
   UserPoolClientIdentityProvider,
   UserPoolDomain,
+  UserPoolIdentityProviderGoogle,
+  type IUserPoolIdentityProvider,
 } from 'aws-cdk-lib/aws-cognito';
+import { Secret } from 'aws-cdk-lib/aws-secretsmanager';
 import { StringParameter } from 'aws-cdk-lib/aws-ssm';
 import type { Construct } from 'constructs';
 import { CLI_CALLBACK_URL } from '../config.js';
@@ -23,16 +27,17 @@ export const ADMIN_GROUP = 'admin';
 
 /**
  * Who you are: the Cognito user pool, its managed login pages and the clients that sign in through
- * them (the CLI everywhere; the web app where `webOrigins` lists one). Users sign in with Google or
- * Discord (added next); the only password users are the ones the owner creates, so there is no
- * self sign-up. Clients find the pool through one SSM parameter, `/hearth/<env>/auth`.
+ * them (the CLI everywhere; the web app where `webOrigins` lists one). Users sign in with Google
+ * (Discord next), per env's `signInProviders`; the only password users are the ones the owner
+ * creates, so there is no self sign-up. Clients find the pool through one SSM parameter,
+ * `/hearth/<env>/auth`.
  */
 export class AuthStack extends HearthStack {
   readonly userPool: UserPool;
   readonly clients: readonly UserPoolClient[];
 
   constructor(scope: Construct, props: HearthStackProps) {
-    const { isProd, env, account, webOrigins } = props.config;
+    const { isProd, env, account, webOrigins, signInProviders } = props.config;
     super(scope, 'Auth', { ...props, terminationProtection: isProd });
 
     this.userPool = new UserPool(this, 'Users', {
@@ -84,6 +89,33 @@ export class AuthStack extends HearthStack {
       managedLoginVersion: ManagedLoginVersion.NEWER_MANAGED_LOGIN,
     });
 
+    // Outside providers, each turned on per env once its secret exists. A first sign-in through one
+    // creates that user in the pool (self sign-up governs password users only).
+    const providers: IUserPoolIdentityProvider[] = [];
+    if (signInProviders.includes('google')) {
+      // { clientId, clientSecret } from the owner's Google OAuth client; CloudFormation resolves it
+      // at deploy, so neither is in the code or the template.
+      const secret = Secret.fromSecretNameV2(this, 'GoogleSecret', `hearth/${env}/google`);
+      providers.push(
+        new UserPoolIdentityProviderGoogle(this, 'Google', {
+          userPool: this.userPool,
+          clientId: secret.secretValueFromJson('clientId').unsafeUnwrap(), // not secret; shown on Google's sign-in page
+          clientSecretValue: secret.secretValueFromJson('clientSecret'),
+          scopes: ['openid', 'email', 'profile'],
+          attributeMapping: {
+            email: ProviderAttribute.GOOGLE_EMAIL,
+            emailVerified: ProviderAttribute.GOOGLE_EMAIL_VERIFIED,
+            fullname: ProviderAttribute.GOOGLE_NAME,
+            profilePicture: ProviderAttribute.GOOGLE_PICTURE,
+          },
+        }),
+      );
+    }
+    const supportedIdentityProviders = [
+      UserPoolClientIdentityProvider.COGNITO,
+      ...(signInProviders.includes('google') ? [UserPoolClientIdentityProvider.GOOGLE] : []),
+    ];
+
     const client = (id: string, callbackUrls: string[], logoutUrls: string[], refreshDays: number) => {
       const c = this.userPool.addClient(id, {
         userPoolClientName: `hearth-${env}-${id.toLowerCase()}`,
@@ -94,7 +126,7 @@ export class AuthStack extends HearthStack {
           callbackUrls,
           logoutUrls,
         },
-        supportedIdentityProviders: [UserPoolClientIdentityProvider.COGNITO],
+        supportedIdentityProviders,
         preventUserExistenceErrors: true,
         accessTokenValidity: Duration.hours(1),
         idTokenValidity: Duration.hours(1),
@@ -103,6 +135,8 @@ export class AuthStack extends HearthStack {
       // Sign-in happens only on the managed login pages; the client itself may only refresh tokens.
       // (CDK reads an empty authFlows as "Cognito's defaults", which allow API sign-in flows.)
       (c.node.defaultChild as CfnUserPoolClient).explicitAuthFlows = ['ALLOW_REFRESH_TOKEN_AUTH'];
+      // A client naming a provider that doesn't exist yet fails to deploy.
+      for (const provider of providers) c.node.addDependency(provider);
       // Managed login (v2) shows a page only for clients with a style; Cognito's default here.
       new CfnManagedLoginBranding(this, `${id}Branding`, {
         userPoolId: this.userPool.userPoolId,
