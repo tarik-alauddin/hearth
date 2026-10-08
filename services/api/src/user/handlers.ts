@@ -1,8 +1,8 @@
 import type { APIGatewayProxyEventV2WithJWTAuthorizer, APIGatewayProxyStructuredResultV2 } from 'aws-lambda';
 import type { UsersStore } from '@hearth/core';
-import type { MeResponse } from '@hearth/shared';
-import { AccessDenied } from '../authz.js';
-import { OperationError } from '../servers/operations.js';
+import type { ListMyServersResponse, MeResponse } from '@hearth/shared';
+import { AccessDenied, toServerView } from '../authz.js';
+import { OperationError, type serverOperations } from '../servers/operations.js';
 import type { userOperations } from '../users/operations.js';
 import { callerFromClaims, type Claims } from './claims.js';
 
@@ -12,6 +12,7 @@ type Result = APIGatewayProxyStructuredResultV2;
 export interface UserHandlerDeps {
   users: Pick<UsersStore, 'recordSignIn'>;
   userOps: ReturnType<typeof userOperations>;
+  serverOps: Pick<ReturnType<typeof serverOperations>, 'getServer' | 'listMyServers'>;
   now?: () => Date;
   log?: (entry: Record<string, unknown>) => void;
 }
@@ -20,7 +21,7 @@ export interface UserHandlerDeps {
  * One Lambda for every /v1 route (signed-in users; API Gateway checks their Cognito ID token),
  * dispatched by route key. Routes say who is calling; the operations decide what they may do.
  */
-export function userHandler({ users, userOps, now = () => new Date(), log = defaultLog }: UserHandlerDeps) {
+export function userHandler({ users, userOps, serverOps, now = () => new Date(), log = defaultLog }: UserHandlerDeps) {
   return async function handle(event: Event): Promise<Result> {
     const caller = callerFromClaims(event.requestContext.authorizer?.jwt?.claims as Claims | undefined);
     if (!caller) return json(401, { message: 'Send the ID token from signing in (Authorization: Bearer <id token>)' });
@@ -40,6 +41,15 @@ export function userHandler({ users, userOps, now = () => new Date(), log = defa
             ...pick(user, ['provider', 'email', 'name', 'username', 'displayName', 'picture']),
           };
           return json(200, body);
+        }
+        case 'GET /v1/servers': {
+          const mine = await serverOps.listMyServers(caller.actor, event.queryStringParameters?.all === 'true');
+          const body: ListMyServersResponse = { servers: mine.map(({ server, relation }) => toServerView(server, relation)) };
+          return json(200, body);
+        }
+        case 'GET /v1/servers/{id}': {
+          const { server, relation } = await serverOps.getServer(caller.actor, event.pathParameters?.id ?? '');
+          return json(200, toServerView(server, relation));
         }
         case 'POST /v1/admin/users/{id}/approval': {
           const userId = event.pathParameters?.id ?? '';

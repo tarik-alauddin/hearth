@@ -1,15 +1,29 @@
 import type { APIGatewayProxyEventV2WithJWTAuthorizer } from 'aws-lambda';
 import { describe, expect, it } from 'vitest';
-import type { UserProfile, UserRecord } from '@hearth/shared';
+import type { ServerRecord, UserProfile, UserRecord } from '@hearth/shared';
 import { userOperations } from '../users/operations.js';
-import { userHandler } from './handlers.js';
+import { AccessDenied } from '../authz.js';
+import { userHandler, type UserHandlerDeps } from './handlers.js';
 
 const NOW = new Date('2026-10-08T12:00:00Z');
 const SUB = 'u-1';
 
-function event(routeKey: string, claims: Record<string, unknown> | undefined, opts: { id?: string; body?: string } = {}) {
+/** Server operations for tests that don't reach them. */
+const noServers: UserHandlerDeps['serverOps'] = {
+  getServer: async () => {
+    throw new Error('not used');
+  },
+  listMyServers: async () => [],
+};
+
+function event(
+  routeKey: string,
+  claims: Record<string, unknown> | undefined,
+  opts: { id?: string; body?: string; query?: Record<string, string> } = {},
+) {
   return {
     routeKey,
+    queryStringParameters: opts.query,
     pathParameters: opts.id ? { id: opts.id } : undefined,
     body: opts.body,
     isBase64Encoded: false,
@@ -61,7 +75,7 @@ describe('user routes', () => {
     it('records a first-time user, not yet approved, and logs them as new', async () => {
       const { store, users } = fakeUsers();
       const logs: Record<string, unknown>[] = [];
-      const res = await userHandler({ users: store, userOps: userOperations({ users: store, now: () => NOW }), now: () => NOW, log: (e) => logs.push(e) })(event('GET /v1/me', googleClaims));
+      const res = await userHandler({ users: store, serverOps: noServers, userOps: userOperations({ users: store, now: () => NOW }), now: () => NOW, log: (e) => logs.push(e) })(event('GET /v1/me', googleClaims));
 
       expect(res.statusCode).toBe(200);
       expect(JSON.parse(res.body!)).toEqual({
@@ -80,13 +94,13 @@ describe('user routes', () => {
 
     it("keeps a returning user's approval and limit, refreshing their profile", async () => {
       const { store } = fakeUsers([{ userId: SUB, approved: true, serverLimit: 5, createdAt: '2026-10-01T00:00:00.000Z', name: 'Old name' }]);
-      const res = await userHandler({ users: store, userOps: userOperations({ users: store, now: () => NOW }), now: () => NOW, log: () => {} })(event('GET /v1/me', googleClaims));
+      const res = await userHandler({ users: store, serverOps: noServers, userOps: userOperations({ users: store, now: () => NOW }), now: () => NOW, log: () => {} })(event('GET /v1/me', googleClaims));
       expect(JSON.parse(res.body!)).toMatchObject({ approved: true, serverLimit: 5, name: 'Tarik', createdAt: '2026-10-01T00:00:00.000Z' });
     });
 
     it('says whether the caller is an admin, from their groups', async () => {
       const { store } = fakeUsers();
-      const res = await userHandler({ users: store, userOps: userOperations({ users: store, now: () => NOW }), now: () => NOW, log: () => {} })(
+      const res = await userHandler({ users: store, serverOps: noServers, userOps: userOperations({ users: store, now: () => NOW }), now: () => NOW, log: () => {} })(
         event('GET /v1/me', { ...googleClaims, 'cognito:groups': '[admin]' }),
       );
       expect(JSON.parse(res.body!).admin).toBe(true);
@@ -95,9 +109,71 @@ describe('user routes', () => {
 
   it('answers 401 to an access token, or no claims at all', async () => {
     const { store } = fakeUsers();
-    const handle = userHandler({ users: store, userOps: userOperations({ users: store, now: () => NOW }), now: () => NOW, log: () => {} });
+    const handle = userHandler({ users: store, serverOps: noServers, userOps: userOperations({ users: store, now: () => NOW }), now: () => NOW, log: () => {} });
     expect((await handle(event('GET /v1/me', { ...googleClaims, token_use: 'access' }))).statusCode).toBe(401);
     expect((await handle(event('GET /v1/me', undefined))).statusCode).toBe(401);
+  });
+
+  describe('servers', () => {
+    const record: ServerRecord = {
+      serverId: 's1',
+      ownerId: SUB,
+      game: 'minecraft-java',
+      region: 'us-west-2',
+      status: 'RUNNING',
+      version: '26.3',
+      autoUpdate: false,
+      instanceId: 'i-1',
+      publicIp: '35.1.2.3',
+      lastBackupKey: 'servers/s1/x.tar.gz',
+      createdAt: '2026-10-01T00:00:00.000Z',
+    };
+    const calls: string[] = [];
+    const serverOps: UserHandlerDeps['serverOps'] = {
+      listMyServers: async (actor, all) => {
+        calls.push(`list ${actor.kind} ${all}`);
+        return [{ server: record, relation: 'owner' }];
+      },
+      getServer: async (actor, id) => {
+        if (id !== 's1') throw new AccessDenied(404, `No server ${id}`);
+        return { server: record, relation: actor.kind === 'admin' ? 'admin' : 'member' };
+      },
+    };
+    const handle = () => {
+      const { store } = fakeUsers();
+      return userHandler({ users: store, serverOps, userOps: userOperations({ users: store, now: () => NOW }), log: () => {} });
+    };
+
+    it('lists my servers as the UI sees them: no instance IDs or storage keys', async () => {
+      calls.length = 0;
+      const res = await handle()(event('GET /v1/servers', googleClaims));
+      expect(res.statusCode).toBe(200);
+      const { servers } = JSON.parse(res.body!);
+      expect(servers).toEqual([expect.objectContaining({ serverId: 's1', role: 'owner', address: '35.1.2.3' })]);
+      expect(servers[0]).not.toHaveProperty('instanceId');
+      expect(servers[0]).not.toHaveProperty('lastBackupKey');
+      expect(calls).toEqual(['list user false']);
+    });
+
+    it('includes destroyed servers with all=true', async () => {
+      calls.length = 0;
+      await handle()(event('GET /v1/servers', googleClaims, { query: { all: 'true' } }));
+      expect(calls).toEqual(['list user true']);
+    });
+
+    it('gets one server, with my relation to it, and 404 for one I cannot reach', async () => {
+      const ok = await handle()(event('GET /v1/servers/{id}', googleClaims, { id: 's1' }));
+      expect(JSON.parse(ok.body!)).toMatchObject({ serverId: 's1', role: 'member' });
+      const missing = await handle()(event('GET /v1/servers/{id}', googleClaims, { id: 's2' }));
+      expect(missing.statusCode).toBe(404);
+    });
+
+    it('answers admins with the same view, not the whole record', async () => {
+      const res = await handle()(event('GET /v1/servers/{id}', { ...googleClaims, 'cognito:groups': '[admin]' }, { id: 's1' }));
+      const body = JSON.parse(res.body!);
+      expect(body.role).toBe('admin');
+      expect(body).not.toHaveProperty('instanceId');
+    });
   });
 
   describe('POST /v1/admin/users/{id}/approval', () => {
@@ -108,7 +184,7 @@ describe('user routes', () => {
       const logs: Record<string, unknown>[] = [];
       const handle = userHandler({
         users: store,
-        userOps: userOperations({ users: store, now: () => NOW }),
+        serverOps: noServers, userOps: userOperations({ users: store, now: () => NOW }),
         now: () => NOW,
         log: (e) => logs.push(e),
       });
@@ -148,7 +224,7 @@ describe('user routes', () => {
 
   it('answers 404 for a route it does not serve', async () => {
     const { store } = fakeUsers();
-    const res = await userHandler({ users: store, userOps: userOperations({ users: store, now: () => NOW }), now: () => NOW, log: () => {} })(event('GET /v1/nope', googleClaims));
+    const res = await userHandler({ users: store, serverOps: noServers, userOps: userOperations({ users: store, now: () => NOW }), now: () => NOW, log: () => {} })(event('GET /v1/nope', googleClaims));
     expect(res.statusCode).toBe(404);
   });
 });

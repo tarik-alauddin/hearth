@@ -1498,6 +1498,137 @@
           }
         }
       }
+    },
+    "/v1/servers": {
+      "get": {
+        "operationId": "listMyServers",
+        "summary": "My servers",
+        "description": "The servers the caller owns or is a member of, newest first. Destroyed ones only with `all=true`.",
+        "tags": [
+          "user"
+        ],
+        "security": [
+          {
+            "cognito": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "all",
+            "in": "query",
+            "required": false,
+            "description": "Include destroyed servers",
+            "schema": {
+              "description": "Include destroyed servers",
+              "type": "string",
+              "enum": [
+                "true",
+                "false"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The servers, as the caller sees them",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListMyServersResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request is malformed (the message says how)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No ID token, or an invalid or expired one: sign in again",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/servers/{id}": {
+      "get": {
+        "operationId": "getServer",
+        "summary": "One of my servers",
+        "description": "Its status, and the address players join while it runs.",
+        "tags": [
+          "user"
+        ],
+        "security": [
+          {
+            "cognito": []
+          }
+        ],
+        "x-hearth-permission": "view",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The server, as the caller sees it",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ServerView"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No ID token, or an invalid or expired one: sign in again",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The caller may not do this",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such server (or none the caller can reach)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -1845,6 +1976,22 @@
         ],
         "additionalProperties": false
       },
+      "ListMyServersResponse": {
+        "type": "object",
+        "properties": {
+          "servers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ServerView"
+            },
+            "description": "Newest first"
+          }
+        },
+        "required": [
+          "servers"
+        ],
+        "additionalProperties": false
+      },
       "ListServersResponse": {
         "type": "object",
         "properties": {
@@ -2125,11 +2272,12 @@
         ],
         "additionalProperties": false
       },
-      "ServerRole": {
+      "ServerRelation": {
         "type": "string",
         "enum": [
           "owner",
-          "member"
+          "member",
+          "admin"
         ]
       },
       "ServerStatus": {
@@ -2155,7 +2303,7 @@
             "type": "string"
           },
           "role": {
-            "$ref": "#/components/schemas/ServerRole"
+            "$ref": "#/components/schemas/ServerRelation"
           },
           "game": {
             "$ref": "#/components/schemas/GameId"

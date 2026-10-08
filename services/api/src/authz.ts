@@ -111,7 +111,14 @@ export function actorId(actor: Actor): string {
 
 /** A server as its caller may see it: the whole record for admins, the UI's view for everyone else. */
 export function shapeServer(server: ServerRecord, relation: Relation): ServerRecord | ServerView {
-  if (relation === 'admin') return server;
+  return relation === 'admin' ? server : toServerView(server, relation);
+}
+
+/**
+ * The UI's view of a server, for any caller (`/v1` answers with it for admins too, with the role
+ * `admin`): what the UI shows, without instance IDs, storage keys or agent internals.
+ */
+export function toServerView(server: ServerRecord, relation: Relation): ServerView {
   return {
     serverId: server.serverId,
     role: relation,

@@ -59,7 +59,7 @@ as part of each PR. The repo layout and commands are in [README.md](README.md).
 | M7 Move your world | Done (PR1–PR4; tested on dev with a real world) |
 | Before Phase 2 | Done: M7 docs, neutral wording, destroy (records kept as `DESTROYED`), state-sync tweak, stage and prod live with the release flow (details under Decisions) |
 | **Phase 1** | **Complete** (2026-10-07): dev, stage and prod run `v2026.10.07-3461efe`, agent `2026.10.06-de42566` |
-| M8 Accounts and access | In progress: PR1a–PR1c done (sign-in with password, Google, Discord, tested on dev); PR2–PR4 done (access data, authorization, API contract); PR5a (`/v1/me`) merged; PR5b (approve users) in review |
+| M8 Accounts and access | In progress: PR1a–PR1c done (sign-in with password, Google, Discord, tested on dev); PR2–PR4 done (access data, authorization, API contract); PR5a–b merged (`/v1/me`, approving users); PR5c (listing servers) in review |
 | M9 Game version catalog | Planned (Deferred's plan, V1–V4) |
 | M10 Web UI | Planned |
 
@@ -155,15 +155,22 @@ the CLI signs in the same way; backend only):
     GetItem/UpdateItem the Users table. `scripts/api-call.ps1` calls any `/v1` route with a saved
     session (`~/.hearth/script-session-<env>.json`, refreshed as needed); the sign-in steps moved to
     `scripts/lib/hearth-auth.ps1`, shared with `sign-in-check.ps1`. Guide: `docs/testing/user-api.md`.
-  - 5b, in review: `POST /v1/admin/users/{id}/approval` `{ approved }` (true approves, false takes
+  - 5b, merged: `POST /v1/admin/users/{id}/approval` `{ approved }` (true approves, false takes
     it back; servers they own keep running), **by user ID** (one person with several sign-ins is
     several users, each approved; the M10 admin page lists pending users with names). Admins only:
     routes gain `adminOnly` (`caller: { kind: 'user', adminOnly: true }`: docs mark it and list
     403; `requireAdmin` enforces). `services/api/src/users/operations.ts` (`userOperations`,
     beside `servers/`); answers the `UserRecord` (schema checked equal to core's type); 404 for
     someone who never signed in. Logs who approved whom. No infra change.
-  - 5c: `GET /v1/servers` (theirs, through ServerAccess) and `/v1/servers/{id}`, shaped by role;
-    throttling for `/v1` (the stage already throttles 50/s, burst 100).
+  - 5c, in review: `GET /v1/servers` (`?all=true` adds destroyed) and `GET /v1/servers/{id}`.
+    `listMyServers` reads the caller's ServerAccess rows (one Query) and each server (GetItem):
+    nothing reaches a server without a row; newest first; rows whose server is gone are skipped.
+    **`/v1` answers `ServerView` to everyone, admins too** (`toServerView`; `role` gains `admin`,
+    for an admin on someone else's server); whole records stay on `/admin`. The User λ reads
+    Servers (GetItem) and ServerAccess (GetItem, Query); its other operation dependencies throw
+    "not available yet" until 5d–e wire them. No extra throttling: HTTP APIs can't throttle per
+    route or user natively, and the stage's 50/s (burst 100) covers every route; per-user limits
+    later if needed (e.g. WAF).
   - 5d: create: approval, the cap, the server and its owner row in one transaction.
   - 5e: start and stop (owners and members), then the owners' actions (split if it grows).
   - Admin agent channels and `/v1` uploads follow as their own small PRs.

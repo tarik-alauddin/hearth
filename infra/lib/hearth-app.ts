@@ -21,6 +21,7 @@ export function addEnvironment(app: App, config: EnvConfig): void {
     config,
     serversTable: data.serversTable,
     usersTable: data.usersTable,
+    serverAccessTable: data.serverAccessTable,
     userPool: auth.userPool,
     userPoolClients: auth.clients,
     instanceRoles: gameInfra.map((stack) => stack.instanceRole),

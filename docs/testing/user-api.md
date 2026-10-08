@@ -65,3 +65,19 @@ Admins only. Users are approved by their user ID: the `userId` `/v1/me` shows th
    `approved: true`.
 3. Take it back with `-Body '{"approved":false}'`: `approved: false`, no `approvedAt`.
 4. A user ID that has never signed in answers `404`; a body like `{"approved":"yes"}` answers `400`.
+
+## 3. My servers (`GET /v1/servers`, `GET /v1/servers/{id}`)
+
+Answers are the UI's view of a server (`ServerView`): its status, version, `address` while it runs,
+and the caller's `role` (owner, member, or admin). Never instance IDs or storage keys, for admins
+either; admins keep the whole record on `/admin`. Until `/v1` can create servers (M8 PR5d), nobody
+owns one through it, so the list is empty; the CLI's servers (created through `/admin`) are what
+admins can look at.
+
+1. `api /v1/servers`: expect `200` and `{"servers": []}` (`-Body` isn't needed; add `?all=true` to
+   the path to include destroyed servers).
+2. Pick a server ID from `pnpm hearth list` and, as your admin user, `api /v1/servers/<id>`: expect
+   `200` with `role: admin`, its `status`, `version`, `idleStopMinutes`, and **no** `instanceId`,
+   `volumeId` or `lastBackupKey`.
+3. The same as a user outside `admin`: expect `404` ("No server …"), exactly as for an ID that
+   doesn't exist (`api /v1/servers/01NOSUCHSERVER0000000000`).

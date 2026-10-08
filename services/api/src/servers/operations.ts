@@ -48,7 +48,7 @@ export class OperationError extends Error {
 export interface OperationDeps {
   store: Pick<ServersStore, 'getServer' | 'listServers' | 'createServer' | 'transition' | 'updateSettings'>;
   /** Users' access to servers. Only routes for signed-in users (/v1) need it; others have no user callers. */
-  access?: Pick<AccessStore, 'getAccess'>;
+  access?: Pick<AccessStore, 'getAccess' | 'listForUser'>;
   workflows: Workflows;
   backups: Pick<BackupStorage, 'list'>;
   uploads: Pick<UploadStorage, 'status' | 'accepted'>;
@@ -146,6 +146,24 @@ export function serverOperations({
     async getServer(actor: Actor, serverId: string): Promise<{ server: ServerRecord; relation: Relation }> {
       const relation = await authorize(actor, 'view', serverId);
       return { server: await requireServer(serverId), relation };
+    },
+
+    /**
+     * The servers a signed-in user (or an admin, as a user) owns or is a member of, newest first,
+     * each with their role on it. Destroyed ones only with `all`. Every server through the
+     * caller's own access: nothing here can reach a server they have no row for.
+     */
+    async listMyServers(actor: Actor, all = false): Promise<{ server: ServerRecord; relation: Relation }[]> {
+      if (actor.kind === 'agent') throw new OperationError(403, 'Agents have no servers to list');
+      if (!access) throw new Error('No access store: this route takes no user callers');
+      const rows = await access.listForUser(actorId(actor));
+      const found = await Promise.all(
+        rows.map(async (row) => ({ server: await store.getServer(row.serverId), relation: row.role as Relation })),
+      );
+      return found
+        .filter((f): f is { server: ServerRecord; relation: Relation } => f.server !== undefined)
+        .filter((f) => all || f.server.status !== 'DESTROYED')
+        .sort((a, b) => (b.server.createdAt ?? '').localeCompare(a.server.createdAt ?? ''));
     },
 
     /**
