@@ -1,3 +1,4 @@
+export * from './access.js';
 export * from './admin-api.js';
 export * from './agent-api.js';
 export * from './agent-releases.js';

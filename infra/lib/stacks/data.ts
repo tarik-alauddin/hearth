@@ -1,13 +1,24 @@
 import { Duration, RemovalPolicy, Validations } from 'aws-cdk-lib';
-import { AttributeType, ProjectionType, TableV2 } from 'aws-cdk-lib/aws-dynamodb';
+import { AttributeType, ProjectionType, TableV2, type TablePropsV2 } from 'aws-cdk-lib/aws-dynamodb';
 import { BlockPublicAccess, Bucket, BucketEncryption, StorageClass } from 'aws-cdk-lib/aws-s3';
 import type { Construct } from 'constructs';
-import { SERVERS_BY_INSTANCE_INDEX, SERVERS_BY_STATUS_INDEX, backupBucket, uploadsBucket } from '@hearth/shared';
+import {
+  ACCESS_BY_SERVER_INDEX,
+  INVITES_BY_SERVER_INDEX,
+  SERVERS_BY_INSTANCE_INDEX,
+  SERVERS_BY_OWNER_INDEX,
+  SERVERS_BY_STATUS_INDEX,
+  backupBucket,
+  uploadsBucket,
+} from '@hearth/shared';
 import { HearthStack, type HearthStackProps } from '../hearth-stack.js';
 
 /** Stateful: DynamoDB tables and the S3 backup and uploads buckets. Retained with termination protection in prod. */
 export class DataStack extends HearthStack {
   readonly serversTable: TableV2;
+  readonly usersTable: TableV2;
+  readonly serverAccessTable: TableV2;
+  readonly invitesTable: TableV2;
   readonly backupBucket: Bucket;
   readonly uploadsBucket: Bucket;
 
@@ -34,6 +45,56 @@ export class DataStack extends HearthStack {
           sortKey: { name: 'statusChangedAt', type: AttributeType.STRING },
           projectionType: ProjectionType.INCLUDE,
           nonKeyAttributes: ['instanceId', 'instanceState'],
+        },
+        // A user's servers, for the server cap (counts those not destroyed).
+        {
+          indexName: SERVERS_BY_OWNER_INDEX,
+          partitionKey: { name: 'ownerId', type: AttributeType.STRING },
+          sortKey: { name: 'createdAt', type: AttributeType.STRING },
+          projectionType: ProjectionType.INCLUDE,
+          nonKeyAttributes: ['status'],
+        },
+      ],
+    });
+
+    // Accounts and access (M8). Keyed by the Cognito user's sub; admins are a Cognito group, not
+    // recorded here. Same protection as Servers: these say who owns what.
+    const table = (id: string, props: Omit<TablePropsV2, 'tableName' | 'pointInTimeRecoverySpecification' | 'deletionProtection' | 'removalPolicy'>) =>
+      new TableV2(this, id, {
+        tableName: `hearth-${env}-${id}`,
+        pointInTimeRecoverySpecification: { pointInTimeRecoveryEnabled: true },
+        deletionProtection: isProd,
+        removalPolicy,
+        ...props,
+      });
+
+    // Profile (from the sign-in token), approval and server limit.
+    this.usersTable = table('Users', {
+      partitionKey: { name: 'userId', type: AttributeType.STRING },
+    });
+
+    // Who can reach which server: one item per user and server, role owner or member.
+    this.serverAccessTable = table('ServerAccess', {
+      partitionKey: { name: 'userId', type: AttributeType.STRING },
+      sortKey: { name: 'serverId', type: AttributeType.STRING },
+      globalSecondaryIndexes: [
+        {
+          indexName: ACCESS_BY_SERVER_INDEX,
+          partitionKey: { name: 'serverId', type: AttributeType.STRING },
+          sortKey: { name: 'userId', type: AttributeType.STRING },
+        },
+      ],
+    });
+
+    // Invite links. TTL removes expired ones (a day or two late; reads check expiresAt themselves).
+    this.invitesTable = table('Invites', {
+      partitionKey: { name: 'code', type: AttributeType.STRING },
+      timeToLiveAttribute: 'expiresAtEpoch',
+      globalSecondaryIndexes: [
+        {
+          indexName: INVITES_BY_SERVER_INDEX,
+          partitionKey: { name: 'serverId', type: AttributeType.STRING },
+          sortKey: { name: 'createdAt', type: AttributeType.STRING },
         },
       ],
     });

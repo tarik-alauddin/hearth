@@ -10,6 +10,7 @@ import {
 } from '@aws-sdk/lib-dynamodb';
 import {
   SERVERS_BY_INSTANCE_INDEX,
+  SERVERS_BY_OWNER_INDEX,
   SERVERS_BY_STATUS_INDEX,
   type AgentStatusReport,
   type InstanceState,
@@ -36,6 +37,12 @@ export interface ServersStore {
   /** API: changes user settings on an existing server. Returns false if there's no such server. */
   updateSettings(serverId: string, settings: ServerSettings): Promise<boolean>;
   findByInstance(instanceId: string): Promise<ServerRecord | undefined>;
+  /**
+   * How many servers `ownerId` owns that aren't destroyed, from the byOwner index: what the
+   * server cap counts. The index is eventually consistent, so a server created a moment ago may be
+   * missed; the cap accepts that.
+   */
+  countActiveOwned(ownerId: string): Promise<number>;
   /**
    * Servers in `status` (from the byStatus index: keys, statusChangedAt, instanceId, instanceState),
    * optionally only those that have been in it since before `changedBefore`.
@@ -161,6 +168,28 @@ export function dynamoServersStore(
         start = out.LastEvaluatedKey;
       } while (start);
       return entries;
+    },
+
+    async countActiveOwned(ownerId) {
+      let count = 0;
+      let start: Record<string, unknown> | undefined;
+      do {
+        const out = await client.send(
+          new QueryCommand({
+            TableName: tableName,
+            IndexName: SERVERS_BY_OWNER_INDEX,
+            KeyConditionExpression: 'ownerId = :ownerId',
+            FilterExpression: '#status <> :destroyed',
+            ExpressionAttributeNames: { '#status': 'status' },
+            ExpressionAttributeValues: { ':ownerId': ownerId, ':destroyed': 'DESTROYED' },
+            Select: 'COUNT',
+            ExclusiveStartKey: start,
+          }),
+        );
+        count += out.Count ?? 0;
+        start = out.LastEvaluatedKey;
+      } while (start);
+      return count;
     },
 
     async findByInstance(instanceId) {

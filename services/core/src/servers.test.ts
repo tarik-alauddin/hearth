@@ -327,3 +327,22 @@ describe('updateSettings', () => {
     expect(await dynamoServersStore(client, 't').updateSettings('nope', { agentChannel: 'stable' })).toBe(false);
   });
 });
+
+describe('countActiveOwned', () => {
+  it("counts an owner's servers that aren't destroyed, through the byOwner index, every page", async () => {
+    const pages = [{ Count: 2, LastEvaluatedKey: { ownerId: 'u1', serverId: 's2' } }, { Count: 1 }];
+    const { client, sent } = fakeClient(() => pages.shift());
+
+    expect(await dynamoServersStore(client, 'hearth-dev-Servers').countActiveOwned('u1')).toBe(3);
+    expect((sent[0] as QueryCommand).input).toMatchObject({
+      TableName: 'hearth-dev-Servers',
+      IndexName: 'byOwner',
+      KeyConditionExpression: 'ownerId = :ownerId',
+      FilterExpression: '#status <> :destroyed',
+      ExpressionAttributeNames: { '#status': 'status' },
+      ExpressionAttributeValues: { ':ownerId': 'u1', ':destroyed': 'DESTROYED' },
+      Select: 'COUNT',
+    });
+    expect((sent[1] as QueryCommand).input.ExclusiveStartKey).toEqual({ ownerId: 'u1', serverId: 's2' });
+  });
+});

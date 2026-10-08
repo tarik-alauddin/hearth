@@ -53,7 +53,7 @@ as part of each PR. The repo layout and commands are in [README.md](README.md).
 | M7 Move your world | Done (PR1–PR4; tested on dev with a real world) |
 | Before Phase 2 | Done: M7 docs, neutral wording, destroy (records kept as `DESTROYED`), state-sync tweak, stage and prod live with the release flow (details under Decisions) |
 | **Phase 1** | **Complete** (2026-10-07): dev, stage and prod run `v2026.10.07-3461efe`, agent `2026.10.06-de42566` |
-| M8 Accounts and access | In progress: PR1a, PR1b done (tested on dev); PR1c (Discord) in review |
+| M8 Accounts and access | In progress: PR1a–PR1c done (sign-in with password, Google, Discord, tested on dev); PR2 (access data) in review |
 | M9 Game version catalog | Planned (Deferred's plan, V1–V4) |
 | M10 Web UI | Planned |
 
@@ -73,7 +73,7 @@ the CLI signs in the same way; backend only):
   env `signInProviders` (dev now; stage and prod once their secrets exist, or their deploy fails).
   Setup guide `docs/setup/google.md`. Federated users are `<Provider>_<id>` (`Google_…`), separate
   from a password user with the same email (no linking; add to `admin` by hand).
-- PR1c Discord, in review: Cognito's generic OIDC provider (`Discord`), no wrapper: Discord
+- PR1c Discord, done (tested on dev): Cognito's generic OIDC provider (`Discord`), no wrapper: Discord
   publishes OIDC discovery (issuer `https://discord.com`, ID tokens with `openid`, userinfo, JWKS,
   PKCE); endpoints spelled out from it. Scopes `openid identify email`; email, verified,
   `preferred_username` (username), `nickname` (display name), `picture` mapped. Secret
@@ -81,9 +81,24 @@ the CLI signs in the same way; backend only):
   PowerShell around `scripts/sign-in-check.ps1` (browser sign-in, loopback callback, PKCE, claims,
   refresh; `-Provider`, `-Client web`, `-SignOut`), and the PowerShell secret steps for Google.
   Public email sign-up: not planned (resets, SES, spam).
-- PR2 Access data: `Users` (approved, admin, `serverLimit` default 3, name and avatar),
-  `ServerAccess` (`userId` + `serverId` → owner | member), `Invites` (code → server, creator,
-  `expiresAt`, TTL), an `ownerId` index on Servers; store functions in `services/core`.
+- PR2 Access data, in review (nothing reads or writes them yet: PR3 and PR5 do). DataStack tables,
+  all with point-in-time recovery, retained and deletion-protected in prod:
+  - `hearth-<env>-Users` (`userId` = Cognito `sub`): `approved`, `serverLimit` (default 3),
+    `createdAt`/`lastSeenAt`/`approvedAt`, profile from the token (provider, email, name, username,
+    displayName, picture). No admin flag: admin is the Cognito group, one source of truth.
+  - `hearth-<env>-ServerAccess` (`userId` + `serverId` → role owner | member, addedAt, addedBy,
+    inviteCode); index `byServer` (`serverId` + `userId`).
+  - `hearth-<env>-Invites` (`code`: 20 Crockford base32 chars, 100 bits, stored undashed, shown
+    `XXXX-…`): serverId, createdBy, createdAt, expiresAt (7 days), TTL on `expiresAtEpoch`; index
+    `byServer` (`serverId` + `createdAt`). Codes stored plain (hashing only helps if this table leaks alone).
+  - Servers: index `byOwner` (`ownerId` + `createdAt`, projecting `status`) for the cap count.
+  - `services/core`: `UsersStore` (`recordSignIn` creates unapproved with the default limit, never
+    overwrites approval or limit; `setApproved`), `AccessStore` (`grant` only without existing
+    access; `removeMember` never removes an owner; list by user or server), `InvitesStore`
+    (`getActive` and lists treat expired as gone; `revoke` only for its server), `newInvite`,
+    `newInviteCode` / `formatInviteCode` / `parseInviteCode` (forgiving: dashes, case, O→0, I/L→1),
+    `ServersStore.countActiveOwned`. Types in `packages/shared/src/access.ts`. Left for PR5: the
+    server and its owner access written in one transaction at create; what destroy does to access.
 - PR3 `authorize(actor, action, server)`: operations take an actor (user, admin, agent); the
   permission table; 404 without access, 403 for a forbidden action; one response shaper by role.
   `/admin` passes an admin actor and `/agent/idle` an agent actor: callers see no change.
@@ -190,7 +205,8 @@ and CloudFront's default domain until there is one; callback URLs and origins co
   runs one at a time (workflow concurrency), so a release's agent is the newest build at its commit.
   Promote runs main's workflow and actions, never a release's own copy (a rollback to a release
   older than the deploy action failed that way); only the release's assembly and agent are used.
-- **All Servers table writes go through `services/core`**; the API is the only entry point for callers.
+- **All writes to the Servers, Users, ServerAccess and Invites tables go through `services/core`**;
+  the API is the only entry point for callers.
 - **Instances have no S3 write access.** They read agent releases only; backups use short-lived,
   per-server credentials from the API.
 - **Launches use the launch template's `$Latest`.** A pinned version number went stale: a user-data-only
