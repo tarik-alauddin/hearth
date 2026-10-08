@@ -24,6 +24,7 @@ export type {
   IdleReport,
   ListBackupsResponse,
   ListServersResponse,
+  MeResponse,
   RestoreDoneReport,
   RestoreRequest,
   RestoreTarget,

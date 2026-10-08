@@ -43,11 +43,38 @@ describe('ApiStack', () => {
     template.hasResourceProperties('AWS::ApiGatewayV2::Route', { RouteKey: routeKey, AuthorizationType: 'AWS_IAM' });
   });
 
-  it('has no routes without auth', () => {
+  it('has no routes without auth: IAM for admins and agents, a Cognito ID token for /v1', () => {
     const routes = Object.values(template.findResources('AWS::ApiGatewayV2::Route')) as {
-      Properties: { AuthorizationType?: string };
+      Properties: { RouteKey: string; AuthorizationType?: string };
     }[];
-    expect(routes.every((route) => route.Properties.AuthorizationType === 'AWS_IAM')).toBe(true);
+    for (const route of routes) {
+      const user = route.Properties.RouteKey.split(' ')[1]!.startsWith('/v1/');
+      expect(route.Properties.AuthorizationType, route.Properties.RouteKey).toBe(user ? 'JWT' : 'AWS_IAM');
+    }
+  });
+
+  describe('signed-in users', () => {
+    it("checks ID tokens against the environment's user pool, issued to Hearth's own clients", () => {
+      const [authorizer] = Object.values(template.findResources('AWS::ApiGatewayV2::Authorizer')) as {
+        Properties: { AuthorizerType: string; Name: string; IdentitySource: string[]; JwtConfiguration: { Issuer: unknown; Audience: unknown[] } };
+      }[];
+      expect(authorizer?.Properties).toMatchObject({
+        AuthorizerType: 'JWT',
+        Name: 'hearth-dev-cognito',
+        IdentitySource: ['$request.header.Authorization'],
+      });
+      expect(JSON.stringify(authorizer?.Properties.JwtConfiguration.Issuer)).toContain('https://cognito-idp.us-west-2.amazonaws.com/');
+      expect(authorizer?.Properties.JwtConfiguration.Audience).toHaveLength(2); // the CLI's and (on dev) the web app's clients
+    });
+
+    it('runs the user routes in their own Lambda, which may only read and update the Users table', () => {
+      template.hasResourceProperties('AWS::Lambda::Function', {
+        Environment: { Variables: Match.objectLike({ USERS_TABLE: Match.anyValue() }) },
+      });
+      expect(policyStatements('UserServiceRoleDefaultPolicy')).toEqual([
+        expect.objectContaining({ Action: ['dynamodb:GetItem', 'dynamodb:UpdateItem'], Effect: 'Allow' }),
+      ]);
+    });
   });
 
   describe('routes come from the shared route list', () => {
@@ -69,6 +96,7 @@ describe('ApiStack', () => {
         agentBackupDone: 'AgentBackupDone',
         agentRestored: 'AgentRestored',
         agentIdle: 'AgentIdle',
+        user: 'User',
       };
       for (const route of API_ROUTES) {
         const deployed = routes.find((r) => r.Properties.RouteKey === `${route.method} ${route.path}`)!;

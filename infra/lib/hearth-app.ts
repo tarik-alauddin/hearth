@@ -16,9 +16,13 @@ export function addEnvironment(app: App, config: EnvConfig): void {
   // Game regions other than the home region will need cross-region references for the instance roles.
   const gameInfra = config.gameRegions.map((region) => new GameInfraStack(app, { config, region }));
   const orchestration = new OrchestrationStack(app, { config, serversTable: data.serversTable, gameInfra });
+  const auth = new AuthStack(app, { config });
   const api = new ApiStack(app, {
     config,
     serversTable: data.serversTable,
+    usersTable: data.usersTable,
+    userPool: auth.userPool,
+    userPoolClients: auth.clients,
     instanceRoles: gameInfra.map((stack) => stack.instanceRole),
     workflows: {
       create: orchestration.workflows.createServer,
@@ -43,7 +47,6 @@ export function addEnvironment(app: App, config: EnvConfig): void {
     stateChanges: orchestration.stateChanges,
   });
   new IntegrationsStack(app, { config });
-  new AuthStack(app, { config });
   new FrontendStack(app, { config });
 }
 

@@ -69,6 +69,16 @@ pnpm api:docs    # the same, then Swagger UI on http://localhost:8090 (read-only
 To add or change a route: edit `routes.ts` (and `schemas.ts` for a new body), handle it in its
 Lambda, then `pnpm api:spec`.
 
+Routes under `/v1` are for signed-in users: they take the ID token from signing in
+(`Authorization: Bearer <id token>`), checked by API Gateway against the environment's user pool.
+To call one from PowerShell, signed in through the browser once:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\api-call.ps1 /v1/me
+```
+
+See [docs/testing/user-api.md](docs/testing/user-api.md).
+
 ## One-time AWS setup
 
 GitHub Actions deploys with the account's existing `github-deploy` role through GitHub OIDC; no AWS keys
