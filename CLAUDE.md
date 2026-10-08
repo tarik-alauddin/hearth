@@ -53,7 +53,7 @@ as part of each PR. The repo layout and commands are in [README.md](README.md).
 | M7 Move your world | Done (PR1–PR4; tested on dev with a real world) |
 | Before Phase 2 | Done: M7 docs, neutral wording, destroy (records kept as `DESTROYED`), state-sync tweak, stage and prod live with the release flow (details under Decisions) |
 | **Phase 1** | **Complete** (2026-10-07): dev, stage and prod run `v2026.10.07-3461efe`, agent `2026.10.06-de42566` |
-| M8 Accounts and access | In progress: PR1a–PR1c done (sign-in with password, Google, Discord, tested on dev); PR2 (access data) in review |
+| M8 Accounts and access | In progress: PR1a–PR1c done (sign-in with password, Google, Discord, tested on dev); PR2 (access data) done; PR3 (authorization) in review |
 | M9 Game version catalog | Planned (Deferred's plan, V1–V4) |
 | M10 Web UI | Planned |
 
@@ -81,7 +81,7 @@ the CLI signs in the same way; backend only):
   PowerShell around `scripts/sign-in-check.ps1` (browser sign-in, loopback callback, PKCE, claims,
   refresh; `-Provider`, `-Client web`, `-SignOut`), and the PowerShell secret steps for Google.
   Public email sign-up: not planned (resets, SES, spam).
-- PR2 Access data, in review (nothing reads or writes them yet: PR3 and PR5 do). DataStack tables,
+- PR2 Access data, done (deployed to dev; nothing writes them yet: PR5 does). DataStack tables,
   all with point-in-time recovery, retained and deletion-protected in prod:
   - `hearth-<env>-Users` (`userId` = Cognito `sub`): `approved`, `serverLimit` (default 3),
     `createdAt`/`lastSeenAt`/`approvedAt`, profile from the token (provider, email, name, username,
@@ -99,9 +99,23 @@ the CLI signs in the same way; backend only):
     `newInviteCode` / `formatInviteCode` / `parseInviteCode` (forgiving: dashes, case, O→0, I/L→1),
     `ServersStore.countActiveOwned`. Types in `packages/shared/src/access.ts`. Left for PR5: the
     server and its owner access written in one transaction at create; what destroy does to access.
-- PR3 `authorize(actor, action, server)`: operations take an actor (user, admin, agent); the
-  permission table; 404 without access, 403 for a forbidden action; one response shaper by role.
-  `/admin` passes an admin actor and `/agent/idle` an agent actor: callers see no change.
+- PR3 Authorization, in review (callers see no change: every existing test passes as it was):
+  - **The rules:** `SERVER_PERMISSIONS` in `packages/shared/src/permissions.ts` (action → roles;
+    `roleCan`), the one place they're written; the UI will read it to show only allowed actions.
+  - **`services/api/src/authz.ts`:** `Actor` (`admin` with an id, `user` with a userId, `agent`
+    with its server and instance); `decide()` (pure: admin anything, agent only `stop` of its own
+    server, user per their role, no access → not found); `serverAuthorizer(access?)` reads the
+    user's `ServerAccess` row (only for users) and throws `AccessDenied` 404 (worded like a
+    missing server) or 403 ("As a member, you can't destroy server s1"); `requireAdmin` for
+    platform actions; `shapeServer` (admins: the record; others: `ServerView` in shared).
+  - **Operations** take the actor first and authorize before reading. Admin only: listing every
+    server, creating (until PR5 adds approval, the cap and the owner's access), changing a server's
+    agent channel. `idleStop` takes the agent actor. `/admin` builds an admin actor from the IAM
+    caller; `/agent/idle` an agent actor. The access store is optional in the operations' deps:
+    only `/v1` (PR5) has user callers, so `/admin` and agent Lambdas get no new permission.
+  - Tests: the full role × action matrix spelled out (changing a rule must change the test),
+    404/403 wording, no access reads for admins and agents, shaping, and operations refusing a
+    member the owner's actions before changing anything.
 - PR4 API contract (agreed): Zod 4 schemas in `packages/shared` validate requests and give the
   types (replacing the hand-written validators); a route registry (method, path, schemas,
   permission) generates the committed `openapi.json`, and the CDK builds the API's routes from it,
@@ -218,14 +232,15 @@ and CloudFront's default domain until there is one; callback URLs and origins co
     anyone can sign in, only approved users create servers. Admin = the Cognito `admin` group.
     The CLI signs in through Cognito too.
   - **One API:** every action has one `/v1` route and one operation; the route never decides who
-    may act. Operations take an actor and call `authorize(actor, action, server)`:
+    may act. Operations take an actor and call `authorize(actor, action, server)`. The rules live
+    in one place, `SERVER_PERMISSIONS` (`packages/shared/src/permissions.ts`); in short:
 
     | Action | Owner | Member | Admin | Agent (own server) |
     | --- | --- | --- | --- | --- |
-    | See it, its address; start, stop | ✓ | ✓ | ✓ | stop (idle) |
-    | Settings, version, backups, restore, destroy, invites, members | ✓ | — | ✓ | — |
+    | See it, its address; start, stop; see its members | ✓ | ✓ | ✓ | stop (idle) |
+    | Settings, version, backups, restore, destroy, invites, remove members | ✓ | — | ✓ | — |
     | Create (approved, under the cap) | user | | ✓ | — |
-    | Agent channels, fleet check, approve users | — | — | ✓ | — |
+    | Agent channels, fleet check, approve users, every server | — | — | ✓ | — |
 
     No access → 404 (IDs don't leak); visible but forbidden → 403. Responses are shaped by role
     (users never see instance IDs, S3 keys, agent internals). `/agent/*` stays separate (IAM, the

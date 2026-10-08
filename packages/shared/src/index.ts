@@ -7,5 +7,6 @@ export * from './environments.js';
 export * from './fleet-check.js';
 export * from './games.js';
 export * from './metrics.js';
+export * from './permissions.js';
 export * from './server.js';
 export * from './uploads.js';

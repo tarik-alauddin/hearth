@@ -1,7 +1,12 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import type { ServerRecord, UploadStatus } from '@hearth/shared';
 import { InvalidCursor } from '@hearth/core';
+import type { Actor } from '../authz.js';
 import { OperationError, serverOperations, type OperationDeps, type WorkflowName } from './operations.js';
+
+const ADMIN: Actor = { kind: 'admin', id: 'arn:admin' };
+const admin = (id: string): Actor => ({ kind: 'admin', id });
+const agent = (serverId: string, instanceId: string) => ({ kind: 'agent' as const, serverId, instanceId });
 
 const NOW = new Date('2026-09-29T12:00:00Z');
 const NEWEST = 'servers/s1/20261005T120000Z.tar.gz';
@@ -74,9 +79,10 @@ describe('server operations', () => {
   let failWorkflows: boolean;
   let ids: number;
 
-  const ops = (store: OperationDeps['store']) =>
+  const ops = (store: OperationDeps['store'], access?: OperationDeps['access']) =>
     serverOperations({
       store,
+      ...(access ? { access } : {}),
       workflows: {
         start: async (workflow, serverId, operationId) => {
           if (failWorkflows) throw new Error('Step Functions unavailable');
@@ -103,7 +109,7 @@ describe('server operations', () => {
 
   describe('create from an upload', () => {
     const create = (store: OperationDeps['store'], upload: unknown) =>
-      ops(store).createServer({ game: 'minecraft-java', version: '26.3', upload }, 'arn:caller');
+      ops(store).createServer(admin('arn:caller'), { game: 'minecraft-java', version: '26.3', upload });
 
     it('restores the accepted upload, straight from the uploads bucket, on the first start', async () => {
       const { store, servers } = fakeStore();
@@ -146,7 +152,7 @@ describe('server operations', () => {
   describe('create', () => {
     it('records a PROVISIONING server and starts the create workflow', async () => {
       const { store, servers } = fakeStore();
-      const result = await ops(store).createServer({ game: 'minecraft-java', version: '1.21.4' }, 'arn:caller');
+      const result = await ops(store).createServer(admin('arn:caller'), { game: 'minecraft-java', version: '1.21.4' });
       expect(result).toEqual({ serverId: 'ID1', status: 'PROVISIONING' });
       expect(servers.get('ID1')).toMatchObject({
         ownerId: 'arn:caller',
@@ -166,24 +172,24 @@ describe('server operations', () => {
       ['a region without game infrastructure', { game: 'minecraft-java', version: '1.21.4', region: 'eu-west-1' }],
       ['a non-object body', 'hello'],
     ])('rejects %s with 400', async (_, body) => {
-      await expect(ops(fakeStore().store).createServer(body, 'c')).rejects.toMatchObject({ statusCode: 400 });
+      await expect(ops(fakeStore().store).createServer(admin('c'), body)).rejects.toMatchObject({ statusCode: 400 });
     });
 
     it('puts a server on the requested agent channel', async () => {
       const { store, servers } = fakeStore();
-      await ops(store).createServer({ game: 'minecraft-java', version: '1.21.4', agentChannel: 'canary' }, 'c');
+      await ops(store).createServer(admin('c'), { game: 'minecraft-java', version: '1.21.4', agentChannel: 'canary' });
       expect(servers.get('ID1')?.agentChannel).toBe('canary');
     });
 
     it('rejects an unknown agent channel', async () => {
       const body = { game: 'minecraft-java', version: '1.21.4', agentChannel: 'beta' };
-      await expect(ops(fakeStore().store).createServer(body, 'c')).rejects.toMatchObject({ statusCode: 400 });
+      await expect(ops(fakeStore().store).createServer(admin('c'), body)).rejects.toMatchObject({ statusCode: 400 });
     });
 
     it('marks the server FAILED if the workflow cannot start', async () => {
       const { store, servers } = fakeStore();
       failWorkflows = true;
-      await expect(ops(store).createServer({ game: 'minecraft-java', version: '1.21.4' }, 'c')).rejects.toThrow();
+      await expect(ops(store).createServer(admin('c'), { game: 'minecraft-java', version: '1.21.4' })).rejects.toThrow();
       expect(servers.get('ID1')).toMatchObject({ status: 'FAILED', statusMessage: "Couldn't start the create workflow" });
     });
   });
@@ -191,51 +197,51 @@ describe('server operations', () => {
   describe('start', () => {
     it('claims STOPPED → STARTING and starts the start workflow', async () => {
       const { store, servers } = fakeStore([server({ status: 'STOPPED' })]);
-      expect(await ops(store).startServer('s1')).toEqual({ serverId: 's1', status: 'STARTING' });
+      expect(await ops(store).startServer(ADMIN, 's1')).toEqual({ serverId: 's1', status: 'STARTING' });
       expect(servers.get('s1')).toMatchObject({ status: 'STARTING', lastOperationId: 'ID1' });
       expect(started).toEqual([{ workflow: 'start', serverId: 's1', operationId: 'ID1' }]);
     });
 
     it('recovers a FAILED server with an instance by starting it', async () => {
       const { store } = fakeStore([server({ status: 'FAILED' })]);
-      await ops(store).startServer('s1');
+      await ops(store).startServer(ADMIN, 's1');
       expect(started[0]?.workflow).toBe('start');
     });
 
     it('re-runs create for a FAILED server that never got an instance', async () => {
       const { store, servers } = fakeStore([server({ status: 'FAILED', instanceId: undefined })]);
-      expect(await ops(store).startServer('s1')).toEqual({ serverId: 's1', status: 'PROVISIONING' });
+      expect(await ops(store).startServer(ADMIN, 's1')).toEqual({ serverId: 's1', status: 'PROVISIONING' });
       expect(servers.get('s1')?.status).toBe('PROVISIONING');
       expect(started[0]?.workflow).toBe('create');
     });
 
     it.each(['RUNNING', 'STARTING'] as const)('does nothing when already %s', async (status) => {
       const { store } = fakeStore([server({ status })]);
-      expect(await ops(store).startServer('s1')).toEqual({ serverId: 's1', status, unchanged: true });
+      expect(await ops(store).startServer(ADMIN, 's1')).toEqual({ serverId: 's1', status, unchanged: true });
       expect(started).toEqual([]);
     });
 
     it('refuses to start a stopping server', async () => {
       const { store } = fakeStore([server({ status: 'STOPPING' })]);
-      await expect(ops(store).startServer('s1')).rejects.toMatchObject({ statusCode: 409 });
+      await expect(ops(store).startServer(ADMIN, 's1')).rejects.toMatchObject({ statusCode: 409 });
     });
 
     it('puts the server back to STOPPED if the workflow cannot start', async () => {
       const { store, servers } = fakeStore([server({ status: 'STOPPED' })]);
       failWorkflows = true;
-      await expect(ops(store).startServer('s1')).rejects.toThrow('unavailable');
+      await expect(ops(store).startServer(ADMIN, 's1')).rejects.toThrow('unavailable');
       expect(servers.get('s1')?.status).toBe('STOPPED');
     });
 
     it('lets only one of two simultaneous starts through', async () => {
       const { store } = fakeStore([server({ status: 'STOPPED' })]);
-      const results = await Promise.allSettled([ops(store).startServer('s1'), ops(store).startServer('s1')]);
+      const results = await Promise.allSettled([ops(store).startServer(ADMIN, 's1'), ops(store).startServer(ADMIN, 's1')]);
       expect(started).toHaveLength(1);
       expect(results.map((r) => r.status).sort()).toEqual(['fulfilled', 'fulfilled']);
     });
 
     it('returns 404 for an unknown server', async () => {
-      await expect(ops(fakeStore().store).startServer('nope')).rejects.toBeInstanceOf(OperationError);
+      await expect(ops(fakeStore().store).startServer(ADMIN, 'nope')).rejects.toBeInstanceOf(OperationError);
     });
   });
 
@@ -244,35 +250,35 @@ describe('server operations', () => {
 
     it('defaults to 50 per page and honours a smaller limit', async () => {
       const { store } = fakeStore(three);
-      expect((await ops(store).listServers(undefined, undefined)).servers).toHaveLength(3);
-      expect((await ops(store).listServers('2', undefined)).servers).toHaveLength(2);
+      expect((await ops(store).listServers(ADMIN, undefined, undefined)).servers).toHaveLength(3);
+      expect((await ops(store).listServers(ADMIN, '2', undefined)).servers).toHaveLength(2);
     });
 
     it.each(['0', '101', '2.5', 'ten'])('rejects limit=%s with 400', async (limit) => {
-      await expect(ops(fakeStore(three).store).listServers(limit, undefined)).rejects.toMatchObject({ statusCode: 400 });
+      await expect(ops(fakeStore(three).store).listServers(ADMIN, limit, undefined)).rejects.toMatchObject({ statusCode: 400 });
     });
 
     it('rejects an invalid cursor with 400', async () => {
-      await expect(ops(fakeStore(three).store).listServers(undefined, 'bad')).rejects.toMatchObject({ statusCode: 400 });
+      await expect(ops(fakeStore(three).store).listServers(ADMIN, undefined, 'bad')).rejects.toMatchObject({ statusCode: 400 });
     });
 
     it('leaves destroyed servers out unless all are asked for', async () => {
       const { store } = fakeStore([...three, server({ serverId: 'gone', status: 'DESTROYED' })]);
-      expect((await ops(store).listServers(undefined, undefined)).servers.map((s) => s.serverId)).toEqual(['a', 'b', 'c']);
-      expect((await ops(store).listServers(undefined, undefined, true)).servers).toHaveLength(4);
+      expect((await ops(store).listServers(ADMIN, undefined, undefined)).servers.map((s) => s.serverId)).toEqual(['a', 'b', 'c']);
+      expect((await ops(store).listServers(ADMIN, undefined, undefined, true)).servers).toHaveLength(4);
     });
   });
 
   describe('settings', () => {
     it('changes the agent channel and returns the server', async () => {
       const { store } = fakeStore([server({})]);
-      expect((await ops(store).updateSettings('s1', { agentChannel: 'canary' })).agentChannel).toBe('canary');
+      expect((await ops(store).updateSettings(ADMIN, 's1', { agentChannel: 'canary' })).agentChannel).toBe('canary');
     });
 
     it('changes the idle limit, alone or with the channel, 0 meaning never', async () => {
       const { store, servers } = fakeStore([server({})]);
-      expect((await ops(store).updateSettings('s1', { idleStopMinutes: 45 })).idleStopMinutes).toBe(45);
-      await ops(store).updateSettings('s1', { idleStopMinutes: 0, agentChannel: 'canary' });
+      expect((await ops(store).updateSettings(ADMIN, 's1', { idleStopMinutes: 45 })).idleStopMinutes).toBe(45);
+      await ops(store).updateSettings(ADMIN, 's1', { idleStopMinutes: 0, agentChannel: 'canary' });
       expect(servers.get('s1')).toMatchObject({ idleStopMinutes: 0, agentChannel: 'canary' });
     });
 
@@ -285,11 +291,11 @@ describe('server operations', () => {
       ['an idle limit over a day', { idleStopMinutes: 1441 }],
       ['an idle limit as a string', { idleStopMinutes: '30' }],
     ])('rejects %s with 400', async (_, body) => {
-      await expect(ops(fakeStore([server({})]).store).updateSettings('s1', body)).rejects.toMatchObject({ statusCode: 400 });
+      await expect(ops(fakeStore([server({})]).store).updateSettings(ADMIN, 's1', body)).rejects.toMatchObject({ statusCode: 400 });
     });
 
     it('returns 404 for an unknown server', async () => {
-      await expect(ops(fakeStore().store).updateSettings('nope', { agentChannel: 'stable' })).rejects.toMatchObject({
+      await expect(ops(fakeStore().store).updateSettings(ADMIN, 'nope', { agentChannel: 'stable' })).rejects.toMatchObject({
         statusCode: 404,
       });
     });
@@ -298,7 +304,7 @@ describe('server operations', () => {
   describe('stop', () => {
     it('claims RUNNING → STOPPING and starts the stop workflow', async () => {
       const { store, servers } = fakeStore([server({ status: 'RUNNING', stopReason: 'no players for 30 minutes' })]);
-      expect(await ops(store).stopServer('s1')).toEqual({ serverId: 's1', status: 'STOPPING' });
+      expect(await ops(store).stopServer(ADMIN, 's1')).toEqual({ serverId: 's1', status: 'STOPPING' });
       expect(servers.get('s1')?.status).toBe('STOPPING');
       expect(servers.get('s1')).not.toHaveProperty('stopReason'); // an asked-for stop has no reason
       expect(started[0]?.workflow).toBe('stop');
@@ -306,19 +312,19 @@ describe('server operations', () => {
 
     it.each(['STOPPED', 'STOPPING'] as const)('does nothing when already %s', async (status) => {
       const { store } = fakeStore([server({ status })]);
-      expect((await ops(store).stopServer('s1')).unchanged).toBe(true);
+      expect((await ops(store).stopServer(ADMIN, 's1')).unchanged).toBe(true);
     });
 
     it('refuses to stop a server that is still starting', async () => {
       const { store } = fakeStore([server({ status: 'STARTING' })]);
-      await expect(ops(store).stopServer('s1')).rejects.toMatchObject({ statusCode: 409 });
+      await expect(ops(store).stopServer(ADMIN, 's1')).rejects.toMatchObject({ statusCode: 409 });
     });
   });
 
   describe('destroy', () => {
     it('claims a STOPPED server as DESTROYING and starts the destroy workflow', async () => {
       const { store, servers } = fakeStore([server({ status: 'STOPPED', instanceState: 'stopped' })]);
-      expect(await ops(store).destroyServer('s1')).toEqual({ serverId: 's1', status: 'DESTROYING' });
+      expect(await ops(store).destroyServer(ADMIN, 's1')).toEqual({ serverId: 's1', status: 'DESTROYING' });
       expect(servers.get('s1')?.status).toBe('DESTROYING');
       expect(started[0]?.workflow).toBe('destroy');
     });
@@ -328,7 +334,7 @@ describe('server operations', () => {
       ['no instance at all', { instanceId: undefined }],
     ])('destroys a FAILED server with %s', async (_, overrides) => {
       const { store } = fakeStore([server({ status: 'FAILED', ...overrides })]);
-      expect((await ops(store).destroyServer('s1')).status).toBe('DESTROYING');
+      expect((await ops(store).destroyServer(ADMIN, 's1')).status).toBe('DESTROYING');
     });
 
     it.each([
@@ -340,14 +346,14 @@ describe('server operations', () => {
       ['FAILED', { instanceState: 'pending' as const }],
     ])('never destroys a %s server whose instance may be up (%j)', async (status, overrides) => {
       const { store, servers } = fakeStore([server({ status: status as ServerRecord['status'], ...overrides })]);
-      await expect(ops(store).destroyServer('s1')).rejects.toThrow(/stop it before destroying it/);
+      await expect(ops(store).destroyServer(ADMIN, 's1')).rejects.toThrow(/stop it before destroying it/);
       expect(servers.get('s1')?.status).toBe(status);
       expect(started).toEqual([]);
     });
 
     it.each(['DESTROYING', 'DESTROYED'] as const)('does nothing more for a %s server', async (status) => {
       const { store } = fakeStore([server({ status })]);
-      expect(await ops(store).destroyServer('s1')).toEqual({ serverId: 's1', status, unchanged: true });
+      expect(await ops(store).destroyServer(ADMIN, 's1')).toEqual({ serverId: 's1', status, unchanged: true });
       expect(started).toEqual([]);
     });
 
@@ -355,58 +361,58 @@ describe('server operations', () => {
       const { store } = fakeStore([server({ status: 'DESTROYED', lastStopClean: true })]);
       const o = ops(store);
       for (const attempt of [
-        o.startServer('s1'),
-        o.stopServer('s1'),
-        o.requestRestore('s1', {}),
-        o.setVersion('s1', { version: '26.3' }),
-        o.updateSettings('s1', { agentChannel: 'canary' }),
+        o.startServer(ADMIN, 's1'),
+        o.stopServer(ADMIN, 's1'),
+        o.requestRestore(ADMIN, 's1', {}),
+        o.setVersion(ADMIN, 's1', { version: '26.3' }),
+        o.updateSettings(ADMIN, 's1', { agentChannel: 'canary' }),
       ]) {
         await expect(attempt).rejects.toMatchObject({ statusCode: 409 });
       }
       expect(started).toEqual([]);
-      expect((await o.listBackups('s1')).backups).toEqual(BACKUPS); // its backups are still listed
+      expect((await o.listBackups(ADMIN, 's1')).backups).toEqual(BACKUPS); // its backups are still listed
     });
 
     it('puts the server back if the workflow cannot start', async () => {
       failWorkflows = true;
       const { store, servers } = fakeStore([server({ status: 'STOPPED' })]);
-      await expect(ops(store).destroyServer('s1')).rejects.toThrow();
+      await expect(ops(store).destroyServer(ADMIN, 's1')).rejects.toThrow();
       expect(servers.get('s1')?.status).toBe('STOPPED');
     });
 
     it('returns 404 for an unknown server', async () => {
-      await expect(ops(fakeStore().store).destroyServer('nope')).rejects.toMatchObject({ statusCode: 404 });
+      await expect(ops(fakeStore().store).destroyServer(ADMIN, 'nope')).rejects.toMatchObject({ statusCode: 404 });
     });
   });
 
   describe('idle stop', () => {
     it('stops a running server through the stop workflow, recording why', async () => {
       const { store, servers } = fakeStore([server({ status: 'RUNNING' })]);
-      expect(await ops(store).idleStop('s1', 'i-1', 30)).toEqual({ serverId: 's1', status: 'STOPPING' });
+      expect(await ops(store).idleStop(agent('s1', 'i-1'), 30)).toEqual({ serverId: 's1', status: 'STOPPING' });
       expect(servers.get('s1')).toMatchObject({ status: 'STOPPING', stopReason: 'no players for 30 minutes' });
       expect(started[0]?.workflow).toBe('stop');
     });
 
     it('says "1 minute"', async () => {
       const { store, servers } = fakeStore([server({ status: 'RUNNING' })]);
-      await ops(store).idleStop('s1', 'i-1', 1);
+      await ops(store).idleStop(agent('s1', 'i-1'), 1);
       expect(servers.get('s1')?.stopReason).toBe('no players for 1 minute');
     });
 
     it.each(['STOPPED', 'STOPPING'] as const)('does nothing when already %s', async (status) => {
       const { store } = fakeStore([server({ status })]);
-      expect((await ops(store).idleStop('s1', 'i-1', 30)).unchanged).toBe(true);
+      expect((await ops(store).idleStop(agent('s1', 'i-1'), 30)).unchanged).toBe(true);
       expect(started).toEqual([]);
     });
 
     it.each(['STARTING', 'FAILED', 'PROVISIONING'] as const)('refuses a %s server', async (status) => {
       const { store } = fakeStore([server({ status })]);
-      await expect(ops(store).idleStop('s1', 'i-1', 30)).rejects.toMatchObject({ statusCode: 409 });
+      await expect(ops(store).idleStop(agent('s1', 'i-1'), 30)).rejects.toMatchObject({ statusCode: 409 });
     });
 
     it('refuses when the server is on another instance', async () => {
       const { store } = fakeStore([server({ status: 'RUNNING' })]);
-      await expect(ops(store).idleStop('s1', 'i-2', 30)).rejects.toThrow(/no longer on instance i-2/);
+      await expect(ops(store).idleStop(agent('s1', 'i-2'), 30)).rejects.toThrow(/no longer on instance i-2/);
       expect(started).toEqual([]);
     });
   });
@@ -422,14 +428,14 @@ describe('server operations', () => {
 
     it('moves a stopped, backed-up server to a newer release', async () => {
       const { store, servers } = fakeStore([server(backedUp)]);
-      expect((await ops(store).setVersion('s1', { version: '26.3' })).version).toBe('26.3');
+      expect((await ops(store).setVersion(ADMIN, 's1', { version: '26.3' })).version).toBe('26.3');
       expect(servers.get('s1')).toMatchObject({ status: 'STOPPED', version: '26.3' });
       expect(started).toEqual([]); // applies on the next start
     });
 
     it('does nothing when already on that version', async () => {
       const { store } = fakeStore([server({ ...backedUp, status: 'RUNNING' })]);
-      expect((await ops(store).setVersion('s1', { version: '26.1' })).version).toBe('26.1');
+      expect((await ops(store).setVersion(ADMIN, 's1', { version: '26.1' })).version).toBe('26.1');
     });
 
     it.each([
@@ -438,19 +444,19 @@ describe('server operations', () => {
       ['a snapshot', '26.4-snapshot-2', 400, /not a release/],
     ])('refuses %s', async (_, version, statusCode, message) => {
       const { store } = fakeStore([server(backedUp)]);
-      const err = await ops(store).setVersion('s1', { version }).catch((e: OperationError) => e);
+      const err = await ops(store).setVersion(ADMIN, 's1', { version }).catch((e: OperationError) => e);
       expect(err).toMatchObject({ statusCode });
       expect(String(err)).toMatch(message);
     });
 
     it('refuses when the current version is not a known release', async () => {
       const { store } = fakeStore([server({ ...backedUp, version: '26.2-pre1' })]);
-      await expect(ops(store).setVersion('s1', { version: '26.3' })).rejects.toThrow(/isn't a known release/);
+      await expect(ops(store).setVersion(ADMIN, 's1', { version: '26.3' })).rejects.toThrow(/isn't a known release/);
     });
 
     it.each(['RUNNING', 'STARTING', 'FAILED'] as const)('refuses while %s', async (status) => {
       const { store } = fakeStore([server({ ...backedUp, status })]);
-      await expect(ops(store).setVersion('s1', { version: '26.3' })).rejects.toMatchObject({ statusCode: 409 });
+      await expect(ops(store).setVersion(ADMIN, 's1', { version: '26.3' })).rejects.toMatchObject({ statusCode: 409 });
     });
 
     it.each([
@@ -459,7 +465,7 @@ describe('server operations', () => {
       ['an unclean last stop', { lastStopClean: false }],
     ])('refuses with %s', async (_, overrides) => {
       const { store } = fakeStore([server({ ...backedUp, ...overrides })]);
-      await expect(ops(store).setVersion('s1', { version: '26.3' })).rejects.toThrow(/no backup since it last ran/);
+      await expect(ops(store).setVersion(ADMIN, 's1', { version: '26.3' })).rejects.toThrow(/no backup since it last ran/);
     });
 
     it('refuses games without a version list', async () => {
@@ -473,7 +479,7 @@ describe('server operations', () => {
         homeRegion: 'us-west-2',
         gameRegions: ['us-west-2'],
       });
-      await expect(noList.setVersion('s1', { version: '26.3' })).rejects.toThrow(/isn't supported/);
+      await expect(noList.setVersion(ADMIN, 's1', { version: '26.3' })).rejects.toThrow(/isn't supported/);
     });
 
     it.each([
@@ -482,22 +488,22 @@ describe('server operations', () => {
       ['a malformed version', { version: '26.3; rm -rf /' }],
     ])('returns 400 for %s', async (_, body) => {
       const { store } = fakeStore([server(backedUp)]);
-      await expect(ops(store).setVersion('s1', body)).rejects.toMatchObject({ statusCode: 400 });
+      await expect(ops(store).setVersion(ADMIN, 's1', body)).rejects.toMatchObject({ statusCode: 400 });
     });
   });
 
   describe('backups', () => {
     it('lists backups, or 404 for an unknown server', async () => {
       const { store } = fakeStore([server({})]);
-      expect(await ops(store).listBackups('s1')).toEqual({ backups: BACKUPS });
-      await expect(ops(store).listBackups('nope')).rejects.toMatchObject({ statusCode: 404 });
+      expect(await ops(store).listBackups(ADMIN, 's1')).toEqual({ backups: BACKUPS });
+      await expect(ops(store).listBackups(ADMIN, 'nope')).rejects.toMatchObject({ statusCode: 404 });
     });
   });
 
   describe('restore', () => {
     it('defaults to the newest backup and records when it was asked for', async () => {
       const { store, servers } = fakeStore([server({ lastStopClean: true })]);
-      const result = await ops(store).requestRestore('s1', {});
+      const result = await ops(store).requestRestore(ADMIN, 's1', {});
       expect(result).toMatchObject({ status: 'STOPPED', restoreKey: NEWEST, restoreRequestedAt: NOW.toISOString() });
       expect(servers.get('s1')?.restoreKey).toBe(NEWEST);
       expect(started).toEqual([]); // nothing runs until the next start
@@ -506,42 +512,42 @@ describe('server operations', () => {
     it('replaces a pending upload restore with a backup, and cancelling clears either', async () => {
       const pendingUpload = { restoreKey: `accepted/${ACCEPTED}.tar.gz`, restoreSource: 'upload' as const };
       const { store, servers } = fakeStore([server({ lastStopClean: true, ...pendingUpload })]);
-      await ops(store).requestRestore('s1', {});
+      await ops(store).requestRestore(ADMIN, 's1', {});
       expect(servers.get('s1')).toMatchObject({ restoreKey: NEWEST });
       expect(servers.get('s1')).not.toHaveProperty('restoreSource'); // else the agent would look in the uploads bucket
 
       Object.assign(servers.get('s1')!, pendingUpload);
-      await ops(store).cancelRestore('s1');
+      await ops(store).cancelRestore(ADMIN, 's1');
       expect(servers.get('s1')).not.toHaveProperty('restoreKey');
       expect(servers.get('s1')).not.toHaveProperty('restoreSource');
     });
 
     it.each([OLDER, '20261004T120000Z.tar.gz'])('takes a chosen backup by key or file name (%s)', async (key) => {
       const { store } = fakeStore([server({})]);
-      expect((await ops(store).requestRestore('s1', { key })).restoreKey).toBe(OLDER);
+      expect((await ops(store).requestRestore(ADMIN, 's1', { key })).restoreKey).toBe(OLDER);
     });
 
     it('returns 404 for a backup the server does not have', async () => {
       const { store } = fakeStore([server({})]);
-      await expect(ops(store).requestRestore('s1', { key: 'servers/s2/20261005T120000Z.tar.gz' })).rejects.toMatchObject({
+      await expect(ops(store).requestRestore(ADMIN, 's1', { key: 'servers/s2/20261005T120000Z.tar.gz' })).rejects.toMatchObject({
         statusCode: 404,
       });
     });
 
     it.each(['RUNNING', 'STARTING', 'STOPPING'] as const)('refuses while %s', async (status) => {
       const { store } = fakeStore([server({ status })]);
-      await expect(ops(store).requestRestore('s1', {})).rejects.toMatchObject({ statusCode: 409 });
+      await expect(ops(store).requestRestore(ADMIN, 's1', {})).rejects.toMatchObject({ statusCode: 409 });
     });
 
     it('refuses after an unclean stop unless forced', async () => {
       const { store } = fakeStore([server({ lastStopClean: false })]);
-      await expect(ops(store).requestRestore('s1', {})).rejects.toThrow(/wasn't clean/);
-      expect((await ops(store).requestRestore('s1', { force: true })).restoreKey).toBe(NEWEST);
+      await expect(ops(store).requestRestore(ADMIN, 's1', {})).rejects.toThrow(/wasn't clean/);
+      expect((await ops(store).requestRestore(ADMIN, 's1', { force: true })).restoreKey).toBe(NEWEST);
     });
 
     it('refuses when there are no backups', async () => {
       const { store } = fakeStore([server({ serverId: 's2' })]);
-      await expect(ops(store).requestRestore('s2', {})).rejects.toThrow(/no backups/);
+      await expect(ops(store).requestRestore(ADMIN, 's2', {})).rejects.toThrow(/no backups/);
     });
 
     it.each([
@@ -551,34 +557,114 @@ describe('server operations', () => {
       ['a non-object body', 'newest'],
     ])('returns 400 for %s', async (_, body) => {
       const { store } = fakeStore([server({})]);
-      await expect(ops(store).requestRestore('s1', body)).rejects.toMatchObject({ statusCode: 400 });
+      await expect(ops(store).requestRestore(ADMIN, 's1', body)).rejects.toMatchObject({ statusCode: 400 });
     });
 
     it('cancels a pending restore, and cancelling none is a no-op', async () => {
       const { store, servers } = fakeStore([server({ restoreKey: NEWEST, restoreRequestedAt: NOW.toISOString() })]);
-      const result = await ops(store).cancelRestore('s1');
+      const result = await ops(store).cancelRestore(ADMIN, 's1');
       expect(result.restoreKey).toBeUndefined();
       expect(servers.get('s1')).not.toHaveProperty('restoreRequestedAt');
-      expect((await ops(store).cancelRestore('s1')).restoreKey).toBeUndefined();
+      expect((await ops(store).cancelRestore(ADMIN, 's1')).restoreKey).toBeUndefined();
     });
 
     it('works on a FAILED server whose instance is stopped, keeping it FAILED', async () => {
       const { store, servers } = fakeStore([server({ status: 'FAILED', instanceState: 'stopped', restoreKey: OLDER })]);
-      expect(await ops(store).requestRestore('s1', { key: NEWEST })).toMatchObject({ status: 'FAILED', restoreKey: NEWEST });
-      await ops(store).cancelRestore('s1');
+      expect(await ops(store).requestRestore(ADMIN, 's1', { key: NEWEST })).toMatchObject({ status: 'FAILED', restoreKey: NEWEST });
+      await ops(store).cancelRestore(ADMIN, 's1');
       expect(servers.get('s1')).toMatchObject({ status: 'FAILED' });
       expect(servers.get('s1')?.restoreKey).toBeUndefined();
     });
 
     it('refuses a FAILED server whose instance is still running', async () => {
       const { store } = fakeStore([server({ status: 'FAILED', instanceState: 'running', restoreKey: OLDER })]);
-      await expect(ops(store).requestRestore('s1', {})).rejects.toMatchObject({ statusCode: 409 });
-      await expect(ops(store).cancelRestore('s1')).rejects.toMatchObject({ statusCode: 409 });
+      await expect(ops(store).requestRestore(ADMIN, 's1', {})).rejects.toMatchObject({ statusCode: 409 });
+      await expect(ops(store).cancelRestore(ADMIN, 's1')).rejects.toMatchObject({ statusCode: 409 });
     });
 
     it('refuses to cancel once the server is starting', async () => {
       const { store } = fakeStore([server({ status: 'STARTING', restoreKey: NEWEST })]);
-      await expect(ops(store).cancelRestore('s1')).rejects.toMatchObject({ statusCode: 409 });
+      await expect(ops(store).cancelRestore(ADMIN, 's1')).rejects.toMatchObject({ statusCode: 409 });
+    });
+  });
+
+  describe('for signed-in users', () => {
+    // u1 owns s1, u2 is a member of it, u3 has no access.
+    const access: OperationDeps['access'] = {
+      getAccess: async (userId, serverId) => {
+        if (serverId !== 's1') return undefined;
+        const role = ({ u1: 'owner', u2: 'member' } as const)[userId as 'u1' | 'u2'];
+        return role && { userId, serverId, role, addedAt: NOW.toISOString(), addedBy: 'u1' };
+      },
+    };
+    const owner: Actor = { kind: 'user', userId: 'u1' };
+    const member: Actor = { kind: 'user', userId: 'u2' };
+    const stranger: Actor = { kind: 'user', userId: 'u3' };
+
+    it('lets a member start and stop the server', async () => {
+      const { store, servers } = fakeStore([server({ status: 'STOPPED' })]);
+      expect(await ops(store, access).startServer(member, 's1')).toEqual({ serverId: 's1', status: 'STARTING' });
+      servers.get('s1')!.status = 'RUNNING';
+      expect(await ops(store, access).stopServer(member, 's1')).toEqual({ serverId: 's1', status: 'STOPPING' });
+    });
+
+    it("refuses a member the owner's actions with 403, before changing anything", async () => {
+      const { store, servers } = fakeStore([server({ status: 'STOPPED' })]);
+      const o = ops(store, access);
+      for (const attempt of [
+        o.destroyServer(member, 's1'),
+        o.updateSettings(member, 's1', { idleStopMinutes: 5 }),
+        o.setVersion(member, 's1', { version: '26.3' }),
+        o.listBackups(member, 's1'),
+        o.requestRestore(member, 's1', {}),
+        o.cancelRestore(member, 's1'),
+      ]) {
+        await expect(attempt).rejects.toMatchObject({ statusCode: 403 });
+      }
+      expect(servers.get('s1')).toMatchObject({ status: 'STOPPED', version: '1.21.4' });
+      expect(started).toEqual([]);
+    });
+
+    it('lets the owner destroy and change settings', async () => {
+      const { store } = fakeStore([server({ status: 'STOPPED' })]);
+      expect((await ops(store, access).destroyServer(owner, 's1')).status).toBe('DESTROYING');
+      const { store: other } = fakeStore([server({ status: 'STOPPED' })]);
+      expect((await ops(other, access).updateSettings(owner, 's1', { idleStopMinutes: 5 })).idleStopMinutes).toBe(5);
+    });
+
+    it('answers a stranger 404, exactly as for a server that does not exist', async () => {
+      const { store } = fakeStore([server({ status: 'STOPPED' })]);
+      const o = ops(store, access);
+      await expect(o.getServer(stranger, 's1')).rejects.toMatchObject({ statusCode: 404, message: 'No server s1' });
+      await expect(o.startServer(stranger, 's1')).rejects.toMatchObject({ statusCode: 404, message: 'No server s1' });
+      await expect(o.getServer(owner, 'nope')).rejects.toMatchObject({ statusCode: 404, message: 'No server nope' });
+    });
+
+    it('returns the server with the caller’s relation, for shaping', async () => {
+      const { store } = fakeStore([server({})]);
+      expect((await ops(store, access).getServer(member, 's1')).relation).toBe('member');
+      expect((await ops(store).getServer(ADMIN, 's1')).relation).toBe('admin');
+    });
+
+    it('keeps agent channels for admins, even from the owner', async () => {
+      const { store } = fakeStore([server({ status: 'STOPPED' })]);
+      await expect(ops(store, access).updateSettings(owner, 's1', { agentChannel: 'canary' })).rejects.toMatchObject({
+        statusCode: 403,
+      });
+    });
+
+    it('keeps listing every server and creating (until /v1 adds its checks) for admins', async () => {
+      const { store } = fakeStore([server({})]);
+      await expect(ops(store, access).listServers(owner, undefined, undefined)).rejects.toMatchObject({ statusCode: 403 });
+      await expect(
+        ops(store, access).createServer(owner, { game: 'minecraft-java', version: '1.21.4' }),
+      ).rejects.toMatchObject({ statusCode: 403 });
+    });
+
+    it('lets an agent stop only its own server', async () => {
+      const { store } = fakeStore([server({ status: 'RUNNING' }), server({ serverId: 's2', status: 'RUNNING', instanceId: 'i-2' })]);
+      await expect(ops(store).idleStop(agent('s2', 'i-1'), 30)).rejects.toMatchObject({ statusCode: 409 });
+      await expect(ops(store).startServer(agent('s1', 'i-1'), 's1')).rejects.toMatchObject({ statusCode: 404 });
     });
   });
 });

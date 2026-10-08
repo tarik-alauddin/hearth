@@ -19,6 +19,7 @@ import {
 import type { ServersStore } from '@hearth/core';
 import type { BackupStorage } from '../backups.js';
 import type { UploadStorage } from '../uploads.js';
+import { AccessDenied } from '../authz.js';
 import { OperationError, type serverOperations } from '../servers/operations.js';
 import { callerInstanceId } from './caller.js';
 import type { AgentReleases } from './releases.js';
@@ -101,11 +102,11 @@ export function agentHandlers({
     if ('error' in caller) return caller.error;
     const { instanceId, server } = caller;
     try {
-      const result = await operations.idleStop(server.serverId, instanceId, idleMinutes);
+      const result = await operations.idleStop({ kind: 'agent', serverId: server.serverId, instanceId }, idleMinutes);
       console.log(JSON.stringify({ msg: 'idle stop', instanceId, idleMinutes, ...result }));
       return json(result.unchanged ? 200 : 202, result);
     } catch (err) {
-      if (err instanceof OperationError) return json(err.statusCode, { message: err.message });
+      if (err instanceof OperationError || err instanceof AccessDenied) return json(err.statusCode, { message: err.message });
       throw err;
     }
   }
