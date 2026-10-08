@@ -4,5 +4,6 @@ export * from './access.js';
 export * from './ids.js';
 export * from './invites.js';
 export * from './metrics.js';
+export * from './ownership.js';
 export * from './servers.js';
 export * from './users.js';

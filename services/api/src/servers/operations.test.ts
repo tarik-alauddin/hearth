@@ -43,6 +43,7 @@ function fakeStore(initial: ServerRecord[] = []) {
       if (servers.has(server.serverId)) throw new Error('exists');
       servers.set(server.serverId, { ...server });
     },
+    countActiveOwned: async (ownerId) => [...servers.values()].filter((s) => s.ownerId === ownerId && s.status !== 'DESTROYED').length,
     updateSettings: async (id, settings) => {
       const s = servers.get(id);
       if (!s) return false;
@@ -79,10 +80,11 @@ describe('server operations', () => {
   let failWorkflows: boolean;
   let ids: number;
 
-  const ops = (store: OperationDeps['store'], access?: OperationDeps['access']) =>
+  const ops = (store: OperationDeps['store'], access?: OperationDeps['access'], extra: Partial<OperationDeps> = {}) =>
     serverOperations({
       store,
       ...(access ? { access } : {}),
+      ...extra,
       workflows: {
         start: async (workflow, serverId, operationId) => {
           if (failWorkflows) throw new Error('Step Functions unavailable');
@@ -690,12 +692,71 @@ describe('server operations', () => {
       });
     });
 
-    it('keeps listing every server and creating (until /v1 adds its checks) for admins', async () => {
+    it('keeps listing every server for admins', async () => {
       const { store } = fakeStore([server({})]);
       await expect(ops(store, access).listServers(owner, undefined, undefined)).rejects.toMatchObject({ statusCode: 403 });
-      await expect(
-        ops(store, access).createServer(owner, { game: 'minecraft-java', version: '1.21.4' }),
-      ).rejects.toMatchObject({ statusCode: 403 });
+    });
+
+    describe('creating', () => {
+      const body = { game: 'minecraft-java', version: '26.3' };
+      // u1 is approved (limit 3); u2 isn't; u9 has never signed in.
+      const users: OperationDeps['users'] = {
+        getUser: async (userId) =>
+          ({
+            u1: { userId: 'u1', approved: true, serverLimit: 3, createdAt: 'then', lastSeenAt: 'then' },
+            u2: { userId: 'u2', approved: false, serverLimit: 3, createdAt: 'then', lastSeenAt: 'then' },
+          })[userId],
+      };
+      const setup = (existing: ServerRecord[] = []) => {
+        const { store, servers } = fakeStore(existing);
+        const owned: { serverId: string; userId: string; role: string }[] = [];
+        const ownership: OperationDeps['ownership'] = {
+          createOwnedServer: async (record, ownerRow) => {
+            await store.createServer(record);
+            owned.push(ownerRow);
+          },
+        };
+        return { o: ops(store, access, { users, ownership }), servers, owned };
+      };
+
+      it('lets an approved user create a server they own, with their owner row', async () => {
+        const { o, servers, owned } = setup();
+        expect(await o.createServer(owner, body)).toEqual({ serverId: 'ID1', status: 'PROVISIONING' });
+        expect(servers.get('ID1')).toMatchObject({ ownerId: 'u1', agentChannel: 'stable', status: 'PROVISIONING' });
+        expect(owned).toEqual([expect.objectContaining({ serverId: 'ID1', userId: 'u1', role: 'owner', addedBy: 'u1' })]);
+        expect(started).toEqual([{ workflow: 'create', serverId: 'ID1', operationId: 'ID2' }]);
+      });
+
+      it('refuses a user an admin has not approved, or who never signed in, with 403', async () => {
+        const { o, servers } = setup();
+        await expect(o.createServer(member, body)).rejects.toMatchObject({ statusCode: 403, message: expect.stringMatching(/approves/) });
+        await expect(o.createServer({ kind: 'user', userId: 'u9' }, body)).rejects.toMatchObject({ statusCode: 403 });
+        expect(servers.size).toBe(0);
+        expect(started).toEqual([]);
+      });
+
+      it('refuses a user at their limit; destroyed servers do not count', async () => {
+        const mine = (id: string, status: ServerRecord['status'] = 'STOPPED') => server({ serverId: id, ownerId: 'u1', status });
+        const full = setup([mine('a'), mine('b'), mine('c')]);
+        await expect(full.o.createServer(owner, body)).rejects.toMatchObject({
+          statusCode: 403,
+          message: 'You have 3 servers, your limit; destroy one to create another',
+        });
+        const freed = setup([mine('a'), mine('b'), mine('c', 'DESTROYED')]);
+        expect((await freed.o.createServer(owner, body)).status).toBe('PROVISIONING');
+      });
+
+      it('keeps the agent channel for admins, and lets admins past approval and the limit', async () => {
+        const { o } = setup();
+        await expect(o.createServer(owner, { ...body, agentChannel: 'canary' })).rejects.toMatchObject({ statusCode: 403 });
+        const admin: Actor = { kind: 'admin', id: 'u2' }; // not approved as a user: admins need no approval
+        expect((await o.createServer(admin, { ...body, agentChannel: 'canary' })).status).toBe('PROVISIONING');
+      });
+
+      it('refuses agents', async () => {
+        const { o } = setup();
+        await expect(o.createServer(agent('s1', 'i-1'), body)).rejects.toMatchObject({ statusCode: 403 });
+      });
     });
 
     it('lets an agent stop only its own server', async () => {

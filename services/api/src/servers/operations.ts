@@ -1,4 +1,12 @@
-import { InvalidCursor, newId as defaultNewId, type AccessStore, type ServersStore, type Transition } from '@hearth/core';
+import {
+  InvalidCursor,
+  newId as defaultNewId,
+  type AccessStore,
+  type OwnedServers,
+  type ServersStore,
+  type Transition,
+  type UsersStore,
+} from '@hearth/core';
 import {
   DEFAULT_AGENT_CHANNEL,
   backupPrefix,
@@ -18,7 +26,7 @@ import {
   UpdateSettingsRequestSchema,
 } from '@hearth/shared/api';
 import type { z } from 'zod';
-import { actorId, requireAdmin, serverAuthorizer, type Actor, type Relation } from '../authz.js';
+import { AccessDenied, actorId, requireAdmin, serverAuthorizer, type Actor, type Relation } from '../authz.js';
 import { check } from '../validation.js';
 import type { BackupStorage } from '../backups.js';
 import type { UploadStorage } from '../uploads.js';
@@ -46,9 +54,13 @@ export class OperationError extends Error {
 }
 
 export interface OperationDeps {
-  store: Pick<ServersStore, 'getServer' | 'listServers' | 'createServer' | 'transition' | 'updateSettings'>;
+  store: Pick<ServersStore, 'getServer' | 'listServers' | 'createServer' | 'transition' | 'updateSettings' | 'countActiveOwned'>;
   /** Users' access to servers. Only routes for signed-in users (/v1) need it; others have no user callers. */
   access?: Pick<AccessStore, 'getAccess' | 'listForUser'>;
+  /** Creating a server with its owner's access (/v1 only). Without it, create writes the server alone. */
+  ownership?: OwnedServers;
+  /** Who may create servers (approval, limit): /v1 only. */
+  users?: Pick<UsersStore, 'getUser'>;
   workflows: Workflows;
   backups: Pick<BackupStorage, 'list'>;
   uploads: Pick<UploadStorage, 'status' | 'accepted'>;
@@ -66,6 +78,8 @@ const MAX_PAGE = 100;
 export function serverOperations({
   store,
   access,
+  ownership,
+  users,
   workflows,
   backups,
   uploads,
@@ -132,6 +146,26 @@ export function serverOperations({
     }
   }
 
+  /**
+   * A user may create a server once an admin has approved them, while they own fewer than their
+   * limit (destroyed servers don't count). The count comes from an eventually consistent index, so
+   * two creates at the same moment could both pass: accepted while the limit isn't billing.
+   */
+  async function requireMayCreate(userId: string): Promise<void> {
+    if (!users) throw new Error('No users store: this route takes no user callers');
+    const user = await users.getUser(userId);
+    if (!user?.approved) {
+      throw new AccessDenied(403, "You can't create servers until an admin approves your account");
+    }
+    const owned = await store.countActiveOwned(userId);
+    if (owned >= user.serverLimit) {
+      throw new AccessDenied(
+        403,
+        `You have ${owned} server${owned === 1 ? '' : 's'}, your limit; destroy one to create another`,
+      );
+    }
+  }
+
   /** Refuses an upload repack hasn't accepted, or accepted for another game. */
   async function requireAccepted(uploadId: string, game: GameId): Promise<void> {
     const status = isUploadId(uploadId) ? await uploads.status(uploadId) : undefined;
@@ -188,9 +222,13 @@ export function serverOperations({
      * server-cap checks and records the owner's access with the server.
      */
     async createServer(actor: Actor, request: unknown): Promise<ServerOperationResult> {
-      requireAdmin(actor);
+      if (actor.kind === 'agent') throw new AccessDenied(403, 'Agents cannot create servers');
       const ownerId = actorId(actor);
-      const { game, version, region = homeRegion, agentChannel = DEFAULT_AGENT_CHANNEL, upload } = parse(CreateServerRequestSchema, request);
+      const parsed = parse(CreateServerRequestSchema, request);
+      const { game, version, region = homeRegion, agentChannel = DEFAULT_AGENT_CHANNEL, upload } = parsed;
+      // Which agent releases a server follows is an admin's call: it's how releases are tried out.
+      if (parsed.agentChannel !== undefined) requireAdmin(actor);
+      if (actor.kind === 'user') await requireMayCreate(actor.userId);
       if (!gameRegions.includes(region)) throw new OperationError(400, `No game infrastructure in ${region}`);
       if (upload !== undefined) await requireAccepted(upload, game);
       const at = now();
@@ -206,7 +244,7 @@ export function serverOperations({
           ? {}
           : { restoreKey: uploads.accepted(upload).key, restoreSource: 'upload', restoreRequestedAt: at.toISOString() };
 
-      await store.createServer({
+      const record: ServerRecord = {
         ...restore,
         serverId,
         ownerId,
@@ -219,7 +257,20 @@ export function serverOperations({
         createdAt: at.toISOString(),
         statusChangedAt: at.toISOString(),
         lastOperationId: operationId,
-      });
+      };
+      // Routes for signed-in users record the owner's access with the server, in one transaction,
+      // so it's in their list at once. (/admin has no access table: its servers have no owner row.)
+      if (ownership) {
+        await ownership.createOwnedServer(record, {
+          userId: ownerId,
+          serverId,
+          role: 'owner',
+          addedAt: at.toISOString(),
+          addedBy: ownerId,
+        });
+      } else {
+        await store.createServer(record);
+      }
       await run(serverId, 'create', operationId, 'PROVISIONING', 'PROVISIONING');
       return { serverId, status: 'PROVISIONING' };
     },

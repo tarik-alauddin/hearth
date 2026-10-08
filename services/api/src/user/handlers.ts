@@ -12,7 +12,7 @@ type Result = APIGatewayProxyStructuredResultV2;
 export interface UserHandlerDeps {
   users: Pick<UsersStore, 'recordSignIn'>;
   userOps: ReturnType<typeof userOperations>;
-  serverOps: Pick<ReturnType<typeof serverOperations>, 'getServer' | 'listMyServers'>;
+  serverOps: Pick<ReturnType<typeof serverOperations>, 'getServer' | 'listMyServers' | 'createServer'>;
   now?: () => Date;
   log?: (entry: Record<string, unknown>) => void;
 }
@@ -46,6 +46,11 @@ export function userHandler({ users, userOps, serverOps, now = () => new Date(),
           const mine = await serverOps.listMyServers(caller.actor, event.queryStringParameters?.all === 'true');
           const body: ListMyServersResponse = { servers: mine.map(({ server, relation }) => toServerView(server, relation)) };
           return json(200, body);
+        }
+        case 'POST /v1/servers': {
+          const result = await serverOps.createServer(caller.actor, parseBody(event));
+          log({ msg: 'server created', by: caller.userId, ...result });
+          return json(202, result);
         }
         case 'GET /v1/servers/{id}': {
           const { server, relation } = await serverOps.getServer(caller.actor, event.pathParameters?.id ?? '');

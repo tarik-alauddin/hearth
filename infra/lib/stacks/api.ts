@@ -15,6 +15,7 @@ import type { Construct } from 'constructs';
 import {
   AGENT_CHANNELS,
   SERVERS_BY_INSTANCE_INDEX,
+  SERVERS_BY_OWNER_INDEX,
   agentChannelParameter,
   agentReleasesBucket,
   backupBucket,
@@ -247,8 +248,8 @@ export class ApiStack extends HearthStack {
       }),
     );
     // User routes (/v1): signed-in users, through the web app and later the CLI. Who they are (the
-    // Users table) and the servers they can reach (read only, through their ServerAccess rows);
-    // acting on servers joins it with M8 PR5d–e.
+    // Users table), the servers they can reach (through their ServerAccess rows), and creating
+    // one; acting on servers joins it with M8 PR5e.
     const user = hearthFunction(this, 'User', {
       config: props.config,
       entry: 'api/src/user/lambda.ts',
@@ -258,15 +259,37 @@ export class ApiStack extends HearthStack {
         SERVERS_TABLE: props.serversTable.tableName,
         ACCESS_TABLE: props.serverAccessTable.tableName,
         HOME_REGION: props.config.homeRegion,
+        GAME_REGIONS: props.gameRegions.join(','),
+        CREATE_WORKFLOW_ARN: props.workflows.create.stateMachineArn,
       },
     });
     user.addToRolePolicy(
       new PolicyStatement({ actions: ['dynamodb:GetItem', 'dynamodb:UpdateItem'], resources: [props.usersTable.tableArn] }),
     );
-    user.addToRolePolicy(new PolicyStatement({ actions: ['dynamodb:GetItem'], resources: [props.serversTable.tableArn] }));
-    // A user's rows are one Query on the table's key; one row is a GetItem.
+    // Create puts the server and its owner row in one transaction (PutItem on both), and moves a
+    // server whose workflow didn't start to FAILED (UpdateItem).
     user.addToRolePolicy(
-      new PolicyStatement({ actions: ['dynamodb:GetItem', 'dynamodb:Query'], resources: [props.serverAccessTable.tableArn] }),
+      new PolicyStatement({
+        actions: ['dynamodb:GetItem', 'dynamodb:PutItem', 'dynamodb:UpdateItem'],
+        resources: [props.serversTable.tableArn],
+      }),
+    );
+    // The server limit: the owner's servers, one Query on the byOwner index.
+    user.addToRolePolicy(
+      new PolicyStatement({
+        actions: ['dynamodb:Query'],
+        resources: [`${props.serversTable.tableArn}/index/${SERVERS_BY_OWNER_INDEX}`],
+      }),
+    );
+    // A user's rows are one Query on the table's key; one row is a GetItem; create adds the owner's.
+    user.addToRolePolicy(
+      new PolicyStatement({
+        actions: ['dynamodb:GetItem', 'dynamodb:Query', 'dynamodb:PutItem'],
+        resources: [props.serverAccessTable.tableArn],
+      }),
+    );
+    user.addToRolePolicy(
+      new PolicyStatement({ actions: ['states:StartExecution'], resources: [props.workflows.create.stateMachineArn] }),
     );
 
     // Every route comes from the shared route list (packages/shared/src/api/routes.ts), which also

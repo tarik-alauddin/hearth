@@ -1,6 +1,7 @@
 // Lambda entry point for the /v1 routes (signed-in users); ApiStack points the User function here.
-import { createAccessStore, createServersStore, createUsersStore } from '@hearth/core';
-import { serverOperations } from '../servers/operations.js';
+import { createAccessStore, createOwnedServers, createServersStore, createUsersStore } from '@hearth/core';
+import { OperationError, serverOperations } from '../servers/operations.js';
+import { stepFunctionsWorkflows } from '../servers/workflows.js';
 import { userOperations } from '../users/operations.js';
 import { userHandler } from './handlers.js';
 
@@ -10,24 +11,35 @@ function requireEnv(name: string): string {
   return value;
 }
 
-/** A dependency no /v1 route uses yet (creating, starting and the rest arrive with M8 PR5d–e). */
+/** A dependency no /v1 route uses yet (starting, stopping and the rest arrive with M8 PR5e). */
 function notYet(what: string): never {
   throw new Error(`${what} is not available to the /v1 routes yet`);
 }
 
 const users = createUsersStore(requireEnv('USERS_TABLE'));
+const serversTable = requireEnv('SERVERS_TABLE');
+const accessTable = requireEnv('ACCESS_TABLE');
 
 export const handler = userHandler({
   users,
   userOps: userOperations({ users }),
   serverOps: serverOperations({
-    store: createServersStore(requireEnv('SERVERS_TABLE')),
-    access: createAccessStore(requireEnv('ACCESS_TABLE')),
-    workflows: { start: async () => notYet('Workflows') },
+    store: createServersStore(serversTable),
+    access: createAccessStore(accessTable),
+    ownership: createOwnedServers(serversTable, accessTable),
+    users,
+    // Only create, for now: its function may start no other workflow.
+    workflows: stepFunctionsWorkflows({ create: requireEnv('CREATE_WORKFLOW_ARN'), start: '', stop: '', destroy: '' }),
     backups: { list: async () => notYet('Backups') },
-    uploads: { status: async () => notYet('Uploads'), accepted: () => notYet('Uploads') },
+    // A request naming an upload is the caller's to fix, so a 400 rather than an error.
+    uploads: {
+      status: async () => {
+        throw new OperationError(400, 'Creating a server from an upload comes with the /v1 uploads');
+      },
+      accepted: () => notYet('Uploads'),
+    },
     versions: { releases: async () => notYet('Game versions') },
     homeRegion: requireEnv('HOME_REGION'),
-    gameRegions: [],
+    gameRegions: requireEnv('GAME_REGIONS').split(','),
   }),
 });

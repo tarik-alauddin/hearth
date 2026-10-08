@@ -74,7 +74,7 @@ export interface ApiRoute {
   query?: z.ZodObject;
   body?: z.ZodType;
   /** Success responses, and any error worth explaining beyond the usual 400, 403 and 404. */
-  responses: Partial<Record<200 | 201 | 202 | 204 | 404 | 409, RouteResponse>>;
+  responses: Partial<Record<200 | 201 | 202 | 204 | 403 | 404 | 409, RouteResponse>>;
 }
 
 const operation = {
@@ -109,6 +109,23 @@ export const API_ROUTES: readonly ApiRoute[] = [
     description: 'The servers the caller owns or is a member of, newest first. Destroyed ones only with `all=true`.',
     query: MyServersQuerySchema,
     responses: { 200: { description: 'The servers, as the caller sees them', schema: ListMyServersResponseSchema } },
+  },
+  {
+    id: 'createServer',
+    method: 'POST',
+    path: '/v1/servers',
+    handler: 'user',
+    caller: { kind: 'user' },
+    summary: 'Create a server',
+    description:
+      'Records it (PROVISIONING), owned by the caller, and runs the create workflow, which also starts it. ' +
+      "The caller must be approved and under their server limit (destroyed servers don't count); " +
+      '`agentChannel` is for admins. Creating from an upload comes with the /v1 uploads.',
+    body: CreateServerRequestSchema,
+    responses: {
+      202: { description: 'Created; the create workflow is running', schema: ServerOperationResultSchema },
+      403: { description: 'Not approved yet, at the server limit, or (not an admin) choosing an agent channel' },
+    },
   },
   {
     id: 'getServer',
