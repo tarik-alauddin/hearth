@@ -59,7 +59,7 @@ as part of each PR. The repo layout and commands are in [README.md](README.md).
 | M7 Move your world | Done (PR1–PR4; tested on dev with a real world) |
 | Before Phase 2 | Done: M7 docs, neutral wording, destroy (records kept as `DESTROYED`), state-sync tweak, stage and prod live with the release flow (details under Decisions) |
 | **Phase 1** | **Complete** (2026-10-07): dev, stage and prod run `v2026.10.07-3461efe`, agent `2026.10.06-de42566` |
-| M8 Accounts and access | In progress: PR1a–PR1c done (sign-in with password, Google, Discord, tested on dev); PR2–PR4 done (access data, authorization, API contract); PR5a (`/v1/me`) in review |
+| M8 Accounts and access | In progress: PR1a–PR1c done (sign-in with password, Google, Discord, tested on dev); PR2–PR4 done (access data, authorization, API contract); PR5a (`/v1/me`) merged; PR5b (approve users) in review |
 | M9 Game version catalog | Planned (Deferred's plan, V1–V4) |
 | M10 Web UI | Planned |
 
@@ -145,7 +145,7 @@ the CLI signs in the same way; backend only):
     `zod/mini` would be 13 KB but means rewriting the schemas in its functional style.
   - Hosted docs come with M10: on in dev and stage, off in prod (see Decisions).
 - PR5 `/v1`, split in five (PR4 was too big; keep each to one concern):
-  - 5a, in review: `GET /v1/me`. API Gateway's JWT authorizer (`HttpUserPoolAuthorizer`
+  - 5a, merged: `GET /v1/me`. API Gateway's JWT authorizer (`HttpUserPoolAuthorizer`
     `hearth-<env>-cognito`: AuthStack's pool and clients, passed in; AuthStack is now built before
     ApiStack) on `/v1` routes, IAM on the rest. Clients send the **ID token** (it carries the
     profile and groups; access tokens are refused with 401). The `User` λ
@@ -155,8 +155,13 @@ the CLI signs in the same way; backend only):
     GetItem/UpdateItem the Users table. `scripts/api-call.ps1` calls any `/v1` route with a saved
     session (`~/.hearth/script-session-<env>.json`, refreshed as needed); the sign-in steps moved to
     `scripts/lib/hearth-auth.ps1`, shared with `sign-in-check.ps1`. Guide: `docs/testing/user-api.md`.
-  - 5b: admins approve users, **by user ID** (one person with several sign-ins is several users,
-    each approved; the M10 admin page lists pending users with names).
+  - 5b, in review: `POST /v1/admin/users/{id}/approval` `{ approved }` (true approves, false takes
+    it back; servers they own keep running), **by user ID** (one person with several sign-ins is
+    several users, each approved; the M10 admin page lists pending users with names). Admins only:
+    routes gain `adminOnly` (`caller: { kind: 'user', adminOnly: true }`: docs mark it and list
+    403; `requireAdmin` enforces). `services/api/src/users/operations.ts` (`userOperations`,
+    beside `servers/`); answers the `UserRecord` (schema checked equal to core's type); 404 for
+    someone who never signed in. Logs who approved whom. No infra change.
   - 5c: `GET /v1/servers` (theirs, through ServerAccess) and `/v1/servers/{id}`, shaped by role;
     throttling for `/v1` (the stage already throttles 50/s, burst 100).
   - 5d: create: approval, the cap, the server and its owner row in one transaction.

@@ -46,3 +46,22 @@ try { Invoke-WebRequest "$url/v1/me" -Headers @{ Authorization = 'Bearer nonsens
 ```
 
 Expect `401` twice.
+
+## 2. Approve a user (`POST /v1/admin/users/{id}/approval`)
+
+Admins only. Users are approved by their user ID: the `userId` `/v1/me` shows them (their Cognito
+`sub`). Someone signed in with several providers is several users; approve each one they use.
+
+1. As your non-admin user (a provider whose user isn't in `admin`; ask a friend for theirs, or use
+   one of yours), note its `userId` from `api /v1/me`. Try approving yourself with it:
+
+   ```powershell
+   api -Method POST /v1/admin/users/<userId>/approval -Body '{"approved":true}'
+   ```
+
+   Expect `403` ("not a Hearth admin"), and `approved` still `false` in its `/v1/me`.
+2. Sign in as your admin user again (`api -SignOut`, then any call) and run the same command: expect
+   `200` with the user's record, `approved: true` and `approvedAt`. Their `/v1/me` now says
+   `approved: true`.
+3. Take it back with `-Body '{"approved":false}'`: `approved: false`, no `approvedAt`.
+4. A user ID that has never signed in answers `404`; a body like `{"approved":"yes"}` answers `400`.

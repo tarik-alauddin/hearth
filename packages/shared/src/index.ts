@@ -30,6 +30,7 @@ export type {
   RestoreTarget,
   ServerOperationResult,
   ServerView,
+  SetApprovalRequest,
   SetVersionRequest,
   UpdateSettingsRequest,
   UploadStatus,

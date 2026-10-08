@@ -1,5 +1,6 @@
 // Lambda entry point for the /v1 routes (signed-in users); ApiStack points the User function here.
 import { createUsersStore } from '@hearth/core';
+import { userOperations } from '../users/operations.js';
 import { userHandler } from './handlers.js';
 
 function requireEnv(name: string): string {
@@ -8,4 +9,6 @@ function requireEnv(name: string): string {
   return value;
 }
 
-export const handler = userHandler({ users: createUsersStore(requireEnv('USERS_TABLE')) });
+const users = createUsersStore(requireEnv('USERS_TABLE'));
+
+export const handler = userHandler({ users, userOps: userOperations({ users }) });

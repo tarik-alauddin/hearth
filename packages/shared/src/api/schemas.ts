@@ -203,6 +203,30 @@ export const MeResponseSchema = named(
   'Who the caller is, as Hearth knows them.',
 );
 
+export const UserRecordSchema = named(
+  z.object({
+    userId: z.string().describe("The Cognito user's sub"),
+    approved: z.boolean().describe('May create servers'),
+    serverLimit: z.number().int().describe('Servers they may own at once'),
+    createdAt: isoTime('First seen'),
+    lastSeenAt: isoTime('Last profile refresh'),
+    approvedAt: isoTime('When approved').optional(),
+    provider: z.string().optional(),
+    email: z.string().optional(),
+    name: z.string().optional(),
+    username: z.string().optional(),
+    displayName: z.string().optional(),
+    picture: z.string().optional(),
+  }),
+  'UserRecord',
+  'A user as admins see them: the whole record.',
+);
+
+export const SetApprovalRequestSchema = named(
+  z.strictObject({ approved: z.boolean().describe('true approves; false takes approval back') }),
+  'SetApprovalRequest',
+);
+
 // Uploads.
 
 export const CreateUploadRequestSchema = named(z.strictObject({ game: GameIdSchema }), 'CreateUploadRequest');
@@ -316,3 +340,4 @@ export type RestoreDoneReport = z.infer<typeof RestoreDoneReportSchema>;
 export type IdleReport = z.infer<typeof IdleReportSchema>;
 export type ErrorResponse = z.infer<typeof ErrorResponseSchema>;
 export type MeResponse = z.infer<typeof MeResponseSchema>;
+export type SetApprovalRequest = z.infer<typeof SetApprovalRequestSchema>;

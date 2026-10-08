@@ -17,9 +17,11 @@ import {
   RestoreRequestSchema,
   ServerOperationResultSchema,
   ServerRecordSchema,
+  SetApprovalRequestSchema,
   SetVersionRequestSchema,
   UpdateSettingsRequestSchema,
   UploadStatusSchema,
+  UserRecordSchema,
 } from './schemas.js';
 
 // Every route the API serves, in one list: the CDK creates the API's routes from it (a route can't
@@ -45,8 +47,9 @@ export type RouteCaller =
   /**
    * A signed-in user (Cognito ID token). For a route about one server, `action` is what their role
    * on it must allow (SERVER_PERMISSIONS); routes about the caller themselves have none.
+   * `adminOnly`: platform-wide actions, for members of the `admin` group alone (`requireAdmin`).
    */
-  | { kind: 'user'; action?: ServerAction };
+  | { kind: 'user'; action?: ServerAction; adminOnly?: true };
 
 export type HttpMethod = 'GET' | 'POST' | 'PATCH' | 'DELETE';
 
@@ -92,6 +95,22 @@ export const API_ROUTES: readonly ApiRoute[] = [
     summary: 'Who I am',
     description: 'Also records the user on first sight (not yet approved) and refreshes their profile from the token.',
     responses: { 200: { description: 'The caller', schema: MeResponseSchema } },
+  },
+  {
+    id: 'setUserApproval',
+    method: 'POST',
+    path: '/v1/admin/users/{id}/approval',
+    handler: 'user',
+    caller: { kind: 'user', adminOnly: true },
+    summary: 'Approve a user (or take approval back)',
+    description:
+      'Approved users may create servers. `{id}` is their user ID (`userId` from `/v1/me`, their Cognito sub); ' +
+      'one person signed in with several providers is several users, each approved on its own.',
+    body: SetApprovalRequestSchema,
+    responses: {
+      200: { description: 'The user, with their approval', schema: UserRecordSchema },
+      404: { description: 'No such user: they sign in once first' },
+    },
   },
 
   // Admin routes (the hearth CLI).
