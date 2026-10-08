@@ -74,7 +74,9 @@ Routes under `/v1` are for signed-in users: they take the ID token from signing 
 To call one from PowerShell, signed in through the browser once:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File scripts\api-call.ps1 /v1/me
+Set-ExecutionPolicy -Scope Process Bypass   # once per window
+.\scripts\api-call.ps1 /v1/me
+.\scripts\api-call.ps1 -Method POST /v1/admin/users/<userId>/approval -Body '{"approved":true}'
 ```
 
 See [docs/testing/user-api.md](docs/testing/user-api.md).

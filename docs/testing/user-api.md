@@ -9,9 +9,16 @@ account; plus a browser. `scripts/api-call.ps1` signs you in the first time (lik
 `scripts/sign-in-check.ps1`), keeps the session in `~/.hearth/script-session-<env>.json`, and
 calls a route with your ID token. **Costs:** none at this scale.
 
+Once per PowerShell window:
+
 ```powershell
-function api { powershell -ExecutionPolicy Bypass -File scripts\api-call.ps1 @args }
+Set-ExecutionPolicy -Scope Process Bypass   # lets this window run the repo's scripts; nothing else
+function api { & .\scripts\api-call.ps1 @args }
 ```
+
+The script runs in the same session, not through `powershell -File …`: Windows PowerShell strips
+the double quotes from arguments it passes to another process, so a JSON `-Body` would arrive as
+`{approved:true}` (the script now refuses that before sending).
 
 `api -SignOut` forgets the saved session; `api /v1/me -Provider Google` (or `Discord`) signs in
 again with that provider, as a different user.
