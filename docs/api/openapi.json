@@ -1374,6 +1374,94 @@
         }
       }
     },
+    "/v1/admin/users/{id}/approval": {
+      "post": {
+        "operationId": "setUserApproval",
+        "summary": "Approve a user (or take approval back)",
+        "description": "Approved users may create servers. `{id}` is their user ID (`userId` from `/v1/me`, their Cognito sub); one person signed in with several providers is several users, each approved on its own.",
+        "tags": [
+          "user"
+        ],
+        "security": [
+          {
+            "cognito": []
+          }
+        ],
+        "x-hearth-admin-only": true,
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetApprovalRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The user, with their approval",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserRecord"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request is malformed (the message says how)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No ID token, or an invalid or expired one: sign in again",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The caller is not a Hearth admin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such user: they sign in once first",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/me": {
       "get": {
         "operationId": "getMe",
@@ -2134,6 +2222,19 @@
         ],
         "additionalProperties": false
       },
+      "SetApprovalRequest": {
+        "type": "object",
+        "properties": {
+          "approved": {
+            "type": "boolean",
+            "description": "true approves; false takes approval back"
+          }
+        },
+        "required": [
+          "approved"
+        ],
+        "additionalProperties": false
+      },
       "SetVersionRequest": {
         "type": "object",
         "properties": {
@@ -2231,6 +2332,63 @@
             "additionalProperties": false
           }
         ]
+      },
+      "UserRecord": {
+        "type": "object",
+        "properties": {
+          "userId": {
+            "type": "string",
+            "description": "The Cognito user's sub"
+          },
+          "approved": {
+            "type": "boolean",
+            "description": "May create servers"
+          },
+          "serverLimit": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991,
+            "description": "Servers they may own at once"
+          },
+          "createdAt": {
+            "type": "string",
+            "description": "First seen (ISO 8601, UTC)"
+          },
+          "lastSeenAt": {
+            "type": "string",
+            "description": "Last profile refresh (ISO 8601, UTC)"
+          },
+          "approvedAt": {
+            "type": "string",
+            "description": "When approved (ISO 8601, UTC)"
+          },
+          "provider": {
+            "type": "string"
+          },
+          "email": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "username": {
+            "type": "string"
+          },
+          "displayName": {
+            "type": "string"
+          },
+          "picture": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "userId",
+          "approved",
+          "serverLimit",
+          "createdAt",
+          "lastSeenAt"
+        ],
+        "additionalProperties": false
       }
     }
   }

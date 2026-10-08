@@ -72,9 +72,15 @@ function operation(route: ApiRoute): Json {
     // API Gateway's own answer, before Hearth sees the request.
     responses['401'] ??= { description: 'No ID token, or an invalid or expired one: sign in again', ...ERROR };
   }
-  if (route.caller.kind !== 'user' || route.caller.action) {
+  const adminOnly = route.caller.kind === 'user' && route.caller.adminOnly === true;
+  if (route.caller.kind !== 'user' || route.caller.action || adminOnly) {
     responses['403'] ??= {
-      description: route.caller.kind === 'agent' ? 'The caller is not a game instance' : 'The caller may not do this',
+      description:
+        route.caller.kind === 'agent'
+          ? 'The caller is not a game instance'
+          : adminOnly
+            ? 'The caller is not a Hearth admin'
+            : 'The caller may not do this',
       ...ERROR,
     };
   }
@@ -88,6 +94,7 @@ function operation(route: ApiRoute): Json {
     tags: [route.caller.kind],
     security: [route.caller.kind === 'user' ? { cognito: [] } : { awsSigV4: [] }],
     ...(route.caller.kind === 'user' && route.caller.action ? { 'x-hearth-permission': route.caller.action } : {}),
+    ...(adminOnly ? { 'x-hearth-admin-only': true } : {}),
     ...(parameters.length ? { parameters } : {}),
     ...(route.body ? { requestBody: { required: true, content: { 'application/json': { schema: schemaRef(route.body) } } } } : {}),
     responses: Object.fromEntries(Object.entries(responses).sort(([a], [b]) => a.localeCompare(b))),

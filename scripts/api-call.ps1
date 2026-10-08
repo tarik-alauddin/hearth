@@ -77,9 +77,12 @@ try {
   $status = [int] $response.StatusCode
   $content = $response.Content
 } catch [System.Net.WebException] {
-  # Windows PowerShell throws on 4xx and 5xx; the answer is still worth showing.
+  # Windows PowerShell throws on 4xx and 5xx; the answer is still worth showing. It has usually
+  # read the body already (into ErrorDetails), leaving the response stream empty.
   $status = [int] $_.Exception.Response.StatusCode
-  $content = (New-Object IO.StreamReader($_.Exception.Response.GetResponseStream())).ReadToEnd()
+  $content = if ($_.ErrorDetails.Message) { $_.ErrorDetails.Message } else {
+    (New-Object IO.StreamReader($_.Exception.Response.GetResponseStream())).ReadToEnd()
+  }
 }
 
 $color = if ($status -lt 400) { 'Green' } else { 'Yellow' }

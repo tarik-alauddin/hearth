@@ -1,5 +1,6 @@
 import { describe, expect, expectTypeOf, it } from 'vitest';
 import type { z } from 'zod';
+import type { UserRecord } from '../access.js';
 import type { ServerRecord } from '../server.js';
 import {
   AgentStatusReportSchema,
@@ -8,6 +9,7 @@ import {
   RestoreRequestSchema,
   ServerRecordSchema,
   UpdateSettingsRequestSchema,
+  UserRecordSchema,
 } from './schemas.js';
 
 describe('API schemas', () => {
@@ -47,5 +49,11 @@ describe('API schemas', () => {
     expect(AgentStatusReportSchema.safeParse({ state: 'ready', agentVersion: 'x'.repeat(65) }).success).toBe(false);
     expect(AgentStatusReportSchema.safeParse({ state: 'ready', agentVersion: '1', message: 'x'.repeat(501) }).success).toBe(false);
     expect(AgentStatusReportSchema.safeParse({ state: 'dancing', agentVersion: '1' }).success).toBe(false);
+  });
+});
+
+describe('UserRecordSchema', () => {
+  it('describes the Users record exactly as core stores it', () => {
+    expectTypeOf<z.infer<typeof UserRecordSchema>>().toEqualTypeOf<UserRecord>();
   });
 });
