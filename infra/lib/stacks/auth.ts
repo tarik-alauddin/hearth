@@ -8,12 +8,14 @@ import {
   ManagedLoginVersion,
   Mfa,
   OAuthScope,
+  OidcAttributeRequestMethod,
   ProviderAttribute,
   UserPool,
   UserPoolClient,
   UserPoolClientIdentityProvider,
   UserPoolDomain,
   UserPoolIdentityProviderGoogle,
+  UserPoolIdentityProviderOidc,
   type IUserPoolIdentityProvider,
 } from 'aws-cdk-lib/aws-cognito';
 import { Secret } from 'aws-cdk-lib/aws-secretsmanager';
@@ -25,10 +27,13 @@ import { HearthStack, type HearthStackProps } from '../hearth-stack.js';
 /** The Cognito group whose members are Hearth admins. */
 export const ADMIN_GROUP = 'admin';
 
+/** Discord's provider name in the pool: what `identity_provider=` takes and tokens' identities show. */
+export const DISCORD_PROVIDER = 'Discord';
+
 /**
  * Who you are: the Cognito user pool, its managed login pages and the clients that sign in through
  * them (the CLI everywhere; the web app where `webOrigins` lists one). Users sign in with Google
- * (Discord next), per env's `signInProviders`; the only password users are the ones the owner
+ * and Discord, per env's `signInProviders`; the only password users are the ones the owner
  * creates, so there is no self sign-up. Clients find the pool through one SSM parameter,
  * `/hearth/<env>/auth`.
  */
@@ -111,9 +116,42 @@ export class AuthStack extends HearthStack {
         }),
       );
     }
+    if (signInProviders.includes('discord')) {
+      // Discord speaks OpenID Connect (the `openid` scope adds an ID token); Cognito takes it as a
+      // generic OIDC provider. Endpoints as Discord's discovery document lists them
+      // (https://discord.com/.well-known/openid-configuration).
+      const secret = Secret.fromSecretNameV2(this, 'DiscordSecret', `hearth/${env}/discord`);
+      providers.push(
+        new UserPoolIdentityProviderOidc(this, 'Discord', {
+          userPool: this.userPool,
+          name: DISCORD_PROVIDER,
+          clientId: secret.secretValueFromJson('clientId').unsafeUnwrap(), // not secret; in Discord's authorize URL
+          // Still a {{resolve:secretsmanager}} reference, resolved at deploy: never in the template.
+          clientSecret: secret.secretValueFromJson('clientSecret').unsafeUnwrap(),
+          issuerUrl: 'https://discord.com',
+          endpoints: {
+            authorization: 'https://discord.com/api/oauth2/authorize',
+            token: 'https://discord.com/api/oauth2/token',
+            userInfo: 'https://discord.com/api/oauth2/userinfo',
+            jwksUri: 'https://discord.com/api/oauth2/keys',
+          },
+          // identify: username, display name and avatar; email: the address and whether it's verified.
+          scopes: ['openid', 'identify', 'email'],
+          attributeRequestMethod: OidcAttributeRequestMethod.GET,
+          attributeMapping: {
+            email: ProviderAttribute.other('email'),
+            emailVerified: ProviderAttribute.other('email_verified'),
+            preferredUsername: ProviderAttribute.other('preferred_username'),
+            nickname: ProviderAttribute.other('nickname'),
+            profilePicture: ProviderAttribute.other('picture'),
+          },
+        }),
+      );
+    }
     const supportedIdentityProviders = [
       UserPoolClientIdentityProvider.COGNITO,
       ...(signInProviders.includes('google') ? [UserPoolClientIdentityProvider.GOOGLE] : []),
+      ...(signInProviders.includes('discord') ? [UserPoolClientIdentityProvider.custom(DISCORD_PROVIDER)] : []),
     ];
 
     const client = (id: string, callbackUrls: string[], logoutUrls: string[], refreshDays: number) => {

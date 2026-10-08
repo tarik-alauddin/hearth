@@ -11,6 +11,10 @@ as part of each PR. The repo layout and commands are in [README.md](README.md).
   - **System map** tab: diagram and components as built; update it as milestones land.
   - **Outdated: original architecture** tab: history only, never edit.
 - **Testing guides:** `docs/testing/`. The owner runs AWS checks from CloudShell or their own terminal.
+  Write new guides' commands for **PowerShell** (the owner's shell; Windows PowerShell 5.1 too):
+  no `jq` (use `ConvertFrom-Json` / `Invoke-RestMethod`), quote arguments with commas, pass JSON to
+  `aws` through a file (5.1 strips its quotes). Multi-step checks get a script (e.g.
+  `scripts/sign-in-check.ps1`) rather than copy-paste.
 
 ## Working agreement
 
@@ -49,7 +53,7 @@ as part of each PR. The repo layout and commands are in [README.md](README.md).
 | M7 Move your world | Done (PR1–PR4; tested on dev with a real world) |
 | Before Phase 2 | Done: M7 docs, neutral wording, destroy (records kept as `DESTROYED`), state-sync tweak, stage and prod live with the release flow (details under Decisions) |
 | **Phase 1** | **Complete** (2026-10-07): dev, stage and prod run `v2026.10.07-3461efe`, agent `2026.10.06-de42566` |
-| M8 Accounts and access | In progress: PR1a done (tested on dev); PR1b (Google) in review |
+| M8 Accounts and access | In progress: PR1a, PR1b done (tested on dev); PR1c (Discord) in review |
 | M9 Game version catalog | Planned (Deferred's plan, V1–V4) |
 | M10 Web UI | Planned |
 
@@ -63,14 +67,20 @@ the CLI signs in the same way; backend only):
   `webOrigins` lists one (dev: Vite), both public (PKCE), refresh-only auth flows; an `admin`
   group; `/hearth/<env>/auth` (JSON: pool, issuer, domain, client IDs). Password users created by
   the owner only (no self sign-up), MFA optional (TOTP). Guide: `docs/testing/sign-in.md`.
-- PR1b Google, in review: `UserPoolIdentityProviderGoogle` from `hearth/<env>/google`
-  (`{clientId, clientSecret}`, resolved by CloudFormation), email, verified, name and picture
-  mapped; clients depend on the provider. Per env `signInProviders` (dev now; stage and prod once
-  their secrets exist, or their deploy fails). Setup guide `docs/setup/google.md`. A Google user is
-  separate from a password user with the same email (no linking; add it to `admin` by hand).
-- PR1c Discord: through Cognito's OIDC provider support, username and avatar mapped; a guide to
-  the Discord app. If Cognito won't take Discord's tokens, this PR adds a wrapper λ presenting
-  Discord as an OIDC provider instead. Public email sign-up: not planned (resets, SES, spam).
+- PR1b Google, done (tested on dev; the owner's Google user is an admin):
+  `UserPoolIdentityProviderGoogle` from `hearth/<env>/google` (`{clientId, clientSecret}`, resolved
+  by CloudFormation), email, verified, name and picture mapped; clients depend on the provider. Per
+  env `signInProviders` (dev now; stage and prod once their secrets exist, or their deploy fails).
+  Setup guide `docs/setup/google.md`. Federated users are `<Provider>_<id>` (`Google_…`), separate
+  from a password user with the same email (no linking; add to `admin` by hand).
+- PR1c Discord, in review: Cognito's generic OIDC provider (`Discord`), no wrapper: Discord
+  publishes OIDC discovery (issuer `https://discord.com`, ID tokens with `openid`, userinfo, JWKS,
+  PKCE); endpoints spelled out from it. Scopes `openid identify email`; email, verified,
+  `preferred_username` (username), `nickname` (display name), `picture` mapped. Secret
+  `hearth/<env>/discord`; setup guide `docs/setup/discord.md`. Rides along: the sign-in guide in
+  PowerShell around `scripts/sign-in-check.ps1` (browser sign-in, loopback callback, PKCE, claims,
+  refresh; `-Provider`, `-Client web`, `-SignOut`), and the PowerShell secret steps for Google.
+  Public email sign-up: not planned (resets, SES, spam).
 - PR2 Access data: `Users` (approved, admin, `serverLimit` default 3, name and avatar),
   `ServerAccess` (`userId` + `serverId` → owner | member), `Invites` (code → server, creator,
   `expiresAt`, TTL), an `ownerId` index on Servers; store functions in `services/core`.

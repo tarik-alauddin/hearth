@@ -32,7 +32,7 @@ export interface EnvConfig {
   readonly signInProviders: readonly SignInProvider[];
 }
 
-export type SignInProvider = 'google';
+export type SignInProvider = 'google' | 'discord';
 
 /** The CLI's sign-in callback: a fixed loopback port, as Cognito matches callback URLs exactly. */
 export const CLI_CALLBACK_URL = 'http://localhost:8976/callback';
@@ -46,7 +46,7 @@ const QUALIFIERS: Record<EnvName, string> = {
 
 // Turned on per env once its secrets exist.
 const SIGN_IN_PROVIDERS: Record<EnvName, readonly SignInProvider[]> = {
-  dev: ['google'],
+  dev: ['google', 'discord'],
   stage: [],
   prod: [],
 };
