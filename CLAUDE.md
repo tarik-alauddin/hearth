@@ -47,46 +47,51 @@ as part of each PR. The repo layout and commands are in [README.md](README.md).
 | M5 Game updates and backups | Done (PR1–PR9; follow-ups under Deferred) |
 | M6 Idle shutdown | Done (PR1–PR4; join events from the log under Deferred) |
 | M7 Move your world | Done (PR1–PR4; tested on dev with a real world) |
-| Before Phase 2 | In progress: PR1–PR4b and 5b done; 6b done (stage deployed); 6c (three workflows, one release) in review |
+| Before Phase 2 | Done: M7 docs, neutral wording, destroy (records kept as `DESTROYED`), state-sync tweak, stage and prod live with the release flow (details under Decisions) |
+| **Phase 1** | **Complete** (2026-10-07): dev, stage and prod run `v2026.10.07-3461efe`, agent `2026.10.06-de42566` |
+| M8 Accounts and access | In progress: PR1a (auth basics) in review |
+| M9 Game version catalog | Planned (Deferred's plan, V1–V4) |
+| M10 Web UI | Planned |
 
-**Before Phase 2 plan** (Phase 1 ends with M7; then the UI, per the Architecture doc):
-1. M7 docs: testing guide section for uploads; Architecture roadmap and System map close-out.
-2. Neutral wording: "world" out of game-neutral code; agent release. Words: "game data" (what's
-   stored), "save the game", "data volume". Kept: Minecraft-specific code (adapter, upload rules,
-   `TestMinecraft`, repack's Minecraft tests) and test fixture paths like `world/region/…`.
-3. Destroy, part 1, done: `hearth-<env>-destroy-server` and its `DestroyTasks` λ, the only function
-   that can terminate instances and delete volumes (both only tagged `app=hearth`, `env=<env>`).
-   Status `DESTROYING` (in the fleet check's stuck list). Steps: terminate the record's instance
-   and any tagged with the server (noting each one's data volume first: volumes survive
-   termination), wait (6 min), delete the volumes (retried while detaching, 3 min; already gone =
-   done), then mark it destroyed (4b). Failure → `FAILED`. In the failed-workflow alarm and dashboard.
-4. Destroy, part 2, done: `destroyServer` claims STOPPED, or FAILED with its instance not
-   running/pending, as `DESTROYING` (anything else: 409 "stop it before destroying it"; repeated:
-   unchanged). `POST /admin/servers/{id}/destroy`. `hearth destroy <id>` shows what goes (warning
-   plainly when there are no backups), asks for the ID back (`--yes` skips), follows it through.
-   `scripts/dev-server.sh` is deleted.
-4b. Keep destroyed records (in review): the last step is `MarkDestroyed` (Status λ):
-   `DESTROYING` → `DESTROYED`, `destroyedAt`, clearing public IP and any pending restore; nothing
-   deletes records any more. `GET /admin/servers?all=true` / `hearth list --all`; settings refuse a
-   destroyed server.
-5. Dropped: the EC2 events router (see Decided against).
-5b. State-sync tweak, done (tested on dev): `MarkRunning` reads the instance and records `publicIp` with
-   `RUNNING` (`NotReady` retried 5 s × 12 until EC2 has one; Status λ gets `DescribeInstances`).
-   State sync no longer records the IP (a late `running` event with no IP could erase it); it
-   still clears it on any other state. The CLI no longer waits separately for the IP.
-6. Stage and prod (CDK already bootstrapped for both):
-   - 6a, merged then replaced: `release.yml` (tag-triggered releases, created by hand): too heavy.
-   - 6b, merged: `deploy.yml` publishes a release after each dev deploy; *Promote release*
-     deploys one to stage or prod, recording `/hearth/<env>/release`. Stage deployed and checked.
-   - 6c, in review: three workflows (PR checks, Deploy, Promote); one release carries platform and
-     agent (the owner's first stage agent promote failed by mixing up the two version kinds).
-     Deploy builds the agent when `agent/` changed since the newest build (dev canary) and
-     publishes `release.json` with the release's agent; Promote "release" deploys an env and sets
-     its agent canary; "agent canary → stable" per env. Deploy steps are the
-     `.github/actions/deploy` composite action. No more `agent-*` GitHub Releases.
-   - Then prod: promote the newest release to stage, then prod; canary → stable in each; accept
-     the SNS email, try a server, check an alarm.
-Not a PR: the owner moves off root credentials (IAM Identity Center or an admin user), before 6.
+**Phase 2** (the UI phase): M8 → M9 → M10. Design under Decisions ("Accounts and access").
+
+**M8 plan** (done when a signed-in user manages their own and friends' servers through `/v1`, and
+the CLI signs in the same way; backend only):
+- PR1a Auth basics (AuthStack, per env): Cognito user pool, managed login on Cognito's prefix
+  domain, a web client and a CLI client (authorization code + PKCE, localhost callbacks; more
+  from config later), an `admin` group; pool ID, client IDs and domain in SSM
+  (`/hearth/<env>/auth/…`). Email + password users created by the owner only (no self sign-up):
+  testable without outside apps, and an admin login that doesn't depend on Google or Discord.
+  Done when the owner signs in on dev with a user they created.
+- PR1b Google: the provider (secret in Secrets Manager, created by the owner), email, name and
+  picture mapped; a guide to creating the Google OAuth client. Done when Google sign-in works on dev.
+- PR1c Discord: through Cognito's OIDC provider support, username and avatar mapped; a guide to
+  the Discord app. If Cognito won't take Discord's tokens, this PR adds a wrapper λ presenting
+  Discord as an OIDC provider instead. Public email sign-up: not planned (resets, SES, spam).
+- PR2 Access data: `Users` (approved, admin, `serverLimit` default 3, name and avatar),
+  `ServerAccess` (`userId` + `serverId` → owner | member), `Invites` (code → server, creator,
+  `expiresAt`, TTL), an `ownerId` index on Servers; store functions in `services/core`.
+- PR3 `authorize(actor, action, server)`: operations take an actor (user, admin, agent); the
+  permission table; 404 without access, 403 for a forbidden action; one response shaper by role.
+  `/admin` passes an admin actor and `/agent/idle` an agent actor: callers see no change.
+- PR4 API contract (agreed): Zod 4 schemas in `packages/shared` validate requests and give the
+  types (replacing the hand-written validators); a route registry (method, path, schemas,
+  permission) generates the committed `openapi.json`, and the CDK builds the API's routes from it,
+  so no route exists undocumented; a test fails if the file is stale. `pnpm api:docs` opens Swagger
+  UI locally. Hosted docs come with M10: on in dev and stage, off in prod (see Decisions).
+- PR5 `/v1` server routes: the JWT authorizer, a User λ, `GET /v1/me`, the server routes; create
+  checks approval and the cap; admin routes to approve a user (by email) and set agent channels;
+  API Gateway throttling on `/v1` (caps abuse and cost).
+- PR6 Invites and members: create, list, revoke, accept; list and remove members, leave.
+- PR7 CLI on Cognito: `hearth login` (browser sign-in, session in `~/.hearth`), every command on `/v1`.
+- PR8 Remove `/admin` routes, their handler and permissions.
+
+**M9** is the game version catalog plan under Deferred, its routes under `/v1`. **M10 Web UI**
+(`apps/web`: React + Vite + TypeScript, static, on S3 + CloudFront): PR1 Frontend stack, skeleton,
+sign-in; PR2 servers list and detail (polling, join address, start/stop); PR3 create, settings,
+upgrade, destroy; PR4 upload (CORS on the uploads bucket); PR5 backups and restore; PR6 invites,
+`/join/{code}`, members; PR7 admin page (approve users). No domain yet: Cognito's prefix domain
+and CloudFront's default domain until there is one; callback URLs and origins come from config.
 
 **M7 plan** (create a server from a user's upload in one step; the UI will do the same):
 - PR1, merged: uploads bucket (DataStack) and `POST /admin/uploads { game }`, returning a
@@ -170,6 +175,8 @@ Not a PR: the owner moves off root credentials (IAM Identity Center or an admin 
 - **Three workflows:** PR checks, Deploy, Promote. Shared steps are composite actions
   (`.github/actions/`), which don't clutter the Actions list the way reusable workflows do. Deploy
   runs one at a time (workflow concurrency), so a release's agent is the newest build at its commit.
+  Promote runs main's workflow and actions, never a release's own copy (a rollback to a release
+  older than the deploy action failed that way); only the release's assembly and agent are used.
 - **All Servers table writes go through `services/core`**; the API is the only entry point for callers.
 - **Instances have no S3 write access.** They read agent releases only; backups use short-lived,
   per-server credentials from the API.
@@ -177,13 +184,43 @@ Not a PR: the owner moves off root credentials (IAM Identity Center or an admin 
   change doesn't redeploy the stack that consumes it.
 - **A failed workflow never leaves an instance running.** Create/start failure paths stop the instance;
   instances are tagged with `serverId` at launch.
+- **Accounts and access (Phase 2):**
+  - **Sign-in:** Cognito per env, Google and Discord (the owner owns those apps). Invite-only:
+    anyone can sign in, only approved users create servers. Admin = the Cognito `admin` group.
+    The CLI signs in through Cognito too.
+  - **One API:** every action has one `/v1` route and one operation; the route never decides who
+    may act. Operations take an actor and call `authorize(actor, action, server)`:
+
+    | Action | Owner | Member | Admin | Agent (own server) |
+    | --- | --- | --- | --- | --- |
+    | See it, its address; start, stop | ✓ | ✓ | ✓ | stop (idle) |
+    | Settings, version, backups, restore, destroy, invites, members | ✓ | — | ✓ | — |
+    | Create (approved, under the cap) | user | | ✓ | — |
+    | Agent channels, fleet check, approve users | — | — | ✓ | — |
+
+    No access → 404 (IDs don't leak); visible but forbidden → 403. Responses are shaped by role
+    (users never see instance IDs, S3 keys, agent internals). `/agent/*` stays separate (IAM, the
+    instance's own server); where it overlaps (idle stop) it calls the same operation.
+  - **Cap: 3 servers per user** (`serverLimit`, so it can vary later), counted at create: owned
+    servers not `DESTROYED`, one query on the owner index. Two simultaneous creates could both pass;
+    accepted while the cap isn't billing.
+  - **Friends join by invite link:** the owner creates a code (~100 bits, reusable, 7 days,
+    revocable); a signed-in user accepts it and becomes a member. Membership is the access, not
+    the code: the owner removes members, a member can leave. Accepting needs no approval (members
+    create nothing). Expired, revoked, or the server destroyed → 404; TTL lags, so accept checks
+    `expiresAt` itself.
+  - **API docs: generated, not hosted in prod.** The OpenAPI file comes from the same schemas
+    that validate requests. Publishing it isn't a hole (the web app's code reveals its routes;
+    tokens, `authorize` and validation are the protection), but prod doesn't serve it or Swagger
+    UI: no map of admin routes, and no third-party page on the app's origin that could read tokens.
 - **Destroy:** never a running server (refused: stop it first, which also saves and backs it up). It
   removes the instance and data volume, and **keeps the server's backups and its record**, marked
   `DESTROYED` with `destroyedAt`: for history ("how many servers has Hearth run?") and so
   `hearth backups <id>` still finds its backups. Nothing else works on a destroyed server; `hearth
   list` hides it (`--all` shows it). No IAM role can delete Servers records. Backups are current
   objects, so no lifecycle rule expires them; deleting them is by hand. Confirm by typing the
-  server ID; `--yes` skips the prompt.
+  server ID; `--yes` skips the prompt. The destroy workflow's `DestroyTasks` λ is the only function
+  that can terminate instances or delete volumes, and only ones tagged `app=hearth`, `env=<env>`.
 - **Agents ride releases:** a merge changing `agent/` (compared with the newest build's commit,
   so a skipped run can't lose a change) builds `YYYY.MM.DD-<sha7>` onto dev canary; each release
   names its agent, and promoting it sets that env's canary. Stable moves per env by hand
@@ -262,7 +299,9 @@ Not a PR: the owner moves off root credentials (IAM Identity Center or an admin 
 
 ## Deferred
 
-- **Game version catalog** (owner still deciding; replaces "create defaults to the latest version").
+- **Moving the owner off root credentials** (IAM Identity Center or an admin user; root kept for
+  account recovery). Tabled by the owner after prod went live; not a PR.
+- **Game version catalog** (now M9; routes move to `/v1`; replaces "create defaults to the latest version").
   - **Today:** `create` only checks a version's format (a typo fails at first start);
     `set-version` checks Mojang's live list (releases, 10-min cache); the image is
     `itzg/minecraft-server` at the unpinned `latest` tag.
