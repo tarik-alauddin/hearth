@@ -92,8 +92,10 @@ one SSM parameter, `/hearth/<env>/auth`. The CLI signs in through a loopback cal
 (dev: Vite on `http://localhost:5173`). Members of the `admin` group are Hearth admins.
 
 Outside providers are turned on per environment (`signInProviders` in `infra/lib/config.ts`) once
-their secret exists: **Google** ([setup](docs/setup/google.md); on in dev). Each provider's first
-sign-in creates a separate user, even with the same email as a password user.
+their secret exists: **Google** ([setup](docs/setup/google.md)) and **Discord**
+([setup](docs/setup/discord.md)), both on in dev. Each provider's first sign-in creates a separate
+user (`Google_…`, `Discord_…`), even with the same email as a password user. Check sign-in with
+`scripts/sign-in-check.ps1` ([docs/testing/sign-in.md](docs/testing/sign-in.md)).
 
 ## Agents
 

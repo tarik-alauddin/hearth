@@ -96,9 +96,9 @@ describe('AuthStack', () => {
       prod.template.resourceCountIs('AWS::Cognito::UserPoolClient', 1);
     });
 
-    it('offers Google where it is on (dev), and only password sign-in elsewhere', () => {
+    it('offers Google and Discord where they are on (dev), and only password sign-in elsewhere', () => {
       dev.template.allResourcesProperties('AWS::Cognito::UserPoolClient', {
-        SupportedIdentityProviders: ['COGNITO', 'Google'],
+        SupportedIdentityProviders: ['COGNITO', 'Google', 'Discord'],
       });
       prod.template.allResourcesProperties('AWS::Cognito::UserPoolClient', {
         SupportedIdentityProviders: ['COGNITO'],
@@ -136,18 +136,52 @@ describe('AuthStack', () => {
       });
     });
 
-    it('is created before the clients that offer it', () => {
-      const clients = dev.template.findResources('AWS::Cognito::UserPoolClient');
-      const [providerId] = Object.keys(dev.template.findResources('AWS::Cognito::UserPoolIdentityProvider'));
-      for (const client of Object.values(clients) as { DependsOn?: string[] }[]) {
-        expect(client.DependsOn).toContain(providerId);
-      }
-    });
-
     it('is off until an env has its secret (stage, prod)', () => {
       prod.template.resourceCountIs('AWS::Cognito::UserPoolIdentityProvider', 0);
       expect(synth('stage').template.findResources('AWS::Cognito::UserPoolIdentityProvider')).toEqual({});
     });
+  });
+
+  describe('Discord', () => {
+    it('signs in as an OIDC provider with the owner’s app, read from Secrets Manager at deploy', () => {
+      dev.template.hasResourceProperties('AWS::Cognito::UserPoolIdentityProvider', {
+        ProviderName: 'Discord',
+        ProviderType: 'OIDC',
+        ProviderDetails: {
+          client_id: Match.stringLikeRegexp('^\\{\\{resolve:secretsmanager:.*hearth/dev/discord:SecretString:clientId::\\}\\}$'),
+          client_secret: Match.stringLikeRegexp('^\\{\\{resolve:secretsmanager:.*hearth/dev/discord:SecretString:clientSecret::\\}\\}$'),
+          oidc_issuer: 'https://discord.com',
+          authorize_url: 'https://discord.com/api/oauth2/authorize',
+          token_url: 'https://discord.com/api/oauth2/token',
+          attributes_url: 'https://discord.com/api/oauth2/userinfo',
+          jwks_uri: 'https://discord.com/api/oauth2/keys',
+          authorize_scopes: 'openid identify email',
+          attributes_request_method: 'GET',
+        },
+      });
+    });
+
+    it('maps email, its verification, username, display name and avatar', () => {
+      dev.template.hasResourceProperties('AWS::Cognito::UserPoolIdentityProvider', {
+        ProviderName: 'Discord',
+        AttributeMapping: {
+          email: 'email',
+          email_verified: 'email_verified',
+          preferred_username: 'preferred_username',
+          nickname: 'nickname',
+          picture: 'picture',
+        },
+      });
+    });
+  });
+
+  it('creates every outside provider before the clients that offer it', () => {
+    const providerIds = Object.keys(dev.template.findResources('AWS::Cognito::UserPoolIdentityProvider'));
+    expect(providerIds).toHaveLength(2);
+    const clients = dev.template.findResources('AWS::Cognito::UserPoolClient');
+    for (const client of Object.values(clients) as { DependsOn?: string[] }[]) {
+      expect(client.DependsOn).toEqual(expect.arrayContaining(providerIds));
+    }
   });
 
   it('publishes the pool, domain and clients in one SSM parameter', () => {

@@ -1,114 +1,111 @@
 # Sign-in check
 
-Checks that an environment's Cognito user pool signs a user in through its managed login pages
-and issues tokens, with a password (steps 1–5) and with Google (step 6). Rerun after changes to
-the Auth stack.
+Checks that an environment's Cognito user pool signs a user in through its managed login pages and
+issues tokens: with a password, Google and Discord. Rerun after changes to the Auth stack.
 
-**Where to run:** your own terminal or AWS CloudShell in `us-west-2`, plus a browser. Git Bash on
-Windows: prefix AWS commands with `MSYS_NO_PATHCONV=1` (the parameter names start with `/`). JSON is
-read with Node (`jq` isn't in Git Bash; and there, `node` is a `winpty` alias that can't take piped
-input, so the helper calls `node.exe`). **Costs:** none at this scale.
+**Where to run:** PowerShell on your own machine (Windows PowerShell or `pwsh`), from the repo
+root, with AWS credentials for the account; plus a browser. `scripts/sign-in-check.ps1` does the
+sign-in the way the CLI will: opens the sign-in page, catches the callback on
+`http://localhost:8976/callback`, exchanges the code (with PKCE), shows the ID token's claims and
+checks a refresh. **Costs:** none at this scale.
+
+If PowerShell refuses to run scripts ("running scripts is disabled"), run it as shown below
+(`-ExecutionPolicy Bypass` applies to that one run only).
 
 ## 0. Before you start
 
 - The change is deployed (for dev: merged to `main`, Deploy workflow green; stage and prod: promoted).
 
-```bash
-# js '<json>' '<expression on j>': reads a JSON value without jq or pipes.
-NODE=$(command -v node.exe || command -v node)
-js() { J="$1" "$NODE" -p "const j = JSON.parse(process.env.J); $2"; }
-
-ENV=dev
-AUTH=$(aws ssm get-parameter --region us-west-2 --name "/hearth/$ENV/auth" --query Parameter.Value --output text)
-echo "$AUTH"
-POOL=$(js "$AUTH" j.userPoolId)
-DOMAIN=$(js "$AUTH" j.domain)
-CLIENT=$(js "$AUTH" j.cliClientId)
+```powershell
+$Env = 'dev'
+$Auth = aws ssm get-parameter --region us-west-2 --name "/hearth/$Env/auth" --query Parameter.Value --output text | ConvertFrom-Json
+$Auth
+$Pool = $Auth.userPoolId
 ```
 
 Expect `region`, `userPoolId`, `issuer`, `domain`, `cliClientId`, and on dev also `webClientId`.
 
 ## 1. Create your user (once per environment)
 
-```bash
-EMAIL=you@example.com
-aws cognito-idp admin-create-user --region us-west-2 --user-pool-id "$POOL" --username "$EMAIL" \
-  --user-attributes Name=email,Value="$EMAIL" Name=email_verified,Value=true
-aws cognito-idp admin-add-user-to-group --region us-west-2 --user-pool-id "$POOL" --username "$EMAIL" --group-name admin
+```powershell
+$Email = 'you@example.com'
+aws cognito-idp admin-create-user --region us-west-2 --user-pool-id $Pool --username $Email `
+  --user-attributes "Name=email,Value=$Email" "Name=email_verified,Value=true"
+aws cognito-idp admin-add-user-to-group --region us-west-2 --user-pool-id $Pool --username $Email --group-name admin
 ```
 
-Expect an email from Cognito with a temporary password (check spam).
+Expect an email from `no-reply@verificationemail.com` with a temporary password (check spam). Keep
+the quotes around `Name=…,Value=…`: unquoted, PowerShell reads the comma as a list.
 
-## 2. Sign in
+## 2. Sign in with a password
 
-Open this URL in a browser:
-
-```bash
-echo "$DOMAIN/oauth2/authorize?client_id=$CLIENT&response_type=code&scope=openid+email+profile&redirect_uri=http://localhost:8976/callback"
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\sign-in-check.ps1 -Env $Env
 ```
 
-1. The managed login page shows email and password only: **no "Sign up" link**.
-2. Sign in with the temporary password; set a new one (12+ characters, upper and lower case, a
-   digit and a symbol).
-3. The browser goes to `http://localhost:8976/callback?code=…` and shows "can't connect": expected,
-   nothing listens there until `hearth login` exists. Copy the `code` value from the address bar.
+1. The browser opens the managed login page: email and password only, **no "Sign up" link**.
+2. Sign in. The first time, use the temporary password, then set your own (12+ characters, upper
+   and lower case, a digit and a symbol).
+3. The tab says "Done"; back in PowerShell, expect:
+   - `email` your address, `email_verified True`, `provider password (Cognito)`, `groups admin`
+   - `Refresh: OK (new ID and access tokens).`
 
-## 3. Exchange the code for tokens
+To check the web app's client too (dev only): add `-Client web`.
 
-Within 5 minutes (codes are single-use and short-lived):
+## 3. Sign out
 
-```bash
-CODE=<the code>
-TOKENS=$(curl -s -X POST "$DOMAIN/oauth2/token" -H 'Content-Type: application/x-www-form-urlencoded' \
-  -d grant_type=authorization_code -d client_id="$CLIENT" -d code="$CODE" \
-  -d redirect_uri=http://localhost:8976/callback)
-js "$TOKENS" 'j.error ?? Object.keys(j)'
-js "$TOKENS" "JSON.parse(Buffer.from(j.id_token.split('.')[1], 'base64url'))"
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\sign-in-check.ps1 -Env $Env -SignOut
 ```
 
-- Expect `access_token`, `expires_in`, `id_token`, `refresh_token`, `token_type`. `invalid_grant`
-  instead = the code was used or expired: sign in again (step 2) for a new one.
-- The ID token's claims show your `email` and `cognito:groups: [ 'admin' ]`. Decode tokens
-  locally like this; don't paste them into websites.
+Expect `Signed out`. Running step 2 again now asks for your password.
 
-## 4. Refresh
-
-```bash
-REFRESHED=$(curl -s -X POST "$DOMAIN/oauth2/token" -H 'Content-Type: application/x-www-form-urlencoded' \
-  -d grant_type=refresh_token -d client_id="$CLIENT" -d refresh_token="$(js "$TOKENS" j.refresh_token)")
-js "$REFRESHED" 'j.error ?? Object.keys(j)'
-```
-
-Expect new `access_token` and `id_token` (no new refresh token).
-
-## 5. Sign out
-
-```bash
-echo "$DOMAIN/logout?client_id=$CLIENT&logout_uri=http://localhost:8976/callback"
-```
-
-Open it: the browser goes to the callback ("can't connect" again). Opening the sign-in URL from
-step 2 now asks for your password again.
-
-## 6. Google
+## 4. Google
 
 For environments with Google on (`signInProviders` in `infra/lib/config.ts`; setup:
-[docs/setup/google.md](../setup/google.md)). Sign out first (step 5), so the page doesn't reuse
-your password session.
+[docs/setup/google.md](../setup/google.md)).
 
-1. Open the sign-in URL from step 2: the page now has **Continue with Google**. Choose it and pick
-   your Google account (in Testing mode, it must be one of the app's test users).
-2. Back at the callback, exchange the code as in step 3. The ID token shows your Gmail `email`,
-   `email_verified: true`, `name`, `picture`, and an `identities` claim with
-   `providerName: 'Google'`. No `cognito:groups`: this is a new user, separate from your password
-   user (Cognito doesn't link them).
-3. Make that user an admin too. Its username is in the token's `cognito:username`
-   (`google_<number>`):
+1. Sign out (step 3), then run step 2 again: the page now has **Continue with Google**. Close it
+   (the script gives up after 5 minutes, or press Ctrl+C).
+2. Sign in with Google directly (in Testing mode, with one of the app's test users):
 
-```bash
-GOOGLE_USER=google_<number>
-aws cognito-idp admin-add-user-to-group --region us-west-2 --user-pool-id "$POOL" \
-  --username "$GOOGLE_USER" --group-name admin
-```
+   ```powershell
+   powershell -ExecutionPolicy Bypass -File scripts\sign-in-check.ps1 -Env $Env -Provider Google
+   ```
 
-Sign in with Google again: the new ID token has `cognito:groups: [ 'admin' ]`.
+   Expect your Gmail `email`, `email_verified True`, your `name` and `picture`, `provider Google`,
+   `groups (none)`: a new user, separate from your password user (Cognito doesn't link them).
+3. Make it an admin with its `user` (`Google_…`) from the output, then run 2 again: `groups admin`.
+
+   ```powershell
+   aws cognito-idp admin-add-user-to-group --region us-west-2 --user-pool-id $Pool --username 'Google_<number>' --group-name admin
+   ```
+
+## 5. Discord
+
+For environments with Discord on (setup: [docs/setup/discord.md](../setup/discord.md)). Sign out
+first (step 3).
+
+1. Run step 2: the page now has a **Discord** button beside Google. Close it.
+2. Sign in with Discord directly; Discord asks you to authorize Hearth the first time:
+
+   ```powershell
+   powershell -ExecutionPolicy Bypass -File scripts\sign-in-check.ps1 -Env $Env -Provider Discord
+   ```
+
+   Expect `provider Discord`, your Discord `username` and `display_name`, an avatar URL in
+   `picture`, your Discord account's `email` and `email_verified`, `groups (none)`: another
+   separate user.
+3. Make it an admin with its `user` (`Discord_…`), as for Google, then run 2 again: `groups admin`.
+
+## If something goes wrong
+
+| What you see | Why, and what to do |
+| --- | --- |
+| No temporary password email | Resend: step 1's `admin-create-user` with `--message-action RESEND` |
+| Cognito page: "redirect_mismatch" or "invalid client" | The env's Auth stack isn't the deployed one; check step 0's values |
+| `Sign-in failed: …` | The error Cognito returned, e.g. a provider not on for this env |
+| Discord: "Invalid OAuth2 redirect_uri" | The Discord app's Redirects list lacks this env's `…/oauth2/idpresponse` |
+| Cognito page after Discord: an error mentioning the token or attributes | Cognito couldn't use Discord's response; send the message and the script's output (the fallback is a wrapper λ) |
+| `Timed out after 5 minutes` | The browser never came back; run it again |
+| Port 8976 already in use | Another sign-in script (or later, `hearth login`) is still waiting; close it |
