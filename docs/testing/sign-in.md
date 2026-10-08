@@ -11,8 +11,6 @@ plus a browser. **Costs:** none at this scale.
 ## 0. Before you start
 
 - The change is deployed (for dev: merged to `main`, Deploy workflow green; stage and prod: promoted).
-- An authenticator app on your phone (Google Authenticator, 1Password, Authy…): password users
-  must set up TOTP on their first sign-in.
 
 ```bash
 ENV=dev
@@ -47,8 +45,7 @@ echo "$DOMAIN/oauth2/authorize?client_id=$CLIENT&response_type=code&scope=openid
 1. The managed login page shows email and password only: **no "Sign up" link**.
 2. Sign in with the temporary password; set a new one (12+ characters, upper and lower case, a
    digit and a symbol).
-3. Scan the QR code into your authenticator app and enter its code.
-4. The browser goes to `http://localhost:8976/callback?code=…` and shows "can't connect": expected,
+3. The browser goes to `http://localhost:8976/callback?code=…` and shows "can't connect": expected,
    nothing listens there until `hearth login` exists. Copy the `code` value from the address bar.
 
 ## 3. Exchange the code for tokens

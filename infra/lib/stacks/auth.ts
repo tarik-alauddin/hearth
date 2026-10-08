@@ -46,8 +46,9 @@ export class AuthStack extends HearthStack {
         fullname: { required: false, mutable: true },
         profilePicture: { required: false, mutable: true },
       },
-      // Applies to password users only (the owner's); Google and Discord sign-ins use their own.
-      mfa: Mfa.REQUIRED,
+      // Optional for now (password users are the owner only). Applies to password users alone;
+      // Google and Discord sign-ins use the provider's own MFA.
+      mfa: Mfa.OPTIONAL,
       mfaSecondFactor: { otp: true, sms: false },
       passwordPolicy: {
         minLength: 12,
@@ -61,9 +62,13 @@ export class AuthStack extends HearthStack {
       removalPolicy: isProd ? RemovalPolicy.RETAIN : RemovalPolicy.DESTROY,
     });
     const plusPlan =
-      'Threat protection needs the Plus plan (billed per user). Password users are the owner only, with MFA; everyone else signs in through Google or Discord.';
+      'Threat protection needs the Plus plan (billed per user). Password users are the owner only; everyone else signs in through Google or Discord.';
     Validations.of(this.userPool).acknowledge({ id: 'AwsSolutions-COG3', reason: plusPlan });
     Validations.of(this.userPool).acknowledge({ id: 'AwsSolutions-COG8', reason: plusPlan });
+    Validations.of(this.userPool).acknowledge({
+      id: 'AwsSolutions-COG2',
+      reason: 'MFA is optional (TOTP) for now: the only password user is the owner; Google and Discord apply their own.',
+    });
 
     new CfnUserPoolGroup(this, 'AdminGroup', {
       userPoolId: this.userPool.userPoolId,

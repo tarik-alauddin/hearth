@@ -81,7 +81,7 @@ condition. The repo was created after GitHub switched new repos to ID-based subj
    alarms aren't delivered until then.
 5. Create your own sign-in user in each environment's user pool, in the `admin` group:
    [docs/testing/sign-in.md](docs/testing/sign-in.md), steps 1–2. There is no self sign-up; password
-   users are only the ones you create, with MFA.
+   users are only the ones you create (MFA optional for now).
 
 ## Sign-in
 

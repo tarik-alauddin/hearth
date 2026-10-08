@@ -28,9 +28,9 @@ describe('AuthStack', () => {
       });
     });
 
-    it('requires TOTP MFA and a strong password for password users', () => {
+    it('offers TOTP MFA and requires a strong password for password users', () => {
       dev.template.hasResourceProperties('AWS::Cognito::UserPool', {
-        MfaConfiguration: 'ON',
+        MfaConfiguration: 'OPTIONAL',
         EnabledMfas: ['SOFTWARE_TOKEN_MFA'],
         Policies: {
           PasswordPolicy: Match.objectLike({
