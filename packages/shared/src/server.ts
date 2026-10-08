@@ -1,3 +1,4 @@
+import type { ServerRole } from './access.js';
 import type { AgentState } from './agent-api.js';
 import type { AgentChannel } from './agent-releases.js';
 import type { GameId } from './games.js';
@@ -85,4 +86,32 @@ export interface ServerRecord {
   restoreKey?: string;
   restoreSource?: 'upload'; // restoreKey is in the uploads bucket (an accepted upload); unset = the backups bucket
   restoreRequestedAt?: string; // ISO 8601 UTC
+}
+
+/**
+ * A server as an owner or member sees it: what the UI shows, without instance and volume IDs,
+ * storage keys, operation IDs or agent internals (admins get the whole record).
+ */
+export interface ServerView {
+  serverId: string;
+  /** The caller's relation to it. */
+  role: ServerRole;
+  game: GameId;
+  region: string;
+  version: string;
+  status: ServerStatus;
+  statusMessage?: string; // why it's FAILED
+  /** Where players connect: the public IP, while it runs. */
+  address?: string;
+  /** The game inside: starting, ready, … (while it runs). */
+  gameState?: AgentState;
+  idleStopMinutes: number; // 0 = never
+  stopReason?: string;
+  lastStartedAt?: string;
+  lastStoppedAt?: string;
+  lastBackupAt?: string;
+  /** A restore will replace the game data on the next start. */
+  restorePending: boolean;
+  createdAt?: string;
+  destroyedAt?: string;
 }

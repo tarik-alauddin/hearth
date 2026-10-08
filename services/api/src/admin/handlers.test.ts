@@ -1,6 +1,7 @@
 import type { APIGatewayProxyEventV2WithIAMAuthorizer } from 'aws-lambda';
 import { describe, expect, it } from 'vitest';
 import type { ServerOperationResult } from '@hearth/shared';
+import type { Actor } from '../authz.js';
 import { OperationError, type serverOperations } from '../servers/operations.js';
 import { uploadOperations } from '../uploads.js';
 import { adminHandler } from './handlers.js';
@@ -29,44 +30,57 @@ function fakeOperations(): { calls: string[]; ops: ReturnType<typeof serverOpera
     status: 'STARTING',
     ...(unchanged ? { unchanged } : {}),
   });
+  // Every /admin call must reach the operations as an admin actor: the caller's IAM identity.
+  const asAdmin = (actor: Actor) => {
+    if (actor.kind !== 'admin') throw new Error(`expected an admin actor, got ${actor.kind}`);
+    return actor.id;
+  };
   const ops = {
-    getServer: async (id: string) => {
+    getServer: async (actor: Actor, id: string) => {
+      asAdmin(actor);
       if (id === 'missing') throw new OperationError(404, 'No server missing');
       calls.push(`get ${id}`);
-      return { serverId: id };
+      return { server: { serverId: id }, relation: 'admin' };
     },
-    listServers: async (limit?: string, cursor?: string) => {
+    listServers: async (actor: Actor, limit?: string, cursor?: string) => {
+      asAdmin(actor);
       calls.push(`list ${limit} ${cursor}`);
       return { servers: [{ serverId: 's1' }] };
     },
-    createServer: async (body: unknown, owner: string) => {
-      calls.push(`create ${JSON.stringify(body)} ${owner}`);
+    createServer: async (actor: Actor, body: unknown) => {
+      calls.push(`create ${JSON.stringify(body)} ${asAdmin(actor)}`);
       return result('new');
     },
-    updateSettings: async (id: string, body: unknown) => {
+    updateSettings: async (actor: Actor, id: string, body: unknown) => {
+      asAdmin(actor);
       calls.push(`settings ${id} ${JSON.stringify(body)}`);
       return { serverId: id, agentChannel: 'canary' };
     },
-    startServer: async (id: string) => result(id, id === 'running'),
-    stopServer: async (id: string) => result(id),
-    destroyServer: async (id: string) => {
+    startServer: async (actor: Actor, id: string) => (asAdmin(actor), result(id, id === 'running')),
+    stopServer: async (actor: Actor, id: string) => (asAdmin(actor), result(id)),
+    destroyServer: async (actor: Actor, id: string) => {
+      asAdmin(actor);
       if (id === 'running') throw new OperationError(409, 'Server running is RUNNING; stop it before destroying it');
       calls.push(`destroy ${id}`);
       return { serverId: id, status: 'DESTROYING', ...(id === 'destroying' ? { unchanged: true } : {}) };
     },
-    listBackups: async (id: string) => {
+    listBackups: async (actor: Actor, id: string) => {
+      asAdmin(actor);
       if (id === 'missing') throw new OperationError(404, 'No server missing');
       return { backups: BACKUPS };
     },
-    requestRestore: async (id: string, body: unknown) => {
+    requestRestore: async (actor: Actor, id: string, body: unknown) => {
+      asAdmin(actor);
       calls.push(`restore ${id} ${JSON.stringify(body)}`);
       return { serverId: id, restoreKey: BACKUPS[0]!.key };
     },
-    setVersion: async (id: string, body: unknown) => {
+    setVersion: async (actor: Actor, id: string, body: unknown) => {
+      asAdmin(actor);
       calls.push(`version ${id} ${JSON.stringify(body)}`);
       return { serverId: id, version: '26.3' };
     },
-    cancelRestore: async (id: string) => {
+    cancelRestore: async (actor: Actor, id: string) => {
+      asAdmin(actor);
       calls.push(`cancel restore ${id}`);
       return { serverId: id };
     },

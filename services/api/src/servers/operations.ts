@@ -1,4 +1,4 @@
-import { InvalidCursor, newId as defaultNewId, type ServersStore, type Transition } from '@hearth/core';
+import { InvalidCursor, newId as defaultNewId, type AccessStore, type ServersStore, type Transition } from '@hearth/core';
 import {
   AGENT_CHANNELS,
   DEFAULT_AGENT_CHANNEL,
@@ -13,17 +13,20 @@ import {
   type ListServersResponse,
   type RestoreRequest,
   type ServerOperationResult,
+  type ServerAction,
   type ServerRecord,
   type ServerStatus,
   type SetVersionRequest,
   type UpdateSettingsRequest,
 } from '@hearth/shared';
+import { actorId, requireAdmin, serverAuthorizer, type Actor, type Relation } from '../authz.js';
 import type { BackupStorage } from '../backups.js';
 import type { UploadStorage } from '../uploads.js';
 import type { GameVersions } from './versions.js';
 
-// The one implementation of create, start and stop. The admin routes use it now; the UI and
-// Discord bot routes will call the same functions, so every caller behaves the same.
+// The one implementation of every server operation. The admin routes use it now; the UI and
+// Discord bot routes will call the same functions, so every caller behaves the same. Each takes
+// the actor first and checks it (`authorize`) before reading or changing anything.
 
 export type WorkflowName = 'create' | 'start' | 'stop' | 'destroy';
 
@@ -44,6 +47,8 @@ export class OperationError extends Error {
 
 export interface OperationDeps {
   store: Pick<ServersStore, 'getServer' | 'listServers' | 'createServer' | 'transition' | 'updateSettings'>;
+  /** Users' access to servers. Only routes for signed-in users (/v1) need it; others have no user callers. */
+  access?: Pick<AccessStore, 'getAccess'>;
   workflows: Workflows;
   backups: Pick<BackupStorage, 'list'>;
   uploads: Pick<UploadStorage, 'status' | 'accepted'>;
@@ -61,6 +66,7 @@ const MAX_PAGE = 100;
 
 export function serverOperations({
   store,
+  access,
   workflows,
   backups,
   uploads,
@@ -70,10 +76,18 @@ export function serverOperations({
   now = () => new Date(),
   newId = defaultNewId,
 }: OperationDeps) {
+  const authorize = serverAuthorizer(access);
+
   async function requireServer(serverId: string): Promise<ServerRecord> {
     const server = await store.getServer(serverId);
     if (!server) throw new OperationError(404, `No server ${serverId}`);
     return server;
+  }
+
+  /** Checks the actor may do `action` to the server, then reads it (404 either way if not). */
+  async function serverFor(actor: Actor, action: ServerAction, serverId: string): Promise<ServerRecord> {
+    await authorize(actor, action, serverId);
+    return requireServer(serverId);
   }
 
   /**
@@ -129,10 +143,18 @@ export function serverOperations({
   }
 
   return {
-    getServer: requireServer,
+    /** The server, and what the caller is to it (for shaping the response). */
+    async getServer(actor: Actor, serverId: string): Promise<{ server: ServerRecord; relation: Relation }> {
+      const relation = await authorize(actor, 'view', serverId);
+      return { server: await requireServer(serverId), relation };
+    },
 
-    /** One page of servers: `limit` 1–100 (default 50), `cursor` from the previous page; destroyed ones only with `all`. */
-    async listServers(limit: string | undefined, cursor: string | undefined, all = false): Promise<ListServersResponse> {
+    /**
+     * Admins: one page of every server: `limit` 1–100 (default 50), `cursor` from the previous
+     * page; destroyed ones only with `all`. (A user's own list comes from their access, with /v1.)
+     */
+    async listServers(actor: Actor, limit: string | undefined, cursor: string | undefined, all = false): Promise<ListServersResponse> {
+      requireAdmin(actor);
       const size = limit === undefined ? DEFAULT_PAGE : Number(limit);
       if (!Number.isInteger(size) || size < 1 || size > MAX_PAGE) throw new OperationError(400, `limit must be 1–${MAX_PAGE}`);
       try {
@@ -143,8 +165,14 @@ export function serverOperations({
       }
     },
 
-    /** Records a new server (PROVISIONING) and runs the create workflow, which also starts it. */
-    async createServer(request: unknown, ownerId: string): Promise<ServerOperationResult> {
+    /**
+     * Records a new server (PROVISIONING), owned by the actor, and runs the create workflow, which
+     * also starts it. Admins only for now: users create through /v1, which adds the approval and
+     * server-cap checks and records the owner's access with the server.
+     */
+    async createServer(actor: Actor, request: unknown): Promise<ServerOperationResult> {
+      requireAdmin(actor);
+      const ownerId = actorId(actor);
       const { game, version, region = homeRegion, agentChannel = DEFAULT_AGENT_CHANNEL, upload } = validateCreate(request);
       if (!gameRegions.includes(region)) throw new OperationError(400, `No game infrastructure in ${region}`);
       if (upload !== undefined) await requireAccepted(upload, game);
@@ -180,8 +208,8 @@ export function serverOperations({
     },
 
     /** STOPPED or FAILED → STARTING. A server whose create failed before launch is created again. */
-    async startServer(serverId: string): Promise<ServerOperationResult> {
-      const server = await requireServer(serverId);
+    async startServer(actor: Actor, serverId: string): Promise<ServerOperationResult> {
+      const server = await serverFor(actor, 'start', serverId);
       if (['RUNNING', 'STARTING', 'PROVISIONING'].includes(server.status)) {
         return { serverId, status: server.status, unchanged: true };
       }
@@ -195,9 +223,11 @@ export function serverOperations({
     },
 
     /** Changes settings; they apply from the server's next start. */
-    async updateSettings(serverId: string, request: unknown): Promise<ServerRecord> {
+    async updateSettings(actor: Actor, serverId: string, request: unknown): Promise<ServerRecord> {
       const settings = validateSettings(request);
-      if ((await requireServer(serverId)).status === 'DESTROYED') {
+      // Which agent releases a server follows is an admin's call: it's how releases are tried out.
+      if (settings.agentChannel !== undefined) requireAdmin(actor);
+      if ((await serverFor(actor, 'settings', serverId)).status === 'DESTROYED') {
         throw new OperationError(409, `Server ${serverId} is DESTROYED; its settings can't change`);
       }
       if (!(await store.updateSettings(serverId, settings))) throw new OperationError(404, `No server ${serverId}`);
@@ -205,8 +235,8 @@ export function serverOperations({
     },
 
     /** RUNNING or FAILED (with an instance) → STOPPING. */
-    async stopServer(serverId: string): Promise<ServerOperationResult> {
-      const server = await requireServer(serverId);
+    async stopServer(actor: Actor, serverId: string): Promise<ServerOperationResult> {
+      const server = await serverFor(actor, 'stop', serverId);
       if (server.status === 'STOPPED' || server.status === 'STOPPING') {
         return { serverId, status: server.status, unchanged: true };
       }
@@ -221,8 +251,8 @@ export function serverOperations({
      * removes its instance, data volume and record. Its backups are kept. Never a running server:
      * stopping it first also saves and backs it up.
      */
-    async destroyServer(serverId: string): Promise<ServerOperationResult> {
-      const server = await requireServer(serverId);
+    async destroyServer(actor: Actor, serverId: string): Promise<ServerOperationResult> {
+      const server = await serverFor(actor, 'destroy', serverId);
       if (server.status === 'DESTROYING' || server.status === 'DESTROYED') return { serverId, status: server.status, unchanged: true };
       const instanceUp = server.instanceState === 'running' || server.instanceState === 'pending';
       if (server.status === 'STOPPED' || (server.status === 'FAILED' && !instanceUp)) {
@@ -233,11 +263,13 @@ export function serverOperations({
     },
 
     /**
-     * The agent on `instanceId` found nobody playing for `idleMinutes`: RUNNING → STOPPING, through
-     * the same stop workflow (so the game is still saved and backed up), recording why.
+     * The agent found nobody playing for `idleMinutes`: RUNNING → STOPPING, through the same stop
+     * workflow (so the game is still saved and backed up), recording why. The agent may only stop
+     * its own server.
      */
-    async idleStop(serverId: string, instanceId: string, idleMinutes: number): Promise<ServerOperationResult> {
-      const server = await requireServer(serverId);
+    async idleStop(agent: Extract<Actor, { kind: 'agent' }>, idleMinutes: number): Promise<ServerOperationResult> {
+      const { serverId, instanceId } = agent;
+      const server = await serverFor(agent, 'stop', serverId);
       if (server.instanceId !== instanceId) {
         throw new OperationError(409, `Server ${serverId} is no longer on instance ${instanceId}`);
       }
@@ -256,9 +288,9 @@ export function serverOperations({
      * the game converts its data on load, and older versions can't read it back. Needs a clean
      * last stop with a backup since the server last ran, so the data before the upgrade is kept.
      */
-    async setVersion(serverId: string, request: unknown): Promise<ServerRecord> {
+    async setVersion(actor: Actor, serverId: string, request: unknown): Promise<ServerRecord> {
       const { version } = validateSetVersion(request);
-      const server = await requireServer(serverId);
+      const server = await serverFor(actor, 'version', serverId);
       if (server.version === version) return server;
       if (server.status !== 'STOPPED') {
         throw new OperationError(409, `Server ${serverId} is ${server.status}; stop it before changing its version`);
@@ -298,8 +330,8 @@ export function serverOperations({
     },
 
     /** The server's backups, newest first. */
-    async listBackups(serverId: string): Promise<ListBackupsResponse> {
-      await requireServer(serverId); // 404 for an unknown server, not an empty list
+    async listBackups(actor: Actor, serverId: string): Promise<ListBackupsResponse> {
+      await serverFor(actor, 'backups', serverId); // 404 for an unknown server, not an empty list
       return { backups: await backups.list(serverId) };
     },
 
@@ -308,9 +340,9 @@ export function serverOperations({
      * stopped (see `restorable`), and not after an unclean stop unless forced: that data may be in
      * no backup.
      */
-    async requestRestore(serverId: string, request: unknown): Promise<ServerRecord> {
+    async requestRestore(actor: Actor, serverId: string, request: unknown): Promise<ServerRecord> {
       const { key, force } = validateRestore(request);
-      const server = await requireServer(serverId);
+      const server = await serverFor(actor, 'restore', serverId);
       if (!restorable(server)) {
         throw new OperationError(409, `Server ${serverId} is ${server.status}; stop it before restoring`);
       }
@@ -337,8 +369,8 @@ export function serverOperations({
     },
 
     /** Clears a requested restore. Only while stopped: once starting, the restore may be under way. */
-    async cancelRestore(serverId: string): Promise<ServerRecord> {
-      const server = await requireServer(serverId);
+    async cancelRestore(actor: Actor, serverId: string): Promise<ServerRecord> {
+      const server = await serverFor(actor, 'restore', serverId);
       if (!server.restoreKey) return server;
       if (!restorable(server)) {
         throw new OperationError(409, `Server ${serverId} is ${server.status}; the restore can't be cancelled now`);

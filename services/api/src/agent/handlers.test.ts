@@ -82,7 +82,7 @@ describe('agent handlers', () => {
   let handlers: ReturnType<typeof agentHandlers>;
   const idleStops: string[] = [];
   const operations: AgentHandlerDeps['operations'] = {
-    idleStop: async (serverId, instanceId, minutes) => {
+    idleStop: async ({ serverId, instanceId }, minutes) => {
       if (serverId === 'stopped') return { serverId, status: 'STOPPED', unchanged: true };
       if (serverId === 'starting') throw new OperationError(409, 'Server starting is STARTING');
       idleStops.push(`${serverId} ${instanceId} ${minutes}`);
