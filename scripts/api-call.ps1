@@ -69,6 +69,12 @@ $request = @{
   UseBasicParsing = $true
 }
 if ($Body) {
+  # Windows PowerShell strips the double quotes from arguments passed to another process (e.g.
+  # `powershell -File api-call.ps1 -Body '{"a":1}'` receives {a:1}). Catch that here, not as a 400.
+  # (Not with ConvertFrom-Json: Windows PowerShell's accepts unquoted keys; the API doesn't.)
+  if ($Body -match '^\s*\{\s*[^"\s}]') {
+    throw "-Body has a key without quotes: $Body`nPowerShell probably stripped them: run this script in the same session (see docs/testing/user-api.md)."
+  }
   $request.Body = $Body
   $request.ContentType = 'application/json'
 }
