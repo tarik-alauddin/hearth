@@ -74,6 +74,92 @@ describe('DataStack', () => {
     });
   });
 
+  describe('accounts and access tables', () => {
+    const tables = (template: Template) => template.findResources('AWS::DynamoDB::GlobalTable') as Record<
+      string,
+      { DeletionPolicy: string; Properties: { TableName: string; Replicas: { DeletionProtectionEnabled: boolean; PointInTimeRecoverySpecification: unknown }[] } }
+    >;
+
+    it('Servers has a byOwner index on ownerId + createdAt, projecting status for the cap count', () => {
+      dev.template.hasResourceProperties('AWS::DynamoDB::GlobalTable', {
+        TableName: 'hearth-dev-Servers',
+        GlobalSecondaryIndexes: Match.arrayWith([
+          {
+            IndexName: 'byOwner',
+            KeySchema: [
+              { AttributeName: 'ownerId', KeyType: 'HASH' },
+              { AttributeName: 'createdAt', KeyType: 'RANGE' },
+            ],
+            Projection: { ProjectionType: 'INCLUDE', NonKeyAttributes: ['status'] },
+          },
+        ]),
+      });
+    });
+
+    it('Users is keyed by the Cognito sub', () => {
+      dev.template.hasResourceProperties('AWS::DynamoDB::GlobalTable', {
+        TableName: 'hearth-dev-Users',
+        KeySchema: [{ AttributeName: 'userId', KeyType: 'HASH' }],
+        BillingMode: 'PAY_PER_REQUEST',
+      });
+    });
+
+    it('ServerAccess is keyed by user + server, with a byServer index for a server’s people', () => {
+      dev.template.hasResourceProperties('AWS::DynamoDB::GlobalTable', {
+        TableName: 'hearth-dev-ServerAccess',
+        KeySchema: [
+          { AttributeName: 'userId', KeyType: 'HASH' },
+          { AttributeName: 'serverId', KeyType: 'RANGE' },
+        ],
+        GlobalSecondaryIndexes: [
+          Match.objectLike({
+            IndexName: 'byServer',
+            KeySchema: [
+              { AttributeName: 'serverId', KeyType: 'HASH' },
+              { AttributeName: 'userId', KeyType: 'RANGE' },
+            ],
+            Projection: { ProjectionType: 'ALL' },
+          }),
+        ],
+      });
+    });
+
+    it('Invites is keyed by code, expires through TTL, with a byServer index newest first', () => {
+      dev.template.hasResourceProperties('AWS::DynamoDB::GlobalTable', {
+        TableName: 'hearth-dev-Invites',
+        KeySchema: [{ AttributeName: 'code', KeyType: 'HASH' }],
+        TimeToLiveSpecification: { AttributeName: 'expiresAtEpoch', Enabled: true },
+        GlobalSecondaryIndexes: [
+          Match.objectLike({
+            IndexName: 'byServer',
+            KeySchema: [
+              { AttributeName: 'serverId', KeyType: 'HASH' },
+              { AttributeName: 'createdAt', KeyType: 'RANGE' },
+            ],
+          }),
+        ],
+      });
+    });
+
+    it('every table has point-in-time recovery, and is retained and protected in prod only', () => {
+      for (const table of Object.values(tables(prod.template))) {
+        expect(table.DeletionPolicy).toBe('Retain');
+        expect(table.Properties.Replicas[0]?.DeletionProtectionEnabled).toBe(true);
+        expect(table.Properties.Replicas[0]?.PointInTimeRecoverySpecification).toEqual({ PointInTimeRecoveryEnabled: true });
+      }
+      for (const table of Object.values(tables(dev.template))) {
+        expect(table.DeletionPolicy).toBe('Delete');
+        expect(table.Properties.Replicas[0]?.DeletionProtectionEnabled).toBe(false);
+      }
+      expect(Object.values(tables(dev.template)).map((t) => t.Properties.TableName).sort()).toEqual([
+        'hearth-dev-Invites',
+        'hearth-dev-ServerAccess',
+        'hearth-dev-Servers',
+        'hearth-dev-Users',
+      ]);
+    });
+  });
+
   describe('backup bucket', () => {
     it('blocks public access, encrypts, and is versioned', () => {
       dev.template.hasResourceProperties('AWS::S3::Bucket', {
