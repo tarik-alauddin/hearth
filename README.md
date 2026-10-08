@@ -79,6 +79,17 @@ condition. The repo was created after GitHub switched new repos to ID-based subj
    (takes up to 24 hours to apply).
 4. After each environment's first deploy, accept the SNS confirmation email for `hearth-<env>-alerts`;
    alarms aren't delivered until then.
+5. Create your own sign-in user in each environment's user pool, in the `admin` group:
+   [docs/testing/sign-in.md](docs/testing/sign-in.md), steps 1–2. There is no self sign-up; password
+   users are only the ones you create (MFA optional for now).
+
+## Sign-in
+
+Each environment has a Cognito user pool (AuthStack) with managed login pages on its Cognito domain
+(`hearth-<env>-<account>`; a custom domain later). Clients find the pool, domain and client IDs in
+one SSM parameter, `/hearth/<env>/auth`. The CLI signs in through a loopback callback
+(`http://localhost:8976/callback`); the web client exists where the environment lists web origins
+(dev: Vite on `http://localhost:5173`). Members of the `admin` group are Hearth admins.
 
 ## Agents
 

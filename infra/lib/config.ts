@@ -20,7 +20,15 @@ export interface EnvConfig {
   readonly isProd: boolean;
   /** Run the fleet check every 15 minutes. Elsewhere it only runs when invoked by hand. */
   readonly fleetCheckScheduled: boolean;
+  /**
+   * Origins the web app signs in from (callback `<origin>/auth/callback`, sign-out back to the
+   * origin). Empty = no web sign-in client yet. The deployed site's origin joins these in M10.
+   */
+  readonly webOrigins: readonly string[];
 }
+
+/** The CLI's sign-in callback: a fixed loopback port, as Cognito matches callback URLs exactly. */
+export const CLI_CALLBACK_URL = 'http://localhost:8976/callback';
 
 // Qualifiers are at most 10 alphanumeric characters.
 const QUALIFIERS: Record<EnvName, string> = {
@@ -38,6 +46,8 @@ export function envConfig(env: EnvName): EnvConfig {
     qualifier: QUALIFIERS[env],
     isProd: env === 'prod',
     fleetCheckScheduled: env === 'prod',
+    // Vite's dev server, for building the UI against dev.
+    webOrigins: env === 'dev' ? ['http://localhost:5173'] : [],
   };
 }
 
