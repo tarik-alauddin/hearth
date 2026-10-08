@@ -68,10 +68,16 @@ function operation(route: ApiRoute): Json {
   for (const [status, r] of Object.entries(route.responses)) responses[status] = response(r);
   // The answers every route can give.
   if (route.body || route.query) responses['400'] ??= { description: 'The request is malformed (the message says how)', ...ERROR };
-  responses['403'] ??= {
-    description: route.caller.kind === 'agent' ? 'The caller is not a game instance' : 'The caller may not do this',
-    ...ERROR,
-  };
+  if (route.caller.kind === 'user') {
+    // API Gateway's own answer, before Hearth sees the request.
+    responses['401'] ??= { description: 'No ID token, or an invalid or expired one: sign in again', ...ERROR };
+  }
+  if (route.caller.kind !== 'user' || route.caller.action) {
+    responses['403'] ??= {
+      description: route.caller.kind === 'agent' ? 'The caller is not a game instance' : 'The caller may not do this',
+      ...ERROR,
+    };
+  }
   if (pathParams.length) responses['404'] ??= { description: 'No such server (or none the caller can reach)', ...ERROR };
   if (route.caller.kind === 'agent') responses['404'] ??= { description: 'No server is assigned to this instance', ...ERROR };
 
@@ -81,7 +87,7 @@ function operation(route: ApiRoute): Json {
     ...(route.description ? { description: route.description } : {}),
     tags: [route.caller.kind],
     security: [route.caller.kind === 'user' ? { cognito: [] } : { awsSigV4: [] }],
-    ...(route.caller.kind === 'user' ? { 'x-hearth-permission': route.caller.action } : {}),
+    ...(route.caller.kind === 'user' && route.caller.action ? { 'x-hearth-permission': route.caller.action } : {}),
     ...(parameters.length ? { parameters } : {}),
     ...(route.body ? { requestBody: { required: true, content: { 'application/json': { schema: schemaRef(route.body) } } } } : {}),
     responses: Object.fromEntries(Object.entries(responses).sort(([a], [b]) => a.localeCompare(b))),
@@ -116,12 +122,21 @@ export function buildOpenApiDocument(routes: readonly ApiRoute[] = API_ROUTES): 
       },
     ],
     tags: [
+      { name: 'user', description: 'Signed-in users (the web app): themselves, and the servers they own or are members of' },
       { name: 'admin', description: 'Hearth admins (the hearth CLI): every server, uploads' },
       { name: 'agent', description: "Game instances' agents, about their own server" },
     ],
     paths: Object.fromEntries(Object.entries(paths).sort(([a], [b]) => a.localeCompare(b))),
     components: {
       securitySchemes: {
+        cognito: {
+          type: 'http',
+          scheme: 'bearer',
+          bearerFormat: 'JWT',
+          description:
+            "The ID token from signing in through the environment's Cognito user pool (SSM /hearth/<env>/auth). " +
+            'It names the user and their profile; API Gateway checks it before the request reaches Hearth.',
+        },
         awsSigV4: {
           type: 'apiKey',
           in: 'header',

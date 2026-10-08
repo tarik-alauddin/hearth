@@ -183,6 +183,26 @@ export const BackupSummarySchema = named(
 
 export const ListBackupsResponseSchema = named(z.object({ backups: z.array(BackupSummarySchema) }), 'ListBackupsResponse', 'Newest first.');
 
+// The signed-in user.
+
+export const MeResponseSchema = named(
+  z.object({
+    userId: z.string().describe("The Cognito user's sub"),
+    admin: z.boolean().describe('In the admin group: may act on every server'),
+    approved: z.boolean().describe('May create servers (new users wait for an admin)'),
+    serverLimit: z.number().int().describe('Servers they may own at once'),
+    provider: z.string().optional().describe('How they signed in: Google, Discord, or Cognito (a password)'),
+    email: z.string().optional(),
+    name: z.string().optional().describe('From Google'),
+    username: z.string().optional().describe('From Discord'),
+    displayName: z.string().optional().describe('From Discord'),
+    picture: z.string().optional().describe('Avatar URL'),
+    createdAt: isoTime('First seen'),
+  }),
+  'MeResponse',
+  'Who the caller is, as Hearth knows them.',
+);
+
 // Uploads.
 
 export const CreateUploadRequestSchema = named(z.strictObject({ game: GameIdSchema }), 'CreateUploadRequest');
@@ -295,3 +315,4 @@ export type BackupDoneReport = z.infer<typeof BackupDoneReportSchema>;
 export type RestoreDoneReport = z.infer<typeof RestoreDoneReportSchema>;
 export type IdleReport = z.infer<typeof IdleReportSchema>;
 export type ErrorResponse = z.infer<typeof ErrorResponseSchema>;
+export type MeResponse = z.infer<typeof MeResponseSchema>;

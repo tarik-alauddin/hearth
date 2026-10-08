@@ -59,7 +59,7 @@ as part of each PR. The repo layout and commands are in [README.md](README.md).
 | M7 Move your world | Done (PR1–PR4; tested on dev with a real world) |
 | Before Phase 2 | Done: M7 docs, neutral wording, destroy (records kept as `DESTROYED`), state-sync tweak, stage and prod live with the release flow (details under Decisions) |
 | **Phase 1** | **Complete** (2026-10-07): dev, stage and prod run `v2026.10.07-3461efe`, agent `2026.10.06-de42566` |
-| M8 Accounts and access | In progress: PR1a–PR1c done (sign-in with password, Google, Discord, tested on dev); PR2 (access data) and PR3 (authorization) done; PR4 (API contract) in review |
+| M8 Accounts and access | In progress: PR1a–PR1c done (sign-in with password, Google, Discord, tested on dev); PR2–PR4 done (access data, authorization, API contract); PR5a (`/v1/me`) in review |
 | M9 Game version catalog | Planned (Deferred's plan, V1–V4) |
 | M10 Web UI | Planned |
 
@@ -122,7 +122,7 @@ the CLI signs in the same way; backend only):
   - Tests: the full role × action matrix spelled out (changing a rule must change the test),
     404/403 wording, no access reads for admins and agents, shaping, and operations refusing a
     member the owner's actions before changing anything.
-- PR4 API contract, in review. A refactor: the deployed routes, integrations and IAM are
+- PR4 API contract, done. A refactor: the deployed routes, integrations and IAM are
   identical (checked against the previous synth); only Lambda code changes.
   - `packages/shared/src/api` (imported as `@hearth/shared/api`): `schemas.ts` (Zod 4.6: every
     request and response body, named in a registry; the types keep their names, re-exported
@@ -144,9 +144,24 @@ the CLI signs in the same way; backend only):
     now about 250 KB (the code was 41–45 KB; Zod adds about 130 KB unminified, ~80 KB minified).
     `zod/mini` would be 13 KB but means rewriting the schemas in its functional style.
   - Hosted docs come with M10: on in dev and stage, off in prod (see Decisions).
-- PR5 `/v1` server routes: the JWT authorizer, a User λ, `GET /v1/me`, the server routes; create
-  checks approval and the cap; admin routes to approve a user (by email) and set agent channels;
-  API Gateway throttling on `/v1` (caps abuse and cost).
+- PR5 `/v1`, split in five (PR4 was too big; keep each to one concern):
+  - 5a, in review: `GET /v1/me`. API Gateway's JWT authorizer (`HttpUserPoolAuthorizer`
+    `hearth-<env>-cognito`: AuthStack's pool and clients, passed in; AuthStack is now built before
+    ApiStack) on `/v1` routes, IAM on the rest. Clients send the **ID token** (it carries the
+    profile and groups; access tokens are refused with 401). The `User` λ
+    (`services/api/src/user`): `callerFromClaims` (admin = `admin` group; provider from the
+    `<Provider>_` username prefix; `cognito:groups` arrives as an array or a flattened `[a b]`
+    string) and `/v1/me` (`recordSignIn`: first sight creates the user unapproved). It may only
+    GetItem/UpdateItem the Users table. `scripts/api-call.ps1` calls any `/v1` route with a saved
+    session (`~/.hearth/script-session-<env>.json`, refreshed as needed); the sign-in steps moved to
+    `scripts/lib/hearth-auth.ps1`, shared with `sign-in-check.ps1`. Guide: `docs/testing/user-api.md`.
+  - 5b: admins approve users, **by user ID** (one person with several sign-ins is several users,
+    each approved; the M10 admin page lists pending users with names).
+  - 5c: `GET /v1/servers` (theirs, through ServerAccess) and `/v1/servers/{id}`, shaped by role;
+    throttling for `/v1` (the stage already throttles 50/s, burst 100).
+  - 5d: create: approval, the cap, the server and its owner row in one transaction.
+  - 5e: start and stop (owners and members), then the owners' actions (split if it grows).
+  - Admin agent channels and `/v1` uploads follow as their own small PRs.
 - PR6 Invites and members: create, list, revoke, accept; list and remove members, leave.
 - PR7 CLI on Cognito: `hearth login` (browser sign-in, session in `~/.hearth`), every command on `/v1`.
 - PR8 Remove `/admin` routes, their handler and permissions.

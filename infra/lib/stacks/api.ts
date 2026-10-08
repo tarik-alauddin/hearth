@@ -2,7 +2,8 @@ import { Duration, RemovalPolicy, Size, Validations } from 'aws-cdk-lib';
 import { Rule } from 'aws-cdk-lib/aws-events';
 import { LambdaFunction } from 'aws-cdk-lib/aws-events-targets';
 import { HttpApi, HttpMethod, HttpStage, LogGroupLogDestination } from 'aws-cdk-lib/aws-apigatewayv2';
-import { HttpIamAuthorizer } from 'aws-cdk-lib/aws-apigatewayv2-authorizers';
+import { HttpIamAuthorizer, HttpUserPoolAuthorizer } from 'aws-cdk-lib/aws-apigatewayv2-authorizers';
+import type { IUserPool, IUserPoolClient } from 'aws-cdk-lib/aws-cognito';
 import { HttpLambdaIntegration } from 'aws-cdk-lib/aws-apigatewayv2-integrations';
 import type { ITableV2 } from 'aws-cdk-lib/aws-dynamodb';
 import { Policy, PolicyStatement, Role, type IRole } from 'aws-cdk-lib/aws-iam';
@@ -26,6 +27,10 @@ import { HearthStack, type HearthStackProps } from '../hearth-stack.js';
 
 export interface ApiStackProps extends HearthStackProps {
   readonly serversTable: ITableV2;
+  readonly usersTable: ITableV2;
+  /** AuthStack's user pool and clients: /v1 routes take ID tokens they issue. */
+  readonly userPool: IUserPool;
+  readonly userPoolClients: readonly IUserPoolClient[];
   /** Game instance roles, one per game region; they may call the agent routes. */
   readonly instanceRoles: readonly IRole[];
   /** The lifecycle workflows the server operations start. */
@@ -33,7 +38,7 @@ export interface ApiStackProps extends HearthStackProps {
   readonly gameRegions: readonly string[];
 }
 
-/** The HTTP API: agent and admin routes (IAM) now; user (Cognito), bot and usage routes later. */
+/** The HTTP API: user routes (Cognito), admin and agent routes (IAM); bot and usage routes later. */
 export class ApiStack extends HearthStack {
   readonly api: HttpApi;
   /** SSM parameter agents read at boot to find the API. */
@@ -240,6 +245,18 @@ export class ApiStack extends HearthStack {
         resources: Object.values(props.workflows).map((machine) => machine.stateMachineArn),
       }),
     );
+    // User routes (/v1): signed-in users, through the web app and later the CLI. For now it only
+    // records who they are (the Users table); server routes join it with M8 PR5c–e.
+    const user = hearthFunction(this, 'User', {
+      config: props.config,
+      entry: 'api/src/user/lambda.ts',
+      handler: 'handler',
+      environment: { USERS_TABLE: props.usersTable.tableName },
+    });
+    user.addToRolePolicy(
+      new PolicyStatement({ actions: ['dynamodb:GetItem', 'dynamodb:UpdateItem'], resources: [props.usersTable.tableArn] }),
+    );
+
     // Every route comes from the shared route list (packages/shared/src/api/routes.ts), which also
     // generates the API's documentation: no route exists without its entry there.
     const handlers: Record<RouteHandler, NodejsFunction> = {
@@ -250,6 +267,7 @@ export class ApiStack extends HearthStack {
       agentRestored: restoredFunction,
       agentIdle: idleFunction,
       admin,
+      user,
     };
     this.functions = [...Object.values(handlers), repack];
     const integrations = new Map<NodejsFunction, HttpLambdaIntegration>();
@@ -259,14 +277,19 @@ export class ApiStack extends HearthStack {
       return i;
     };
     // Admins sign with their own AWS credentials, agents with their instance role.
-    const authorizer = new HttpIamAuthorizer();
+    const iamAuthorizer = new HttpIamAuthorizer();
+    // Users send the ID token from signing in. API Gateway checks its signature, issuer, expiry and
+    // that one of Hearth's clients asked for it, before the request reaches the Lambda.
+    const userAuthorizer = new HttpUserPoolAuthorizer('Cognito', props.userPool, {
+      userPoolClients: [...props.userPoolClients],
+      authorizerName: `hearth-${env}-cognito`,
+    });
     for (const route of API_ROUTES) {
-      if (route.caller.kind === 'user') throw new Error(`${route.id}: routes for signed-in users need the Cognito authorizer`);
       this.api.addRoutes({
         path: route.path,
         methods: [HttpMethod[route.method]],
         integration: integration(handlers[route.handler]),
-        authorizer,
+        authorizer: route.caller.kind === 'user' ? userAuthorizer : iamAuthorizer,
       });
     }
     const agentRoutes = API_ROUTES.filter((route) => route.caller.kind === 'agent');

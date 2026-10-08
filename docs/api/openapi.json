@@ -19,6 +19,10 @@
   ],
   "tags": [
     {
+      "name": "user",
+      "description": "Signed-in users (the web app): themselves, and the servers they own or are members of"
+    },
+    {
       "name": "admin",
       "description": "Hearth admins (the hearth CLI): every server, uploads"
     },
@@ -1369,10 +1373,53 @@
           }
         }
       }
+    },
+    "/v1/me": {
+      "get": {
+        "operationId": "getMe",
+        "summary": "Who I am",
+        "description": "Also records the user on first sight (not yet approved) and refreshes their profile from the token.",
+        "tags": [
+          "user"
+        ],
+        "security": [
+          {
+            "cognito": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The caller",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MeResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No ID token, or an invalid or expired one: sign in again",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
     "securitySchemes": {
+      "cognito": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT",
+        "description": "The ID token from signing in through the environment's Cognito user pool (SSM /hearth/<env>/auth). It names the user and their profile; API Gateway checks it before the request reaches Hearth."
+      },
       "awsSigV4": {
         "type": "apiKey",
         "in": "header",
@@ -1726,6 +1773,64 @@
         },
         "required": [
           "servers"
+        ],
+        "additionalProperties": false
+      },
+      "MeResponse": {
+        "type": "object",
+        "properties": {
+          "userId": {
+            "type": "string",
+            "description": "The Cognito user's sub"
+          },
+          "admin": {
+            "type": "boolean",
+            "description": "In the admin group: may act on every server"
+          },
+          "approved": {
+            "type": "boolean",
+            "description": "May create servers (new users wait for an admin)"
+          },
+          "serverLimit": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991,
+            "description": "Servers they may own at once"
+          },
+          "provider": {
+            "description": "How they signed in: Google, Discord, or Cognito (a password)",
+            "type": "string"
+          },
+          "email": {
+            "type": "string"
+          },
+          "name": {
+            "description": "From Google",
+            "type": "string"
+          },
+          "username": {
+            "description": "From Discord",
+            "type": "string"
+          },
+          "displayName": {
+            "description": "From Discord",
+            "type": "string"
+          },
+          "picture": {
+            "description": "Avatar URL",
+            "type": "string"
+          },
+          "createdAt": {
+            "type": "string",
+            "description": "First seen (ISO 8601, UTC)"
+          }
+        },
+        "required": [
+          "userId",
+          "admin",
+          "approved",
+          "serverLimit",
+          "createdAt"
         ],
         "additionalProperties": false
       },

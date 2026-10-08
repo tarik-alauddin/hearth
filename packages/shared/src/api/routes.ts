@@ -12,6 +12,7 @@ import {
   ListBackupsResponseSchema,
   ListServersQuerySchema,
   ListServersResponseSchema,
+  MeResponseSchema,
   RestoreDoneReportSchema,
   RestoreRequestSchema,
   ServerOperationResultSchema,
@@ -26,6 +27,7 @@ import {
 
 /** The Lambda that serves a route (ApiStack maps each name to its function). */
 export type RouteHandler =
+  | 'user'
   | 'admin'
   | 'agentConfig'
   | 'agentStatus'
@@ -40,8 +42,11 @@ export type RouteCaller =
   | { kind: 'admin' }
   /** A game instance's agent (IAM, its instance role), about its own server. */
   | { kind: 'agent' }
-  /** A signed-in user (Cognito), allowed by their role on the server for this action. */
-  | { kind: 'user'; action: ServerAction };
+  /**
+   * A signed-in user (Cognito ID token). For a route about one server, `action` is what their role
+   * on it must allow (SERVER_PERMISSIONS); routes about the caller themselves have none.
+   */
+  | { kind: 'user'; action?: ServerAction };
 
 export type HttpMethod = 'GET' | 'POST' | 'PATCH' | 'DELETE';
 
@@ -77,6 +82,18 @@ const admin = { kind: 'admin' } as const;
 const agent = { kind: 'agent' } as const;
 
 export const API_ROUTES: readonly ApiRoute[] = [
+  // Routes for signed-in users (the web app; the CLI from M8 PR7).
+  {
+    id: 'getMe',
+    method: 'GET',
+    path: '/v1/me',
+    handler: 'user',
+    caller: { kind: 'user' },
+    summary: 'Who I am',
+    description: 'Also records the user on first sight (not yet approved) and refreshes their profile from the token.',
+    responses: { 200: { description: 'The caller', schema: MeResponseSchema } },
+  },
+
   // Admin routes (the hearth CLI).
   {
     id: 'adminListServers',
