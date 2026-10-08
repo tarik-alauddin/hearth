@@ -14,6 +14,9 @@ const noServers: UserHandlerDeps['serverOps'] = {
     throw new Error('not used');
   },
   listMyServers: async () => [],
+  createServer: async () => {
+    throw new Error('not used');
+  },
 };
 
 function event(
@@ -138,6 +141,11 @@ describe('user routes', () => {
         if (id !== 's1') throw new AccessDenied(404, `No server ${id}`);
         return { server: record, relation: actor.kind === 'admin' ? 'admin' : 'member' };
       },
+      createServer: async (actor, body) => {
+        calls.push(`create ${actor.kind} ${JSON.stringify(body)}`);
+        if ((body as { version?: string }).version === 'limit') throw new AccessDenied(403, 'You have 3 servers, your limit');
+        return { serverId: 'new', status: 'PROVISIONING' };
+      },
     };
     const handle = () => {
       const { store } = fakeUsers();
@@ -166,6 +174,18 @@ describe('user routes', () => {
       expect(JSON.parse(ok.body!)).toMatchObject({ serverId: 's1', role: 'member' });
       const missing = await handle()(event('GET /v1/servers/{id}', googleClaims, { id: 's2' }));
       expect(missing.statusCode).toBe(404);
+    });
+
+    it('creates a server as the caller, answering 202, or 403 with the reason', async () => {
+      calls.length = 0;
+      const created = await handle()(event('POST /v1/servers', googleClaims, { body: '{"game":"minecraft-java","version":"26.3"}' }));
+      expect(created.statusCode).toBe(202);
+      expect(JSON.parse(created.body!)).toEqual({ serverId: 'new', status: 'PROVISIONING' });
+      expect(calls).toEqual(['create user {"game":"minecraft-java","version":"26.3"}']);
+
+      const refused = await handle()(event('POST /v1/servers', googleClaims, { body: '{"game":"minecraft-java","version":"limit"}' }));
+      expect(refused.statusCode).toBe(403);
+      expect(JSON.parse(refused.body!).message).toMatch(/limit/);
     });
 
     it('answers admins with the same view, not the whole record', async () => {

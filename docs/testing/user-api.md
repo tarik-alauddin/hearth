@@ -88,3 +88,24 @@ admins can look at.
    `volumeId` or `lastBackupKey`.
 3. The same as a user outside `admin`: expect `404` ("No server …"), exactly as for an ID that
    doesn't exist (`api /v1/servers/01NOSUCHSERVER0000000000`).
+
+## 4. Create a server (`POST /v1/servers`)
+
+This launches a real server (a few cents an hour while it runs). Clean up at the end.
+
+1. As a user **not yet approved** (a sign-in you haven't approved, or take approval back as in
+   section 2): `api -Method POST /v1/servers -Body '{"game":"minecraft-java","version":"26.3"}'`.
+   Expect `403`, "until an admin approves your account".
+2. Approve that user (section 2), and create again: expect `202` with `serverId` and
+   `PROVISIONING`.
+3. `api /v1/servers`: the new server is listed with `role: owner`, and moves through
+   `PROVISIONING` and `STARTING` to `RUNNING` with an `address` within a few minutes.
+4. The limit: create until the user owns 3 servers that aren't destroyed (each starts, so stop
+   them as you go: `pnpm hearth stop <id>`); the 4th answers `403`, "your limit".
+5. `-Body '{"game":"minecraft-java","version":"26.3","agentChannel":"canary"}'` as that user:
+   `403` (agent channels are for admins). With an upload (`"upload":"…"`): `400`, uploads come
+   later.
+
+Clean up with the CLI (destroying through `/v1` comes next): `pnpm hearth stop <id>`, then
+`pnpm hearth destroy <id> --yes`, for each server you created. Destroyed servers stop counting
+toward the limit.

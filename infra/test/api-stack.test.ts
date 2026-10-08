@@ -67,10 +67,15 @@ describe('ApiStack', () => {
       expect(authorizer?.Properties.JwtConfiguration.Audience).toHaveLength(2); // the CLI's and (on dev) the web app's clients
     });
 
-    it('runs the user routes in their own Lambda: Users read and updated; Servers and ServerAccess only read', () => {
+    it('runs the user routes in their own Lambda, with only what reading and creating servers need', () => {
       template.hasResourceProperties('AWS::Lambda::Function', {
         Environment: {
-          Variables: Match.objectLike({ USERS_TABLE: Match.anyValue(), SERVERS_TABLE: Match.anyValue(), ACCESS_TABLE: Match.anyValue() }),
+          Variables: Match.objectLike({
+            USERS_TABLE: Match.anyValue(),
+            SERVERS_TABLE: Match.anyValue(),
+            ACCESS_TABLE: Match.anyValue(),
+            CREATE_WORKFLOW_ARN: Match.anyValue(),
+          }),
         },
       });
       const statements = policyStatements('UserServiceRoleDefaultPolicy') as { Action: string | string[]; Resource: unknown }[];
@@ -81,9 +86,15 @@ describe('ApiStack', () => {
           .filter((s) => new RegExp(`FnGetAtt${table}[0-9A-F]{8}`).test(JSON.stringify(s.Resource)))
           .map((s) => [s.Action].flat());
       expect(on('Users')).toEqual([['dynamodb:GetItem', 'dynamodb:UpdateItem']]);
-      expect(on('Servers')).toEqual([['dynamodb:GetItem']]);
-      expect(on('ServerAccess')).toEqual([['dynamodb:GetItem', 'dynamodb:Query']]);
-      expect(statements).toHaveLength(3);
+      // The table (create's transaction, a failed workflow's undo), then the byOwner index (the limit).
+      expect(on('Servers')).toEqual([['dynamodb:GetItem', 'dynamodb:PutItem', 'dynamodb:UpdateItem'], ['dynamodb:Query']]);
+      expect(JSON.stringify(statements.find((s) => s.Action === 'dynamodb:Query')?.Resource)).toContain('/index/byOwner');
+      expect(on('ServerAccess')).toEqual([['dynamodb:GetItem', 'dynamodb:PutItem', 'dynamodb:Query']]);
+      // Only the create workflow.
+      const workflows = statements.filter((s) => s.Action === 'states:StartExecution');
+      expect(workflows).toHaveLength(1);
+      expect(JSON.stringify(workflows[0]?.Resource)).toMatch(/WorkflowsCreateStateMachine/);
+      expect(statements).toHaveLength(5);
     });
   });
 

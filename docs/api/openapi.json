@@ -1560,6 +1560,71 @@
             }
           }
         }
+      },
+      "post": {
+        "operationId": "createServer",
+        "summary": "Create a server",
+        "description": "Records it (PROVISIONING), owned by the caller, and runs the create workflow, which also starts it. The caller must be approved and under their server limit (destroyed servers don't count); `agentChannel` is for admins. Creating from an upload comes with the /v1 uploads.",
+        "tags": [
+          "user"
+        ],
+        "security": [
+          {
+            "cognito": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateServerRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Created; the create workflow is running",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ServerOperationResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request is malformed (the message says how)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No ID token, or an invalid or expired one: sign in again",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not approved yet, at the server limit, or (not an admin) choosing an agent channel",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
       }
     },
     "/v1/servers/{id}": {
