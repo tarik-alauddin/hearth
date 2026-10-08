@@ -81,7 +81,6 @@ describe('AuthStack', () => {
         AllowedOAuthFlowsUserPoolClient: true,
         AllowedOAuthScopes: ['openid', 'email', 'profile'],
         CallbackURLs: [CLI_CALLBACK_URL],
-        SupportedIdentityProviders: ['COGNITO'],
         ExplicitAuthFlows: ['ALLOW_REFRESH_TOKEN_AUTH'],
         PreventUserExistenceErrors: 'ENABLED',
       });
@@ -97,10 +96,57 @@ describe('AuthStack', () => {
       prod.template.resourceCountIs('AWS::Cognito::UserPoolClient', 1);
     });
 
+    it('offers Google where it is on (dev), and only password sign-in elsewhere', () => {
+      dev.template.allResourcesProperties('AWS::Cognito::UserPoolClient', {
+        SupportedIdentityProviders: ['COGNITO', 'Google'],
+      });
+      prod.template.allResourcesProperties('AWS::Cognito::UserPoolClient', {
+        SupportedIdentityProviders: ['COGNITO'],
+      });
+    });
+
     it('gives every client a managed login style', () => {
       dev.template.resourceCountIs('AWS::Cognito::ManagedLoginBranding', 2);
       prod.template.resourceCountIs('AWS::Cognito::ManagedLoginBranding', 1);
       dev.template.allResourcesProperties('AWS::Cognito::ManagedLoginBranding', { UseCognitoProvidedValues: true });
+    });
+  });
+
+  describe('Google', () => {
+    it('signs in with the owner’s OAuth client, read from Secrets Manager at deploy', () => {
+      dev.template.hasResourceProperties('AWS::Cognito::UserPoolIdentityProvider', {
+        ProviderName: 'Google',
+        ProviderType: 'Google',
+        ProviderDetails: {
+          client_id: Match.stringLikeRegexp('^\\{\\{resolve:secretsmanager:.*hearth/dev/google:SecretString:clientId::\\}\\}$'),
+          client_secret: Match.stringLikeRegexp('^\\{\\{resolve:secretsmanager:.*hearth/dev/google:SecretString:clientSecret::\\}\\}$'),
+          authorize_scopes: 'openid email profile',
+        },
+      });
+    });
+
+    it('maps email, its verification, name and picture', () => {
+      dev.template.hasResourceProperties('AWS::Cognito::UserPoolIdentityProvider', {
+        AttributeMapping: {
+          email: 'email',
+          email_verified: 'email_verified',
+          name: 'name',
+          picture: 'picture',
+        },
+      });
+    });
+
+    it('is created before the clients that offer it', () => {
+      const clients = dev.template.findResources('AWS::Cognito::UserPoolClient');
+      const [providerId] = Object.keys(dev.template.findResources('AWS::Cognito::UserPoolIdentityProvider'));
+      for (const client of Object.values(clients) as { DependsOn?: string[] }[]) {
+        expect(client.DependsOn).toContain(providerId);
+      }
+    });
+
+    it('is off until an env has its secret (stage, prod)', () => {
+      prod.template.resourceCountIs('AWS::Cognito::UserPoolIdentityProvider', 0);
+      expect(synth('stage').template.findResources('AWS::Cognito::UserPoolIdentityProvider')).toEqual({});
     });
   });
 

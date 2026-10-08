@@ -49,7 +49,7 @@ as part of each PR. The repo layout and commands are in [README.md](README.md).
 | M7 Move your world | Done (PR1–PR4; tested on dev with a real world) |
 | Before Phase 2 | Done: M7 docs, neutral wording, destroy (records kept as `DESTROYED`), state-sync tweak, stage and prod live with the release flow (details under Decisions) |
 | **Phase 1** | **Complete** (2026-10-07): dev, stage and prod run `v2026.10.07-3461efe`, agent `2026.10.06-de42566` |
-| M8 Accounts and access | In progress: PR1a (auth basics) in review |
+| M8 Accounts and access | In progress: PR1a done (tested on dev); PR1b (Google) in review |
 | M9 Game version catalog | Planned (Deferred's plan, V1–V4) |
 | M10 Web UI | Planned |
 
@@ -57,14 +57,17 @@ as part of each PR. The repo layout and commands are in [README.md](README.md).
 
 **M8 plan** (done when a signed-in user manages their own and friends' servers through `/v1`, and
 the CLI signs in the same way; backend only):
-- PR1a Auth basics (AuthStack, per env): Cognito user pool, managed login on Cognito's prefix
-  domain, a web client and a CLI client (authorization code + PKCE, localhost callbacks; more
-  from config later), an `admin` group; pool ID, client IDs and domain in SSM
-  (`/hearth/<env>/auth/…`). Email + password users created by the owner only (no self sign-up):
-  testable without outside apps, and an admin login that doesn't depend on Google or Discord.
-  Done when the owner signs in on dev with a user they created.
-- PR1b Google: the provider (secret in Secrets Manager, created by the owner), email, name and
-  picture mapped; a guide to creating the Google OAuth client. Done when Google sign-in works on dev.
+- PR1a Auth basics, done (tested on dev: password sign-in, tokens with `cognito:groups`,
+  refresh): AuthStack per env, Cognito user pool (Essentials), managed login v2 on
+  `hearth-<env>-<account>`, a CLI client (`localhost:8976/callback`) and a web client where
+  `webOrigins` lists one (dev: Vite), both public (PKCE), refresh-only auth flows; an `admin`
+  group; `/hearth/<env>/auth` (JSON: pool, issuer, domain, client IDs). Password users created by
+  the owner only (no self sign-up), MFA optional (TOTP). Guide: `docs/testing/sign-in.md`.
+- PR1b Google, in review: `UserPoolIdentityProviderGoogle` from `hearth/<env>/google`
+  (`{clientId, clientSecret}`, resolved by CloudFormation), email, verified, name and picture
+  mapped; clients depend on the provider. Per env `signInProviders` (dev now; stage and prod once
+  their secrets exist, or their deploy fails). Setup guide `docs/setup/google.md`. A Google user is
+  separate from a password user with the same email (no linking; add it to `admin` by hand).
 - PR1c Discord: through Cognito's OIDC provider support, username and avatar mapped; a guide to
   the Discord app. If Cognito won't take Discord's tokens, this PR adds a wrapper λ presenting
   Discord as an OIDC provider instead. Public email sign-up: not planned (resets, SES, spam).
