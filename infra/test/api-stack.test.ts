@@ -2,6 +2,7 @@ import type { Stack } from 'aws-cdk-lib';
 import { Match, Template } from 'aws-cdk-lib/assertions';
 import { testApp } from './test-app.js';
 import { describe, expect, it } from 'vitest';
+import { API_ROUTES, type RouteHandler } from '@hearth/shared/api';
 import { envConfig } from '../lib/config.js';
 import { addChecks, addEnvironment } from '../lib/hearth-app.js';
 
@@ -47,6 +48,35 @@ describe('ApiStack', () => {
       Properties: { AuthorizationType?: string };
     }[];
     expect(routes.every((route) => route.Properties.AuthorizationType === 'AWS_IAM')).toBe(true);
+  });
+
+  describe('routes come from the shared route list', () => {
+    type Route = { Properties: { RouteKey: string; Target: { 'Fn::Join': [string, [string, { Ref: string }]] } } };
+    type Integration = { Properties: { IntegrationUri: { 'Fn::GetAtt': [string, string] } } };
+    const routes = Object.values(template.findResources('AWS::ApiGatewayV2::Route')) as Route[];
+    const integrations = template.findResources('AWS::ApiGatewayV2::Integration') as Record<string, Integration>;
+
+    it('serves exactly the routes in API_ROUTES: none missing, none extra', () => {
+      expect(routes.map((r) => r.Properties.RouteKey).sort()).toEqual(API_ROUTES.map((r) => `${r.method} ${r.path}`).sort());
+    });
+
+    it('sends each route to the Lambda its entry names', () => {
+      const functionOf: Record<RouteHandler, string> = {
+        admin: 'Admin',
+        agentConfig: 'AgentConfig',
+        agentStatus: 'AgentStatus',
+        agentBackupCredentials: 'AgentBackupCredentials',
+        agentBackupDone: 'AgentBackupDone',
+        agentRestored: 'AgentRestored',
+        agentIdle: 'AgentIdle',
+      };
+      for (const route of API_ROUTES) {
+        const deployed = routes.find((r) => r.Properties.RouteKey === `${route.method} ${route.path}`)!;
+        const integrationId = deployed.Properties.Target['Fn::Join'][1][1].Ref;
+        const [functionId] = integrations[integrationId]!.Properties.IntegrationUri['Fn::GetAtt'];
+        expect(functionId, route.id).toMatch(new RegExp(`^${functionOf[route.handler]}[0-9A-F]{8}$`));
+      }
+    });
   });
 
   it('runs the agent handlers on ARM Node 24 with the table and instance role names', () => {

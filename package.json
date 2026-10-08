@@ -11,11 +11,14 @@
     "lint": "eslint .",
     "test": "vitest run",
     "synth": "pnpm --filter @hearth/infra synth",
-    "hearth": "tsx cli/src/main.ts"
+    "hearth": "tsx cli/src/main.ts",
+    "api:spec": "tsx scripts/api-spec.ts",
+    "api:docs": "tsx scripts/api-spec.ts && node scripts/api-docs.mjs"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "eslint": "^10.11.0",
+    "swagger-ui-dist": "5.33.1",
     "tsx": "^4.23.15",
     "typescript": "^6.0.3",
     "typescript-eslint": "^8.70.1",

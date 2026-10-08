@@ -54,6 +54,21 @@ pnpm --filter @hearth/cli bundle   # cli/dist/hearth.cjs, a single file for Clou
 
 To check a server end to end and join it, follow [docs/testing/game-server.md](docs/testing/game-server.md).
 
+### The API's contract
+
+Every route and every request and response body is defined once, in `packages/shared/src/api`:
+`schemas.ts` (Zod schemas: they check requests at runtime and give the TypeScript types) and
+`routes.ts` (each route: method, path, caller, handling Lambda, bodies). The CDK creates the API's
+routes from that list, and the documentation is generated from it:
+
+```sh
+pnpm api:spec    # writes docs/api/openapi.json (a test fails when it's stale)
+pnpm api:docs    # the same, then Swagger UI on http://localhost:8090 (read-only)
+```
+
+To add or change a route: edit `routes.ts` (and `schemas.ts` for a new body), handle it in its
+Lambda, then `pnpm api:spec`.
+
 ## One-time AWS setup
 
 GitHub Actions deploys with the account's existing `github-deploy` role through GitHub OIDC; no AWS keys

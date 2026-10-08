@@ -15,7 +15,8 @@
     "@aws-sdk/s3-presigned-post": "^3.1143.0",
     "@aws-sdk/s3-request-presigner": "^3.1143.0",
     "@hearth/core": "workspace:*",
-    "@hearth/shared": "workspace:*"
+    "@hearth/shared": "workspace:*",
+    "zod": "4.6.5"
   },
   "devDependencies": {
     "@types/aws-lambda": "^8.10.163",

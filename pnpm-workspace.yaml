@@ -5,3 +5,5 @@ packages:
   - services/*
 allowBuilds:
   esbuild: true
+  # Pulled in by swagger-ui-dist (pnpm api:docs); its install script only reports download analytics.
+  '@scarf/scarf': false

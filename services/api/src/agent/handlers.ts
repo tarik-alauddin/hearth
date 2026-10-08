@@ -7,20 +7,25 @@ import {
   DEFAULT_AGENT_CHANNEL,
   DEFAULT_IDLE_STOP_MINUTES,
   GAME_DEFINITIONS,
-  MAX_IDLE_STOP_MINUTES,
   backupKey,
-  isAgentState,
   isAcceptedKey,
   isBackupKey,
   type AgentConfig,
-  type AgentStatusReport,
   type ServerRecord,
 } from '@hearth/shared';
+import {
+  AgentStatusReportSchema,
+  BackupDoneReportSchema,
+  IdleReportSchema,
+  RestoreDoneReportSchema,
+} from '@hearth/shared/api';
 import type { ServersStore } from '@hearth/core';
+import type { z } from 'zod';
 import type { BackupStorage } from '../backups.js';
 import type { UploadStorage } from '../uploads.js';
 import { AccessDenied } from '../authz.js';
 import { OperationError, type serverOperations } from '../servers/operations.js';
+import { check } from '../validation.js';
 import { callerInstanceId } from './caller.js';
 import type { AgentReleases } from './releases.js';
 
@@ -46,8 +51,6 @@ export interface AgentHandlerDeps {
   now?: () => Date;
 }
 
-const MAX_VERSION_LENGTH = 64;
-const MAX_MESSAGE_LENGTH = 500;
 
 export function agentHandlers({
   store,
@@ -92,12 +95,9 @@ export function agentHandlers({
 
   /** POST /agent/idle: nobody has played for a while; stop this agent's server the usual way. */
   async function idle(event: Event): Promise<Result> {
-    const body = parseJsonObject(event);
-    if (typeof body === 'string') return json(400, { message: body });
-    const { idleMinutes } = body;
-    if (typeof idleMinutes !== 'number' || !Number.isInteger(idleMinutes) || idleMinutes < 1 || idleMinutes > MAX_IDLE_STOP_MINUTES) {
-      return json(400, { message: `idleMinutes must be a whole number from 1 to ${MAX_IDLE_STOP_MINUTES}` });
-    }
+    const body = readBody(event, IdleReportSchema);
+    if (!body.ok) return json(400, { message: body.message });
+    const { idleMinutes } = body.value;
     const caller = await callerServer(event);
     if ('error' in caller) return caller.error;
     const { instanceId, server } = caller;
@@ -113,14 +113,14 @@ export function agentHandlers({
 
   /** POST /agent/restored: the game data now holds the requested backup; clear the request. */
   async function restored(event: Event): Promise<Result> {
-    const body = parseJsonObject(event);
-    if (typeof body === 'string') return json(400, { message: body });
     const caller = await callerServer(event);
     if ('error' in caller) return caller.error;
+    const body = readBody(event, RestoreDoneReportSchema);
+    if (!body.ok) return json(400, { message: body.message });
     const { instanceId, server } = caller;
-    const { key } = body;
+    const { key } = body.value;
     // One of this server's backups, or an accepted upload (restored when the server was created from it).
-    if (typeof key !== 'string' || !(isBackupKey(server.serverId, key) || isAcceptedKey(key))) {
+    if (!(isBackupKey(server.serverId, key) || isAcceptedKey(key))) {
       return json(400, { message: 'Invalid key' });
     }
     if (!(await store.clearRestore(server.serverId, instanceId, key))) {
@@ -132,8 +132,9 @@ export function agentHandlers({
 
   /** POST /agent/status */
   async function status(event: Event): Promise<Result> {
-    const report = parseStatusReport(event);
-    if (typeof report === 'string') return json(400, { message: report });
+    const body = readBody(event, AgentStatusReportSchema);
+    if (!body.ok) return json(400, { message: body.message });
+    const report = body.value;
     const caller = await callerServer(event);
     if ('error' in caller) return caller.error;
     const { instanceId, server } = caller;
@@ -156,13 +157,13 @@ export function agentHandlers({
 
   /** POST /agent/backups: the agent finished uploading a backup; record it as the newest. */
   async function backupDone(event: Event): Promise<Result> {
-    const body = parseJsonObject(event);
-    if (typeof body === 'string') return json(400, { message: body });
     const caller = await callerServer(event);
     if ('error' in caller) return caller.error;
+    const body = readBody(event, BackupDoneReportSchema);
+    if (!body.ok) return json(400, { message: body.message });
     const { instanceId, server } = caller;
-    const { key } = body;
-    if (typeof key !== 'string' || !isBackupKey(server.serverId, key)) return json(400, { message: 'Invalid key' });
+    const { key } = body.value;
+    if (!isBackupKey(server.serverId, key)) return json(400, { message: 'Invalid key' });
     const bytes = await backups.size(key);
     if (bytes === undefined) return json(400, { message: `No backup at ${key}` });
     if (!(await store.recordBackup(server.serverId, instanceId, { key, bytes }, now()))) {
@@ -183,32 +184,16 @@ export function agentHandlers({
   return { config, status, backupCredentials, backupDone, restored, idle };
 }
 
-/** The request body as a JSON object, or an error message. */
-function parseJsonObject(event: Event): Record<string, unknown> | string {
+/** The request body, checked against its schema (`@hearth/shared/api`), or what's wrong with it. */
+function readBody<T>(event: Event, schema: z.ZodType<T>): { ok: true; value: T } | { ok: false; message: string } {
   let body: unknown;
   try {
     const raw = event.isBase64Encoded ? Buffer.from(event.body ?? '', 'base64').toString('utf8') : event.body;
     body = JSON.parse(raw ?? '');
   } catch {
-    return 'Body must be JSON';
+    return { ok: false, message: 'Body must be JSON' };
   }
-  if (typeof body !== 'object' || body === null) return 'Body must be a JSON object';
-  return body as Record<string, unknown>;
-}
-
-/** The validated report, or an error message. */
-function parseStatusReport(event: Event): AgentStatusReport | string {
-  const body = parseJsonObject(event);
-  if (typeof body === 'string') return body;
-  const { state, agentVersion, message } = body;
-  if (!isAgentState(state)) return 'Invalid state';
-  if (typeof agentVersion !== 'string' || !agentVersion || agentVersion.length > MAX_VERSION_LENGTH) {
-    return 'Invalid agentVersion';
-  }
-  if (message !== undefined && (typeof message !== 'string' || message.length > MAX_MESSAGE_LENGTH)) {
-    return 'Invalid message';
-  }
-  return message === undefined ? { state, agentVersion } : { state, agentVersion, message };
+  return check(schema, body);
 }
 
 function json(statusCode: number, body: unknown): Result {
