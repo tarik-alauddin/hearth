@@ -70,7 +70,7 @@ async function main(argv: string[]): Promise<number> {
     return values.help ? 0 : 2;
   }
 
-  // Signing in, and the admin group: Cognito and /v1, not the admin routes.
+  // Signing in, and the admin group: Cognito and /v1.
   let auth: Promise<AuthConfig> | undefined;
   const authConfig = () => (auth ??= readAuthConfig(values.env, values.region));
   const session = sessionFile(values.env);

@@ -65,7 +65,7 @@ async function readResponse<T>(res: Response): Promise<T> {
 }
 
 /**
- * Sends a file with a presigned S3 POST form (from `POST /admin/uploads`): every form field, then
+ * Sends a file with a presigned S3 POST form (from `POST /v1/uploads`): every form field, then
  * the file last, as S3 requires. The file streams from disk. S3 refuses anything over the form's
  * size cap; its XML error becomes the message.
  */

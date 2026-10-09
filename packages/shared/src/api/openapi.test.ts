@@ -11,11 +11,12 @@ describe('buildOpenApiDocument', () => {
     }
   });
 
-  it('documents the usual errors: 400 for bodies, 403 always, 404 for a path id', () => {
+  it('documents the usual errors: 400 for bodies, 401 for users, 403 for a permission, 404 for a path id', () => {
     const doc = buildOpenApiDocument() as { paths: Record<string, Record<string, { responses: Record<string, unknown> }>> };
-    const start = doc.paths['/admin/servers/{id}/start']!.post!.responses;
-    expect(Object.keys(start)).toEqual(['200', '202', '403', '404', '409']);
-    const create = doc.paths['/admin/servers']!.post!.responses;
+    const start = doc.paths['/v1/servers/{id}/start']!.post!.responses;
+    expect(Object.keys(start)).toEqual(['200', '202', '401', '403', '404', '409']);
+    const create = doc.paths['/v1/servers']!.post!.responses;
     expect(create).toHaveProperty('400');
+    expect(create).toHaveProperty('401');
   });
 });

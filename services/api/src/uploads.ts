@@ -118,7 +118,7 @@ export function s3UploadStorage(opts: {
   };
 }
 
-/** Uploads: the one implementation, for the admin routes, /v1, the CLI and the UI. */
+/** Uploads: the one implementation, for /v1 (the CLI and the UI). */
 export function uploadOperations({
   uploads,
   users,

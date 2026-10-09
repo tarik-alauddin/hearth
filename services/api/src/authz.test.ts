@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { ServerAccessRecord, ServerAction, ServerRecord, ServerRole } from '@hearth/shared';
-import { AccessDenied, decide, requireAdmin, serverAuthorizer, shapeServer, type Actor } from './authz.js';
+import { AccessDenied, decide, requireAdmin, serverAuthorizer, toServerView, type Actor } from './authz.js';
 
 // The permission table, spelled out again on purpose: changing who may do what must change this
 // test too, so it can't happen by accident.
@@ -110,7 +110,7 @@ describe('requireAdmin', () => {
   });
 });
 
-describe('shapeServer', () => {
+describe('toServerView', () => {
   const record: ServerRecord = {
     serverId: 's1',
     ownerId: 'u1',
@@ -132,12 +132,8 @@ describe('shapeServer', () => {
     createdAt: '2026-10-01T12:00:00.000Z',
   };
 
-  it('gives admins the whole record', () => {
-    expect(shapeServer(record, 'admin')).toBe(record);
-  });
-
   it('gives owners and members what the UI shows, and nothing internal', () => {
-    expect(shapeServer(record, 'member')).toEqual({
+    expect(toServerView(record, 'member')).toEqual({
       serverId: 's1',
       role: 'member',
       game: 'minecraft-java',
@@ -154,12 +150,12 @@ describe('shapeServer', () => {
   });
 
   it('shows no address or game state once the server is stopped', () => {
-    const view = shapeServer({ ...record, status: 'STOPPED', idleStopMinutes: 0 }, 'owner');
+    const view = toServerView({ ...record, status: 'STOPPED', idleStopMinutes: 0 }, 'owner');
     expect(view).not.toHaveProperty('address');
     expect(view).not.toHaveProperty('gameState');
     expect(view).toMatchObject({ role: 'owner', idleStopMinutes: 0 });
     // Whether the last stop saved the game (the agent's message stays internal).
-    const unclean = shapeServer({ ...record, status: 'STOPPED', lastStopClean: false, agentMessage: 'timeout' }, 'owner');
+    const unclean = toServerView({ ...record, status: 'STOPPED', lastStopClean: false, agentMessage: 'timeout' }, 'owner');
     expect(unclean).toMatchObject({ lastStopClean: false });
     expect(unclean).not.toHaveProperty('agentMessage');
   });

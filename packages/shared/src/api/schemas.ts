@@ -54,7 +54,7 @@ export const ErrorResponseSchema = named(
 export const ServerRecordSchema = named(
   z.object({
     serverId: z.string().describe('ULID'),
-    ownerId: z.string().describe("The owner's id: a Cognito sub, or an admin's IAM ARN"),
+    ownerId: z.string().describe("The owner's user ID (a Cognito sub); an IAM ARN for servers created before /admin was removed"),
     game: GameIdSchema,
     region: z.string(),
     status: ServerStatusSchema,

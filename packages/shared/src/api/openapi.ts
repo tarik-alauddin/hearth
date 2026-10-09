@@ -129,8 +129,12 @@ export function buildOpenApiDocument(routes: readonly ApiRoute[] = API_ROUTES): 
       },
     ],
     tags: [
-      { name: 'user', description: 'Signed-in users (the web app): themselves, and the servers they own or are members of' },
-      { name: 'admin', description: 'Hearth admins (the hearth CLI): every server, uploads' },
+      {
+        name: 'user',
+        description:
+          'Signed-in users (the web app, the hearth CLI): themselves, the servers they own or are members of; ' +
+          'admins (the `admin` group) also every server and user approvals',
+      },
       { name: 'agent', description: "Game instances' agents, about their own server" },
     ],
     paths: Object.fromEntries(Object.entries(paths).sort(([a], [b]) => a.localeCompare(b))),
@@ -148,7 +152,7 @@ export function buildOpenApiDocument(routes: readonly ApiRoute[] = API_ROUTES): 
           type: 'apiKey',
           in: 'header',
           name: 'Authorization',
-          description: 'AWS Signature Version 4 (IAM): admins with their AWS credentials, agents with their instance role',
+          description: "AWS Signature Version 4 (IAM): game instances' agents, with their instance role",
         },
       },
       schemas: components(),

@@ -23,9 +23,9 @@ describe('API_ROUTES', () => {
 
   it('keeps each family of routes under its own prefix and caller', () => {
     for (const route of API_ROUTES) {
-      expect(route.path, route.id).toMatch(/^\/(admin|agent|v1)\/[a-z0-9{}/-]+$/);
+      expect(route.path, route.id).toMatch(/^\/(agent|v1)\/[a-z0-9{}/-]+$/);
       const prefix = route.path.split('/')[1];
-      expect({ admin: 'admin', agent: 'agent', v1: 'user' }[prefix!], route.id).toBe(route.caller.kind);
+      expect({ agent: 'agent', v1: 'user' }[prefix!], route.id).toBe(route.caller.kind);
     }
   });
 });
