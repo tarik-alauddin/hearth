@@ -59,7 +59,7 @@ as part of each PR. The repo layout and commands are in [README.md](README.md).
 | M7 Move your world | Done (PR1–PR4; tested on dev with a real world) |
 | Before Phase 2 | Done: M7 docs, neutral wording, destroy (records kept as `DESTROYED`), state-sync tweak, stage and prod live with the release flow (details under Decisions) |
 | **Phase 1** | **Complete** (2026-10-07): dev, stage and prod run `v2026.10.07-3461efe`, agent `2026.10.06-de42566` |
-| M8 Accounts and access | In progress: PR1a–PR1c done (sign-in with password, Google, Discord, tested on dev); PR2–PR4 done (access data, authorization, API contract); PR5a–c merged (`/v1/me`, approving users, listing servers); PR5d (create) in review |
+| M8 Accounts and access | In progress: PR1a–PR1c done (sign-in with password, Google, Discord, tested on dev); PR2–PR4 done (access data, authorization, API contract); PR5a–d merged (`/v1/me`, approving users, listing and creating servers); PR5e (start, stop, destroy) in review |
 | M9 Game version catalog | Planned (Deferred's plan, V1–V4) |
 | M10 Web UI | Planned |
 
@@ -171,7 +171,7 @@ the CLI signs in the same way; backend only):
     "not available yet" until 5d–e wire them. No extra throttling: HTTP APIs can't throttle per
     route or user natively, and the stage's 50/s (burst 100) covers every route; per-user limits
     later if needed (e.g. WAF).
-  - 5d, in review: `POST /v1/servers`. `createServer` opens to users: approved (`Users`; never
+  - 5d, merged (tested on dev; the tester's admin user skipped the limit, as built): `POST /v1/servers`. `createServer` opens to users: approved (`Users`; never
     signed in = not approved) and under `serverLimit` (`countActiveOwned`, destroyed don't count;
     the simultaneous-create race accepted), else 403 with the reason; `agentChannel` needs admin;
     admins skip approval and the limit; agents refused. With the `ownership` dependency (only the
@@ -181,7 +181,15 @@ the CLI signs in the same way; backend only):
     `/v1` uploads. The User λ gains: Servers PutItem/UpdateItem, the byOwner index (Query),
     ServerAccess PutItem, StartExecution on the create workflow only; `CREATE_WORKFLOW_ARN`,
     `GAME_REGIONS`.
-  - 5e: start and stop (owners and members), then the owners' actions (split if it grows).
+  - 5e, in review: `POST /v1/servers/{id}/start`, `/stop` (owners and members), `/destroy`
+    (owners): thin routes over the existing operations (`authorize` with `start`/`stop`/
+    `destroy`); 202 when a workflow started, 200 unchanged. The User λ may start all four
+    lifecycle workflows (the operations decide who may run which).
+  - 5f: the owners' other actions: settings (`PATCH /v1/servers/{id}`: idle stop), version,
+    backups list, restore and cancel. The User λ needs the backups bucket (list) and Mojang's
+    version list then.
+  - Open (owner to decide): admins skip the limit today (and approval). Recommended: the limit
+    applies to admins too (they can raise their own `serverLimit`); approval stays skipped.
   - Admin agent channels and `/v1` uploads follow as their own small PRs.
 - PR6 Invites and members: create, list, revoke, accept; list and remove members, leave.
 - PR7 CLI on Cognito: `hearth login` (browser sign-in, session in `~/.hearth`), every command on `/v1`.

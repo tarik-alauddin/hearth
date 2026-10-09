@@ -1,6 +1,6 @@
 import type { APIGatewayProxyEventV2WithJWTAuthorizer, APIGatewayProxyStructuredResultV2 } from 'aws-lambda';
 import type { UsersStore } from '@hearth/core';
-import type { ListMyServersResponse, MeResponse } from '@hearth/shared';
+import type { ListMyServersResponse, MeResponse, ServerOperationResult } from '@hearth/shared';
 import { AccessDenied, toServerView } from '../authz.js';
 import { OperationError, type serverOperations } from '../servers/operations.js';
 import type { userOperations } from '../users/operations.js';
@@ -12,7 +12,10 @@ type Result = APIGatewayProxyStructuredResultV2;
 export interface UserHandlerDeps {
   users: Pick<UsersStore, 'recordSignIn'>;
   userOps: ReturnType<typeof userOperations>;
-  serverOps: Pick<ReturnType<typeof serverOperations>, 'getServer' | 'listMyServers' | 'createServer'>;
+  serverOps: Pick<
+    ReturnType<typeof serverOperations>,
+    'getServer' | 'listMyServers' | 'createServer' | 'startServer' | 'stopServer' | 'destroyServer'
+  >;
   now?: () => Date;
   log?: (entry: Record<string, unknown>) => void;
 }
@@ -25,6 +28,12 @@ export function userHandler({ users, userOps, serverOps, now = () => new Date(),
   return async function handle(event: Event): Promise<Result> {
     const caller = callerFromClaims(event.requestContext.authorizer?.jwt?.claims as Claims | undefined);
     if (!caller) return json(401, { message: 'Send the ID token from signing in (Authorization: Bearer <id token>)' });
+
+    /** 202 when a workflow started; 200 when the server was already there (`unchanged`). */
+    const lifecycle = (what: string, result: ServerOperationResult): Result => {
+      log({ msg: `${what} requested`, by: caller.userId, ...result });
+      return json(result.unchanged ? 200 : 202, result);
+    };
 
     try {
       switch (event.routeKey) {
@@ -52,6 +61,12 @@ export function userHandler({ users, userOps, serverOps, now = () => new Date(),
           log({ msg: 'server created', by: caller.userId, ...result });
           return json(202, result);
         }
+        case 'POST /v1/servers/{id}/start':
+          return lifecycle('start', await serverOps.startServer(caller.actor, serverId(event)));
+        case 'POST /v1/servers/{id}/stop':
+          return lifecycle('stop', await serverOps.stopServer(caller.actor, serverId(event)));
+        case 'POST /v1/servers/{id}/destroy':
+          return lifecycle('destroy', await serverOps.destroyServer(caller.actor, serverId(event)));
         case 'GET /v1/servers/{id}': {
           const { server, relation } = await serverOps.getServer(caller.actor, event.pathParameters?.id ?? '');
           return json(200, toServerView(server, relation));
@@ -70,6 +85,10 @@ export function userHandler({ users, userOps, serverOps, now = () => new Date(),
       throw err;
     }
   };
+}
+
+function serverId(event: Event): string {
+  return event.pathParameters?.id ?? '';
 }
 
 function parseBody(event: Event): unknown {

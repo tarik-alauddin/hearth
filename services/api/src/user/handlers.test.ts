@@ -17,6 +17,15 @@ const noServers: UserHandlerDeps['serverOps'] = {
   createServer: async () => {
     throw new Error('not used');
   },
+  startServer: async () => {
+    throw new Error('not used');
+  },
+  stopServer: async () => {
+    throw new Error('not used');
+  },
+  destroyServer: async () => {
+    throw new Error('not used');
+  },
 };
 
 function event(
@@ -146,6 +155,19 @@ describe('user routes', () => {
         if ((body as { version?: string }).version === 'limit') throw new AccessDenied(403, 'You have 3 servers, your limit');
         return { serverId: 'new', status: 'PROVISIONING' };
       },
+      startServer: async (actor, id) => {
+        calls.push(`start ${actor.kind} ${id}`);
+        return id === 'running' ? { serverId: id, status: 'RUNNING', unchanged: true } : { serverId: id, status: 'STARTING' };
+      },
+      stopServer: async (actor, id) => {
+        calls.push(`stop ${actor.kind} ${id}`);
+        return { serverId: id, status: 'STOPPING' };
+      },
+      destroyServer: async (actor, id) => {
+        calls.push(`destroy ${actor.kind} ${id}`);
+        if (id === 'theirs') throw new AccessDenied(403, "As a member, you can't destroy server theirs");
+        return { serverId: id, status: 'DESTROYING' };
+      },
     };
     const handle = () => {
       const { store } = fakeUsers();
@@ -186,6 +208,23 @@ describe('user routes', () => {
       const refused = await handle()(event('POST /v1/servers', googleClaims, { body: '{"game":"minecraft-java","version":"limit"}' }));
       expect(refused.statusCode).toBe(403);
       expect(JSON.parse(refused.body!).message).toMatch(/limit/);
+    });
+
+    it('starts, stops and destroys as the caller: 202 when a workflow started, 200 when unchanged', async () => {
+      calls.length = 0;
+      const h = handle();
+      const start = await h(event('POST /v1/servers/{id}/start', googleClaims, { id: 's1' }));
+      expect([start.statusCode, JSON.parse(start.body!).status]).toEqual([202, 'STARTING']);
+      expect((await h(event('POST /v1/servers/{id}/start', googleClaims, { id: 'running' }))).statusCode).toBe(200);
+      expect((await h(event('POST /v1/servers/{id}/stop', googleClaims, { id: 's1' }))).statusCode).toBe(202);
+      expect((await h(event('POST /v1/servers/{id}/destroy', googleClaims, { id: 's1' }))).statusCode).toBe(202);
+      expect(calls).toEqual(['start user s1', 'start user running', 'stop user s1', 'destroy user s1']);
+    });
+
+    it("passes on the operations' refusals (a member destroying: 403)", async () => {
+      const res = await handle()(event('POST /v1/servers/{id}/destroy', googleClaims, { id: 'theirs' }));
+      expect(res.statusCode).toBe(403);
+      expect(JSON.parse(res.body!).message).toMatch(/As a member/);
     });
 
     it('answers admins with the same view, not the whole record', async () => {

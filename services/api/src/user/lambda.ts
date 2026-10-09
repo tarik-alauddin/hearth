@@ -11,7 +11,7 @@ function requireEnv(name: string): string {
   return value;
 }
 
-/** A dependency no /v1 route uses yet (starting, stopping and the rest arrive with M8 PR5e). */
+/** A dependency no /v1 route uses yet (settings, versions, backups and restores: M8 PR5f). */
 function notYet(what: string): never {
   throw new Error(`${what} is not available to the /v1 routes yet`);
 }
@@ -28,8 +28,12 @@ export const handler = userHandler({
     access: createAccessStore(accessTable),
     ownership: createOwnedServers(serversTable, accessTable),
     users,
-    // Only create, for now: its function may start no other workflow.
-    workflows: stepFunctionsWorkflows({ create: requireEnv('CREATE_WORKFLOW_ARN'), start: '', stop: '', destroy: '' }),
+    workflows: stepFunctionsWorkflows({
+      create: requireEnv('CREATE_WORKFLOW_ARN'),
+      start: requireEnv('START_WORKFLOW_ARN'),
+      stop: requireEnv('STOP_WORKFLOW_ARN'),
+      destroy: requireEnv('DESTROY_WORKFLOW_ARN'),
+    }),
     backups: { list: async () => notYet('Backups') },
     // A request naming an upload is the caller's to fix, so a 400 rather than an error.
     uploads: {
