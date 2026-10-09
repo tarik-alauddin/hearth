@@ -43,7 +43,7 @@ export interface ApiStackProps extends HearthStackProps {
   readonly gameRegions: readonly string[];
 }
 
-/** The HTTP API: user routes (Cognito), admin and agent routes (IAM); bot and usage routes later. */
+/** The HTTP API: user routes (Cognito; admins are users too), agent routes (IAM); bot and usage routes later. */
 export class ApiStack extends HearthStack {
   readonly api: HttpApi;
   /** SSM parameter agents read at boot to find the API. */
@@ -157,7 +157,7 @@ export class ApiStack extends HearthStack {
       new PolicyStatement({ actions: ['dynamodb:UpdateItem'], resources: [props.serversTable.tableArn] }),
     );
 
-    // Idle stops: an agent stops its own server through the same stop workflow as the admin route.
+    // Idle stops: an agent stops its own server through the same stop workflow as users' stops.
     const idleFunction = agentFunction('AgentIdle', 'idleHandler');
     idleFunction.addEnvironment('STOP_WORKFLOW_ARN', props.workflows.stop.stateMachineArn);
     idleFunction.addToRolePolicy(new PolicyStatement({ actions: ['dynamodb:Query'], resources: [byInstanceIndexArn] }));
@@ -174,33 +174,6 @@ export class ApiStack extends HearthStack {
         reason: 'Every server has its own backup prefix; each upload session and download link covers one key.',
       });
     }
-
-    // Admin routes: server operations for the hearth CLI, signed with your own AWS credentials.
-    const admin = hearthFunction(this, 'Admin', {
-      config: props.config,
-      entry: 'api/src/admin/lambda.ts',
-      handler: 'handler',
-      environment: {
-        SERVERS_TABLE: props.serversTable.tableName,
-        INSTANCE_ROLE_NAMES: props.instanceRoles.map((role) => role.roleName).join(','),
-        HOME_REGION: props.config.homeRegion,
-        GAME_REGIONS: props.gameRegions.join(','),
-        CREATE_WORKFLOW_ARN: props.workflows.create.stateMachineArn,
-        START_WORKFLOW_ARN: props.workflows.start.stateMachineArn,
-        STOP_WORKFLOW_ARN: props.workflows.stop.stateMachineArn,
-        DESTROY_WORKFLOW_ARN: props.workflows.destroy.stateMachineArn,
-        BACKUP_BUCKET: backups,
-        BACKUP_BUCKET_REGION: props.config.homeRegion,
-        UPLOADS_BUCKET: uploads,
-        UPLOADS_BUCKET_REGION: props.config.homeRegion,
-      },
-    });
-    admin.addToRolePolicy(listServerBackups);
-    // Upload forms are signed with this role, so it may write landing files and nothing else there.
-    admin.addToRolePolicy(new PolicyStatement({ actions: ['s3:PutObject'], resources: [landing] }));
-    // Upload status: read where an upload has got to. Listing makes a missing key a 404 rather than a 403.
-    admin.addToRolePolicy(new PolicyStatement({ actions: ['s3:GetObject'], resources: [landing, accepted, rejected] }));
-    admin.addToRolePolicy(new PolicyStatement({ actions: ['s3:ListBucket'], resources: [uploadsArn] }));
 
     // Repack: each new landing file, through EventBridge. It reads landing files and writes
     // results; it can't delete anything (landing files expire).
@@ -227,7 +200,6 @@ export class ApiStack extends HearthStack {
     });
 
     for (const [construct, resources] of [
-      [admin, [landing, accepted, rejected]],
       [repack, [landing, accepted, rejected]],
       [configFunction, [accepted]],
     ] as const) {
@@ -238,18 +210,6 @@ export class ApiStack extends HearthStack {
         });
       }
     }
-    admin.addToRolePolicy(
-      new PolicyStatement({
-        actions: ['dynamodb:GetItem', 'dynamodb:PutItem', 'dynamodb:UpdateItem', 'dynamodb:Scan'],
-        resources: [props.serversTable.tableArn],
-      }),
-    );
-    admin.addToRolePolicy(
-      new PolicyStatement({
-        actions: ['states:StartExecution'],
-        resources: Object.values(props.workflows).map((machine) => machine.stateMachineArn),
-      }),
-    );
     // User routes (/v1): signed-in users, through the web app and later the CLI. Who they are (the
     // Users table), the servers they can reach (through their ServerAccess rows), and acting on
     // them: create, start, stop, destroy, settings, version, backups list, restore, invites, members.
@@ -274,7 +234,7 @@ export class ApiStack extends HearthStack {
         UPLOADS_BUCKET_REGION: props.config.homeRegion,
       },
     });
-    // Uploads, as for Admin: forms are signed with this role (landing files only); status reads
+    // Uploads: forms are signed with this role (landing files only); status reads
     // where an upload has got to, and listing makes a missing key a 404 rather than a 403.
     user.addToRolePolicy(new PolicyStatement({ actions: ['s3:PutObject'], resources: [landing] }));
     user.addToRolePolicy(new PolicyStatement({ actions: ['s3:GetObject'], resources: [landing, accepted, rejected] }));
@@ -345,7 +305,6 @@ export class ApiStack extends HearthStack {
       agentBackupDone: backupDoneFunction,
       agentRestored: restoredFunction,
       agentIdle: idleFunction,
-      admin,
       user,
     };
     this.functions = [...Object.values(handlers), repack];
@@ -355,7 +314,7 @@ export class ApiStack extends HearthStack {
       if (!i) integrations.set(fn, (i = new HttpLambdaIntegration(`${fn.node.id}Integration`, fn)));
       return i;
     };
-    // Admins sign with their own AWS credentials, agents with their instance role.
+    // Agents sign with their instance role.
     const iamAuthorizer = new HttpIamAuthorizer();
     // Users send the ID token from signing in. API Gateway checks its signature, issuer, expiry and
     // that one of Hearth's clients asked for it, before the request reaches the Lambda.

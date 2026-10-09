@@ -43,7 +43,7 @@ describe('ApiStack', () => {
     template.hasResourceProperties('AWS::ApiGatewayV2::Route', { RouteKey: routeKey, AuthorizationType: 'AWS_IAM' });
   });
 
-  it('has no routes without auth: IAM for admins and agents, a Cognito ID token for /v1', () => {
+  it('has no routes without auth: IAM for agents, a Cognito ID token for /v1', () => {
     const routes = Object.values(template.findResources('AWS::ApiGatewayV2::Route')) as {
       Properties: { RouteKey: string; AuthorizationType?: string };
     }[];
@@ -136,7 +136,6 @@ describe('ApiStack', () => {
 
     it('sends each route to the Lambda its entry names', () => {
       const functionOf: Record<RouteHandler, string> = {
-        admin: 'Admin',
         agentConfig: 'AgentConfig',
         agentStatus: 'AgentStatus',
         agentBackupCredentials: 'AgentBackupCredentials',
@@ -254,12 +253,13 @@ describe('ApiStack', () => {
       'dynamodb:UpdateItem',
       'states:StartExecution',
     ]);
-    // Exactly the workflow the admin function starts for a stop.
-    const admin = Object.values(template.findResources('AWS::Lambda::Function')).find(
-      (fn) => (fn as { Properties: { Handler: string } }).Properties.Handler === 'index.handler',
-    ) as { Properties: { Environment: { Variables: Record<string, unknown> } } };
+    // Exactly the workflow users' stops start.
+    const [, user] = Object.entries(template.findResources('AWS::Lambda::Function')).find(([id]) => /^User[0-9A-F]{8}$/.test(id))! as [
+      string,
+      { Properties: { Environment: { Variables: Record<string, unknown> } } },
+    ];
     const start = statements.find((s) => s.Action === 'states:StartExecution');
-    expect(start?.Resource).toEqual(admin.Properties.Environment.Variables.STOP_WORKFLOW_ARN);
+    expect(start?.Resource).toEqual(user.Properties.Environment.Variables.STOP_WORKFLOW_ARN);
   });
 
   it('lets the restored handler query the index and update items, nothing else', () => {
@@ -286,58 +286,12 @@ describe('ApiStack', () => {
     expect(list?.Condition).toEqual({ StringLike: { 's3:prefix': 'servers/*/*' } });
   });
 
-  it.each([
-    ['GET /admin/servers'],
-    ['POST /admin/servers'],
-    ['GET /admin/servers/{id}'],
-    ['POST /admin/uploads'],
-    ['GET /admin/uploads/{id}'],
-    ['GET /admin/servers/{id}/backups'],
-    ['POST /admin/servers/{id}/version'],
-    ['POST /admin/servers/{id}/restore'],
-    ['POST /admin/servers/{id}/restore/cancel'],
-    ['POST /admin/servers/{id}/start'],
-    ['POST /admin/servers/{id}/stop'],
-    ['POST /admin/servers/{id}/destroy'],
-    ['POST /admin/servers/{id}/settings'],
-  ])('protects %s with IAM auth', (routeKey) => {
-    template.hasResourceProperties('AWS::ApiGatewayV2::Route', { RouteKey: routeKey, AuthorizationType: 'AWS_IAM' });
-  });
-
-  it('lets the admin function start only the four lifecycle workflows', () => {
-    const statements = policyStatements('AdminServiceRoleDefaultPolicy') as { Action: unknown; Resource: unknown }[];
-    const start = statements.find((s) => s.Action === 'states:StartExecution');
-    expect(JSON.stringify(start?.Resource)).toMatch(/create-server|Create/);
-    expect((start?.Resource as unknown[]).length).toBe(4); // create, start, stop, destroy
-    const dynamo = statements.find((s) => JSON.stringify(s.Action).includes('dynamodb'));
-    expect((dynamo?.Action as string[]).sort()).toEqual([
-      'dynamodb:GetItem',
-      'dynamodb:PutItem',
-      'dynamodb:Scan',
-      'dynamodb:UpdateItem',
-    ]);
-    expect(JSON.stringify(statements)).not.toMatch(/ec2:|DeleteItem/);
-  });
-
-  it('lets the admin function list server backups, write upload landing files and read upload results', () => {
-    const statements = policyStatements('AdminServiceRoleDefaultPolicy') as {
-      Action: unknown;
-      Resource: unknown;
-      Condition?: unknown;
-    }[];
-    const uploads = 'arn:aws:s3:::hearth-dev-uploads-138300868928-us-west-2';
-    const s3 = statements.filter((s) => JSON.stringify(s.Action).includes('s3:'));
-    expect(s3).toEqual([
-      expect.objectContaining({ Action: 's3:ListBucket', Condition: { StringLike: { 's3:prefix': 'servers/*/*' } } }),
-      // Landing files only: it can't write backups (a server created from an upload restores it in place).
-      expect.objectContaining({ Action: 's3:PutObject', Resource: `${uploads}/landing/*` }),
-      expect.objectContaining({
-        Action: 's3:GetObject',
-        Resource: [`${uploads}/accepted/*`, `${uploads}/landing/*`, `${uploads}/rejected/*`], // CDK sorts them
-      }),
-      expect.objectContaining({ Action: 's3:ListBucket', Resource: uploads }),
-    ]);
-    expect(JSON.stringify(statements)).not.toContain('s3:Delete');
+  it('has no admin routes or Admin function: admins use /v1 as users in the admin group', () => {
+    const routeKeys = Object.values(template.findResources('AWS::ApiGatewayV2::Route')).map(
+      (r) => (r as { Properties: { RouteKey: string } }).Properties.RouteKey,
+    );
+    expect(routeKeys.filter((key) => key.split(' ')[1]!.startsWith('/admin'))).toEqual([]);
+    expect(Object.keys(template.findResources('AWS::Lambda::Function')).filter((id) => id.startsWith('Admin'))).toEqual([]);
   });
 
   describe('repack', () => {

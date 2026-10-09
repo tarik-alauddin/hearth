@@ -10,7 +10,7 @@ import { AssumeRoleCommand, STSClient } from '@aws-sdk/client-sts';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { backupPrefix, isBackupKey, type BackupSummary, type BackupTarget } from '@hearth/shared';
 
-/** The backup bucket, as the agent and admin routes see it. */
+/** The backup bucket, as the agent and user routes see it. */
 export interface BackupStorage {
   /** Where to upload `key`, with credentials that can write that one key and nothing else. */
   target(serverId: string, key: string): Promise<BackupTarget>;

@@ -80,13 +80,12 @@ Admins only. Users are approved by their user ID: the `userId` `/v1/me` shows th
 
 Answers are the UI's view of a server (`ServerView`): its status, version, `address` while it runs,
 and the caller's `role` (owner, member, or admin). Never instance IDs or storage keys, for admins
-either; admins keep the whole record on `/admin`. Until `/v1` can create servers (M8 PR5d), nobody
-owns one through it, so the list is empty; the CLI's servers (created through `/admin`) are what
-admins can look at.
+either; admins get the whole record from `/v1/admin/servers/{id}` (section 10). Servers created
+before M8 PR8 through the old `/admin` routes have no owner row: only admins reach them.
 
-1. `api /v1/servers`: expect `200` and `{"servers": []}` (`-Body` isn't needed; add `?all=true` to
-   the path to include destroyed servers).
-2. Pick a server ID from `pnpm hearth list` and, as your admin user, `api /v1/servers/<id>`: expect
+1. `api /v1/servers`: expect `200` and the servers you own or are a member of (`-Body` isn't
+   needed; add `?all=true` to the path to include destroyed servers).
+2. Pick a server ID you don't own from `pnpm hearth list` and, as your admin user, `api /v1/servers/<id>`: expect
    `200` with `role: admin`, its `status`, `version`, `idleStopMinutes`, and **no** `instanceId`,
    `volumeId` or `lastBackupKey`.
 3. The same as a user outside `admin`: expect `404` ("No server …"), exactly as for an ID that

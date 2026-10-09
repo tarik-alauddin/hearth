@@ -13,7 +13,7 @@ import {
  * `authorize` (one server) or `requireAdmin` (the whole platform).
  */
 export type Actor =
-  /** A Hearth admin: an IAM caller of /admin, or (with /v1) a user in the Cognito `admin` group. */
+  /** A Hearth admin: a signed-in user in the Cognito `admin` group (`id` is their sub). */
   | { kind: 'admin'; id: string }
   /** A signed-in user (their Cognito `sub`). */
   | { kind: 'user'; userId: string }
@@ -107,11 +107,6 @@ export function actorId(actor: Actor): string {
     case 'agent':
       return actor.instanceId;
   }
-}
-
-/** A server as its caller may see it: the whole record for admins, the UI's view for everyone else. */
-export function shapeServer(server: ServerRecord, relation: Relation): ServerRecord | ServerView {
-  return relation === 'admin' ? server : toServerView(server, relation);
 }
 
 /**

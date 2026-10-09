@@ -10,7 +10,6 @@ import {
   CreateUploadResponseSchema,
   IdleReportSchema,
   InviteSchema,
-  ListBackupsResponseSchema,
   ListInvitesResponseSchema,
   ListMembersResponseSchema,
   ListMyServersResponseSchema,
@@ -37,7 +36,6 @@ import {
 /** The Lambda that serves a route (ApiStack maps each name to its function). */
 export type RouteHandler =
   | 'user'
-  | 'admin'
   | 'agentConfig'
   | 'agentStatus'
   | 'agentBackupCredentials'
@@ -47,8 +45,6 @@ export type RouteHandler =
 
 /** Who may call a route. Routes only say who; the operations check what (see authz.ts). */
 export type RouteCaller =
-  /** Hearth admins (today: IAM, the owner's own AWS credentials). */
-  | { kind: 'admin' }
   /** A game instance's agent (IAM, its instance role), about its own server. */
   | { kind: 'agent' }
   /**
@@ -88,11 +84,10 @@ const operation = {
 const server = (description: string) => ({ description, schema: ServerRecordSchema });
 const conflict = (description: string) => ({ description });
 
-const admin = { kind: 'admin' } as const;
 const agent = { kind: 'agent' } as const;
 
 export const API_ROUTES: readonly ApiRoute[] = [
-  // Routes for signed-in users (the web app; the CLI from M8 PR7).
+  // Routes for signed-in users: the web app and the hearth CLI. Admins are users in the `admin` group.
   {
     id: 'getMe',
     method: 'GET',
@@ -396,139 +391,6 @@ export const API_ROUTES: readonly ApiRoute[] = [
     summary: "A server's whole record",
     description: 'Instance, agent and storage details included (`/v1/servers/{id}` answers what owners see).',
     responses: { 200: server('The server'), 404: { description: 'No such server' } },
-  },
-
-  // Admin routes (the hearth CLI).
-  {
-    id: 'adminListServers',
-    method: 'GET',
-    path: '/admin/servers',
-    handler: 'admin',
-    caller: admin,
-    summary: 'List every server',
-    description: 'Destroyed servers only with `all=true`; a page can then be short, so follow the cursor.',
-    query: ListServersQuerySchema,
-    responses: { 200: { description: 'One page of servers', schema: ListServersResponseSchema } },
-  },
-  {
-    id: 'adminCreateServer',
-    method: 'POST',
-    path: '/admin/servers',
-    handler: 'admin',
-    caller: admin,
-    summary: 'Create a server',
-    description: 'Records it (PROVISIONING) and runs the create workflow, which also starts it.',
-    body: CreateServerRequestSchema,
-    responses: {
-      202: { description: 'Created; the create workflow is running', schema: ServerOperationResultSchema },
-      404: { description: 'No such upload (never uploaded, or expired)' },
-      409: conflict('The upload is still being checked, was rejected, or is for another game'),
-    },
-  },
-  {
-    id: 'adminGetServer',
-    method: 'GET',
-    path: '/admin/servers/{id}',
-    handler: 'admin',
-    caller: admin,
-    summary: 'Get a server',
-    responses: { 200: server('The server') },
-  },
-  {
-    id: 'adminListBackups',
-    method: 'GET',
-    path: '/admin/servers/{id}/backups',
-    handler: 'admin',
-    caller: admin,
-    summary: "List a server's backups",
-    responses: { 200: { description: 'Newest first', schema: ListBackupsResponseSchema } },
-  },
-  {
-    id: 'adminSetVersion',
-    method: 'POST',
-    path: '/admin/servers/{id}/version',
-    handler: 'admin',
-    caller: admin,
-    summary: 'Move a stopped server to a newer game version',
-    description: 'From its next start. Forward only, and only after a clean stop with a backup.',
-    body: SetVersionRequestSchema,
-    responses: { 200: server('The server, with its new version'), 409: conflict('Not stopped, not newer, or no backup since it last ran') },
-  },
-  {
-    id: 'adminRequestRestore',
-    method: 'POST',
-    path: '/admin/servers/{id}/restore',
-    handler: 'admin',
-    caller: admin,
-    summary: 'Restore a backup on the next start',
-    body: RestoreRequestSchema,
-    responses: { 200: server('The server, with the restore pending'), 409: conflict("Not stopped, no backups, or an unclean last stop (unless forced)") },
-  },
-  {
-    id: 'adminCancelRestore',
-    method: 'POST',
-    path: '/admin/servers/{id}/restore/cancel',
-    handler: 'admin',
-    caller: admin,
-    summary: 'Cancel a pending restore',
-    responses: { 200: server('The server, with no restore pending'), 409: conflict('No longer stopped') },
-  },
-  {
-    id: 'adminStartServer',
-    method: 'POST',
-    path: '/admin/servers/{id}/start',
-    handler: 'admin',
-    caller: admin,
-    summary: 'Start a server',
-    responses: { ...operation, 409: conflict("It's in a state that can't be started") },
-  },
-  {
-    id: 'adminStopServer',
-    method: 'POST',
-    path: '/admin/servers/{id}/stop',
-    handler: 'admin',
-    caller: admin,
-    summary: 'Stop a server (saving and backing it up)',
-    responses: { ...operation, 409: conflict("It's in a state that can't be stopped") },
-  },
-  {
-    id: 'adminDestroyServer',
-    method: 'POST',
-    path: '/admin/servers/{id}/destroy',
-    handler: 'admin',
-    caller: admin,
-    summary: "Destroy a stopped server's instance and data volume",
-    description: 'Its backups and record are kept; the record is marked DESTROYED.',
-    responses: { ...operation, 409: conflict('Not stopped: stop it first') },
-  },
-  {
-    id: 'adminUpdateSettings',
-    method: 'POST',
-    path: '/admin/servers/{id}/settings',
-    handler: 'admin',
-    caller: admin,
-    summary: "Change a server's settings",
-    body: UpdateSettingsRequestSchema,
-    responses: { 200: server('The server, with its new settings'), 409: conflict("It's destroyed") },
-  },
-  {
-    id: 'adminCreateUpload',
-    method: 'POST',
-    path: '/admin/uploads',
-    handler: 'admin',
-    caller: admin,
-    summary: 'Start an upload of game data',
-    body: CreateUploadRequestSchema,
-    responses: { 201: { description: 'A form to upload the file with', schema: CreateUploadResponseSchema } },
-  },
-  {
-    id: 'adminGetUpload',
-    method: 'GET',
-    path: '/admin/uploads/{id}',
-    handler: 'admin',
-    caller: admin,
-    summary: 'How the check of an upload is going',
-    responses: { 200: { description: 'Repacking, accepted or rejected', schema: UploadStatusSchema } },
   },
 
   // Agent routes (game instances, about their own server).

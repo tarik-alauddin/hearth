@@ -59,7 +59,7 @@ as part of each PR. The repo layout and commands are in [README.md](README.md).
 | M7 Move your world | Done (PR1–PR4; tested on dev with a real world) |
 | Before Phase 2 | Done: M7 docs, neutral wording, destroy (records kept as `DESTROYED`), state-sync tweak, stage and prod live with the release flow (details under Decisions) |
 | **Phase 1** | **Complete** (2026-10-07): dev, stage and prod run `v2026.10.07-3461efe`, agent `2026.10.06-de42566` |
-| M8 Accounts and access | In progress: PR1a–PR1c done (sign-in with password, Google, Discord, tested on dev); PR2–PR4 done (access data, authorization, API contract); PR5 merged (every server action on `/v1`); PR6 merged (invites, members); PR7a–7c merged (CLI sign-in, CLI on `/v1`, uploads); PR7d (admin views on `/v1`; CLI off IAM) in review |
+| M8 Accounts and access | In progress: PR1a–PR1c done (sign-in with password, Google, Discord, tested on dev); PR2–PR4 done (access data, authorization, API contract); PR5 merged (every server action on `/v1`); PR6 merged (invites, members); PR7 merged (the CLI signs in and uses `/v1` only; uploads; admin views); PR8 (remove `/admin`) in review |
 | M9 Game version catalog | Planned (Deferred's plan, V1–V4) |
 | M10 Web UI | Planned |
 
@@ -238,13 +238,16 @@ the CLI signs in the same way; backend only):
     `upload` (the caller's own). The User λ gets Admin's upload access: PutObject `landing/*`
     (signing forms), GetObject `landing/`, `accepted/`, `rejected/`, ListBucket; `UPLOADS_BUCKET`.
     The CLI's `create --upload` and `--from-upload` are on `/v1`; only `list` uses `/admin` now.
-  - 7d, in review: `GET /v1/admin/servers` (every server, whole records, paged; `?all=true`)
+  - 7d, merged: `GET /v1/admin/servers` (every server, whole records, paged; `?all=true`)
     and `GET /v1/admin/servers/{id}` (the whole record; refused to non-admins even on their own
     server, before reading it), both `adminOnly`. The User λ may Scan Servers. CLI: `list` and
     `status` try the admin route and, on 403, show what the caller sees (their servers; the
     `ServerView`). The CLI no longer signs API requests with IAM (SigV4 client and its four
     dependencies removed); AWS credentials now only read SSM, run `fleet-check` and `admin`.
-- PR8 Remove `/admin` routes, their handler and permissions.
+- PR8, in review: `/admin` removed: its 13 routes, the Admin λ (`services/api/src/admin`) and its
+  role, the `admin` route caller and handler, `shapeServer`. IAM now authorizes agent routes only;
+  admins are users in the Cognito `admin` group, on `/v1`. Servers created through `/admin` keep
+  their IAM ARN as `ownerId` and have no owner row: admins reach them, nobody else.
 
 **M9** is the game version catalog plan under Deferred, its routes under `/v1`. **M10 Web UI**
 (`apps/web`: React + Vite + TypeScript, static, on S3 + CloudFront): PR1 Frontend stack, skeleton,
@@ -362,7 +365,9 @@ and CloudFront's default domain until there is one; callback URLs and origins co
 
     No access → 404 (IDs don't leak); visible but forbidden → 403. Responses are shaped by role
     (users never see instance IDs, S3 keys, agent internals). `/agent/*` stays separate (IAM, the
-    instance's own server); where it overlaps (idle stop) it calls the same operation.
+    instance's own server); where it overlaps (idle stop) it calls the same operation. No route is
+    for IAM admins (`/admin` went in M8 PR8): AWS credentials grant no Hearth powers, only the
+    `admin` group does; the CLI uses them to read SSM, run the fleet check and change the group.
   - **What costs money is gated.** Creating (and uploading, from 7c) needs approval and is capped;
     running time is bounded by idle stop, which only admins can turn off (owners: up to 24 h).
     Unapproving stops new servers only: a user's servers keep running, and they and their members

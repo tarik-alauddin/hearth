@@ -33,9 +33,9 @@ import type { BackupStorage } from '../backups.js';
 import { mayUseUpload, type UploadStorage } from '../uploads.js';
 import type { GameVersions } from './versions.js';
 
-// The one implementation of every server operation. The admin routes use it now; the UI and
-// Discord bot routes will call the same functions, so every caller behaves the same. Each takes
-// the actor first and checks it (`authorize`) before reading or changing anything.
+// The one implementation of every server operation. The /v1 routes (the UI, the CLI) and the agent
+// routes call it, and Discord bot routes will too, so every caller behaves the same. Each takes the
+// actor first and checks it (`authorize`) before reading or changing anything.
 
 export type WorkflowName = 'create' | 'start' | 'stop' | 'destroy';
 
@@ -225,8 +225,8 @@ export function serverOperations({
 
     /**
      * Records a new server (PROVISIONING), owned by the actor, and runs the create workflow, which
-     * also starts it. Admins only for now: users create through /v1, which adds the approval and
-     * server-cap checks and records the owner's access with the server.
+     * also starts it. Users must be approved and under their server limit (admins needn't); the
+     * owner's access is recorded with the server.
      */
     async createServer(actor: Actor, request: unknown): Promise<ServerOperationResult> {
       if (actor.kind === 'agent') throw new AccessDenied(403, 'Agents cannot create servers');
@@ -265,8 +265,9 @@ export function serverOperations({
         statusChangedAt: at.toISOString(),
         lastOperationId: operationId,
       };
-      // Routes for signed-in users record the owner's access with the server, in one transaction,
-      // so it's in their list at once. (/admin has no access table: its servers have no owner row.)
+      // The owner's access is recorded with the server, in one transaction, so it's in their list at
+      // once. (Only the User λ has `ownership`: agents create nothing. Servers created through the
+      // old /admin routes, before M8 PR8, have no owner row; admins still reach them.)
       if (ownership) {
         await ownership.createOwnedServer(record, {
           userId: ownerId,

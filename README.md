@@ -75,8 +75,9 @@ pnpm api:docs    # the same, then Swagger UI on http://localhost:8090 (read-only
 To add or change a route: edit `routes.ts` (and `schemas.ts` for a new body), handle it in its
 Lambda, then `pnpm api:spec`.
 
-Routes under `/v1` are for signed-in users: they take the ID token from signing in
-(`Authorization: Bearer <id token>`), checked by API Gateway against the environment's user pool.
+Routes under `/v1` are for signed-in users, admins included (the Cognito `admin` group): they take
+the ID token from signing in (`Authorization: Bearer <id token>`), checked by API Gateway against the
+environment's user pool. Routes under `/agent` are for game instances (IAM, their instance role).
 To call one from PowerShell, signed in through the browser once:
 
 ```powershell

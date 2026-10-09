@@ -30,7 +30,7 @@ const handlers = agentHandlers({
   releases: ssmAgentReleases({ env: requireEnv('HEARTH_ENV'), bucket: requireEnv('AGENT_RELEASES_BUCKET') }),
   backups,
   uploads,
-  // The same operations as the admin routes. Agents only stop their own server, so only the idle
+  // The same operations as users' routes. Agents only stop their own server, so only the idle
   // route's function gets the stop workflow's ARN (and permission to start it).
   operations: serverOperations({
     store,
