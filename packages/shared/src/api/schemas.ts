@@ -137,7 +137,7 @@ export const UpdateSettingsRequestSchema = named(
         .min(0)
         .max(MAX_IDLE_STOP_MINUTES)
         .optional()
-        .describe(`Stop after this long with nobody playing (1–${MAX_IDLE_STOP_MINUTES}); 0 = never`),
+        .describe(`Stop after this long with nobody playing (1–${MAX_IDLE_STOP_MINUTES}); 0 = never (admins only)`),
     })
     .refine((s) => s.agentChannel !== undefined || s.idleStopMinutes !== undefined, 'No settings given'),
   'UpdateSettingsRequest',

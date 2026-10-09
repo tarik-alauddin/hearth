@@ -178,9 +178,14 @@ export const API_ROUTES: readonly ApiRoute[] = [
     handler: 'user',
     caller: { kind: 'user', action: 'settings' },
     summary: "Change a server's settings",
-    description: 'Owners. `idleStopMinutes` (0 = never); `agentChannel` is for admins. They apply from the next start.',
+    description:
+      'Owners. `idleStopMinutes`; 0 (never) and `agentChannel` are for admins. They apply from the next start.',
     body: UpdateSettingsRequestSchema,
-    responses: { 200: { description: 'The server, with its new settings', schema: ServerViewSchema }, 409: conflict("It's destroyed") },
+    responses: {
+      200: { description: 'The server, with its new settings', schema: ServerViewSchema },
+      403: { description: 'Not the owner, or an admin-only setting' },
+      409: conflict("It's destroyed"),
+    },
   },
   {
     id: 'setServerVersion',
@@ -333,6 +338,7 @@ export const API_ROUTES: readonly ApiRoute[] = [
     responses: {
       200: { description: 'The user, with their approval', schema: UserRecordSchema },
       404: { description: 'No such user: they sign in once first' },
+      409: conflict("It's the caller's own (admins need no approval)"),
     },
   },
 

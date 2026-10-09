@@ -34,7 +34,7 @@ const USAGE = `Usage: hearth <command> [options]
   destroy <serverId> [--yes]               delete a stopped server's instance and data volume; keeps its backups and record
   set-channel <serverId> <canary|stable>   agent releases to follow, from the next start (admins)
   set-version <serverId> <version>         a newer game release, from the next start (forward only)
-  set-idle <serverId> <minutes|off>        stop after this long with nobody playing, from the next start
+  set-idle <serverId> <minutes|off>        stop after this long with nobody playing (off: admins), from the next start
   fleet-check                              stuck, failed and mismatched servers; instances with no server
 
 Options:

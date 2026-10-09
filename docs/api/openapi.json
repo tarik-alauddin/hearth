@@ -1458,6 +1458,16 @@
                 }
               }
             }
+          },
+          "409": {
+            "description": "It's the caller's own (admins need no approval)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
           }
         }
       }
@@ -1754,7 +1764,7 @@
       "patch": {
         "operationId": "updateServerSettings",
         "summary": "Change a server's settings",
-        "description": "Owners. `idleStopMinutes` (0 = never); `agentChannel` is for admins. They apply from the next start.",
+        "description": "Owners. `idleStopMinutes`; 0 (never) and `agentChannel` are for admins. They apply from the next start.",
         "tags": [
           "user"
         ],
@@ -1816,7 +1826,7 @@
             }
           },
           "403": {
-            "description": "The caller may not do this",
+            "description": "Not the owner, or an admin-only setting",
             "content": {
               "application/json": {
                 "schema": {
@@ -3818,7 +3828,7 @@
             "$ref": "#/components/schemas/AgentChannel"
           },
           "idleStopMinutes": {
-            "description": "Stop after this long with nobody playing (1–1440); 0 = never",
+            "description": "Stop after this long with nobody playing (1–1440); 0 = never (admins only)",
             "type": "integer",
             "minimum": 0,
             "maximum": 1440

@@ -685,6 +685,17 @@ describe('server operations', () => {
       expect((await ops(store).getServer(ADMIN, 's1')).relation).toBe('admin');
     });
 
+    it('lets only admins turn idle stop off: a server that never idles bills until stopped', async () => {
+      const { store, servers } = fakeStore([server({ status: 'STOPPED', idleStopMinutes: 30 })]);
+      await expect(ops(store, access).updateSettings(owner, 's1', { idleStopMinutes: 0 })).rejects.toMatchObject({
+        statusCode: 403,
+        message: 'Only Hearth admins can turn idle stop off; choose 1 to 1440 minutes',
+      });
+      expect(servers.get('s1')?.idleStopMinutes).toBe(30);
+      expect((await ops(store, access).updateSettings(owner, 's1', { idleStopMinutes: 1440 })).idleStopMinutes).toBe(1440);
+      expect((await ops(store).updateSettings(ADMIN, 's1', { idleStopMinutes: 0 })).idleStopMinutes).toBe(0);
+    });
+
     it('keeps agent channels for admins, even from the owner', async () => {
       const { store } = fakeStore([server({ status: 'STOPPED' })]);
       await expect(ops(store, access).updateSettings(owner, 's1', { agentChannel: 'canary' })).rejects.toMatchObject({

@@ -398,6 +398,15 @@ describe('user routes', () => {
       expect(users.get('friend')?.approved).toBe(false);
     });
 
+    it("refuses an admin's own approval with 409 (admins need none), changing nothing", async () => {
+      const { handle, users } = setup();
+      users.set(SUB, { userId: SUB, approved: true, serverLimit: 3, createdAt: 'then', lastSeenAt: 'then' });
+      const res = await handle(event(ROUTE, admin, { id: SUB, body: '{"approved":false}' }));
+      expect(res.statusCode).toBe(409);
+      expect(JSON.parse(res.body!).message).toMatch(/your own approval/);
+      expect(users.get(SUB)?.approved).toBe(true);
+    });
+
     it('answers 404 for someone who has never signed in, and 400 for a bad body', async () => {
       const { handle } = setup();
       expect((await handle(event(ROUTE, admin, { id: 'stranger', body: '{"approved":true}' }))).statusCode).toBe(404);

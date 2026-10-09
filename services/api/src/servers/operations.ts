@@ -9,6 +9,7 @@ import {
 } from '@hearth/core';
 import {
   DEFAULT_AGENT_CHANNEL,
+  MAX_IDLE_STOP_MINUTES,
   backupPrefix,
   isUploadId,
   type GameId,
@@ -302,6 +303,10 @@ export function serverOperations({
       if (settings.agentChannel !== undefined) requireAdmin(actor);
       if ((await serverFor(actor, 'settings', serverId)).status === 'DESTROYED') {
         throw new OperationError(409, `Server ${serverId} is DESTROYED; its settings can't change`);
+      }
+      // A server that never stops for being idle runs (and bills) until someone stops it.
+      if (settings.idleStopMinutes === 0 && actor.kind !== 'admin') {
+        throw new AccessDenied(403, `Only Hearth admins can turn idle stop off; choose 1 to ${MAX_IDLE_STOP_MINUTES} minutes`);
       }
       if (!(await store.updateSettings(serverId, settings))) throw new OperationError(404, `No server ${serverId}`);
       return requireServer(serverId);
