@@ -59,7 +59,7 @@ as part of each PR. The repo layout and commands are in [README.md](README.md).
 | M7 Move your world | Done (PR1–PR4; tested on dev with a real world) |
 | Before Phase 2 | Done: M7 docs, neutral wording, destroy (records kept as `DESTROYED`), state-sync tweak, stage and prod live with the release flow (details under Decisions) |
 | **Phase 1** | **Complete** (2026-10-07): dev, stage and prod run `v2026.10.07-3461efe`, agent `2026.10.06-de42566` |
-| M8 Accounts and access | In progress: PR1a–PR1c done (sign-in with password, Google, Discord, tested on dev); PR2–PR4 done (access data, authorization, API contract); PR5 merged (every server action on `/v1`); PR6 merged (invites, members); PR7a done (CLI sign-in); PR7b (CLI on `/v1`) in review |
+| M8 Accounts and access | In progress: PR1a–PR1c done (sign-in with password, Google, Discord, tested on dev); PR2–PR4 done (access data, authorization, API contract); PR5 merged (every server action on `/v1`); PR6 merged (invites, members); PR7a–7b merged (CLI sign-in, CLI on `/v1`); PR7c-1 (uploads tied to their uploader) in review |
 | M9 Game version catalog | Planned (Deferred's plan, V1–V4) |
 | M10 Web UI | Planned |
 
@@ -218,7 +218,7 @@ the CLI signs in the same way; backend only):
     `/v1`). `hearth admin list | add | remove <userId>`: the Cognito `admin` group, called directly
     with AWS credentials (finds the username by `sub`): no API route can grant admin. Takes effect
     at the user's next token refresh (an hour at most; groups are read at each refresh).
-  - 7b, in review: status, start, stop, destroy, create (not from an upload), set-idle,
+  - 7b, merged: status, start, stop, destroy, create (not from an upload), set-idle,
     set-version, set-channel (the `/v1` settings route; admins), backups (by name) and restore on
     `/v1` with the session; `hearth approve` / `unapprove <userId>`. `list` and creating from an
     upload stay on `/admin` (IAM, `adminApi`) until 7d/7c: servers created through `/admin` have
@@ -227,8 +227,14 @@ the CLI signs in the same way; backend only):
     (the stop's "game may not be saved"). The CLI needs a browser on the same machine (no CloudShell).
     Rides along (cost guards): an admin can't change their own approval (409; admins need none),
     and only admins may turn idle stop off (`idleStopMinutes: 0`; owners choose 1–1440, 403).
-  - 7c: `/v1` uploads (`POST /v1/uploads`, `GET /v1/uploads/{id}`), approved users and admins only
-    (like create); `create --upload` on them.
+  - 7c-1, in review: uploads tied to their uploader, before users can upload. The form fixes
+    `x-amz-meta-uploader` (the actor's ID: a user's sub, or an admin's ARN; each form field is a
+    condition of the signed policy, so S3 refuses another); repack reads it (HeadObject) and puts
+    it on `accepted/` (with `game`) and `rejected/`. Upload status and creating from an upload:
+    the uploader or any admin (`mayUseUpload`); anyone else 404, as for an unknown ID. Uploads
+    from before have no uploader: admins only. No route or IAM change.
+  - 7c-2: `/v1` uploads (`POST /v1/uploads`, `GET /v1/uploads/{id}`), approved users and admins
+    only (like create); the User λ's S3 access (as Admin's); `create --upload` on them.
   - 7d: admin routes on `/v1`: every server and one server's whole record (`list`, and `status`'s
     instance and agent rows for admins); `fleet-check` stays a direct Lambda call.
 - PR8 Remove `/admin` routes, their handler and permissions.
@@ -427,7 +433,9 @@ and CloudFront's default domain until there is one; callback URLs and origins co
   expiry, and browser CORS later. Prefixes: `landing/` (client writes through a presigned link,
   1-day expiry), `accepted/` and `rejected/` (repack writes, 7-day expiry). Repack has no delete
   permission; landing files just expire. The game is in the landing key, which the link signs, so
-  a client can't pick another game's rules.
+  a client can't pick another game's rules. The form also fixes the uploader (S3 metadata, kept
+  by repack): an upload is its uploader's (and admins'), so an upload ID alone gives nobody else
+  its data.
 - **User uploads never reach a server as uploaded.** Repack (a throwaway Lambda) unpacks
   them strictly (no `..`, absolute paths or links; a size cap), keeps an allowlist of the game's
   files, and repacks them in our backup format; the agent only restores archives our code made.

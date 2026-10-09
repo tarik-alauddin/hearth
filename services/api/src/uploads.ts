@@ -5,6 +5,7 @@ import { newId as defaultNewId } from '@hearth/core';
 import {
   GAMES,
   MAX_UPLOAD_BYTES,
+  UPLOADER_METADATA,
   acceptedKey,
   isUploadId,
   landingKey,
@@ -15,18 +16,29 @@ import {
   type UploadStatus,
 } from '@hearth/shared';
 import { CreateUploadRequestSchema } from '@hearth/shared/api';
+import { actorId, type Actor } from './authz.js';
 import { OperationError } from './servers/operations.js';
 import { check } from './validation.js';
 
 // Forms and download links are short-lived: they're used right after they're made.
 const FORM_SECONDS = 900;
 
+/** An upload as the bucket records it: where repack is with it, and who uploaded it. */
+export interface StoredUpload {
+  status: UploadStatus;
+  /** From the file's metadata; uploads made before it was recorded have none (admins only). */
+  uploader?: string;
+}
+
 /** The uploads bucket, as the admin and agent routes see it. */
 export interface UploadStorage {
-  /** A presigned POST form for `landingKey(game, uploadId)` that S3 refuses for files over the cap. */
-  form(game: GameId, uploadId: string): Promise<Pick<CreateUploadResponse, 'url' | 'fields' | 'expiresAt'>>;
+  /**
+   * A presigned POST form for `landingKey(game, uploadId)` that S3 refuses for files over the cap,
+   * or naming anyone but `uploader`.
+   */
+  form(game: GameId, uploadId: string, uploader: string): Promise<Pick<CreateUploadResponse, 'url' | 'fields' | 'expiresAt'>>;
   /** Where repack is with an upload, read from the bucket; undefined if there's no trace of it. */
-  status(uploadId: string): Promise<UploadStatus | undefined>;
+  status(uploadId: string): Promise<StoredUpload | undefined>;
   /** Where an accepted upload's repacked archive is. */
   accepted(uploadId: string): { bucket: string; key: string };
   /** A short-lived link that downloads `key` (an accepted upload) and nothing else. */
@@ -66,31 +78,39 @@ export function s3UploadStorage(opts: {
     downloadUrl: (key) => getSignedUrl(client, new GetObjectCommand({ Bucket: bucket, Key: key }), { expiresIn: FORM_SECONDS }),
 
     async status(uploadId) {
+      const uploader = (metadata: Record<string, string> | undefined) =>
+        metadata?.[UPLOADER_METADATA] ? { uploader: metadata[UPLOADER_METADATA] } : {};
       const accepted = await head(acceptedKey(uploadId));
       if (accepted) {
         const { game } = accepted.metadata; // set by repack
-        return { uploadId, status: 'accepted', bytes: accepted.bytes, ...(game ? { game } : {}) };
+        return {
+          status: { uploadId, status: 'accepted', bytes: accepted.bytes, ...(game ? { game } : {}) },
+          ...uploader(accepted.metadata),
+        };
       }
       try {
         const out = await s3.send(new GetObjectCommand({ Bucket: bucket, Key: rejectedKey(uploadId) }));
         const { reason } = JSON.parse(await out.Body!.transformToString()) as Rejection;
-        return { uploadId, status: 'rejected', reason };
+        return { status: { uploadId, status: 'rejected', reason }, ...uploader(out.Metadata) };
       } catch (err) {
         if (!(err instanceof NoSuchKey)) throw err;
       }
       // Still landed and not repacked yet. The game is in the landing key; try each.
       for (const game of GAMES) {
-        if (await head(landingKey(game, uploadId))) return { uploadId, status: 'repacking' };
+        const landed = await head(landingKey(game, uploadId));
+        if (landed) return { status: { uploadId, status: 'repacking' }, ...uploader(landed.metadata) };
       }
       return undefined;
     },
 
-    async form(game, uploadId) {
+    async form(game, uploadId, uploader) {
       const expiresAt = new Date(now().getTime() + FORM_SECONDS * 1000).toISOString();
       const { url, fields } = await presign(client, {
         Bucket: bucket,
         Key: landingKey(game, uploadId),
         Conditions: [['content-length-range', 1, MAX_UPLOAD_BYTES]],
+        // Each field is also an exact-match condition of the signed policy: S3 refuses another uploader.
+        Fields: { [`x-amz-meta-${UPLOADER_METADATA}`]: uploader },
         Expires: FORM_SECONDS,
       });
       return { url, fields, expiresAt };
@@ -109,20 +129,32 @@ export function uploadOperations({
   newId?: (now: Date) => string;
 }) {
   return {
-    /** A new upload ID and the form to upload to it. The ID is unguessable: it names the upload later. */
-    async createUpload(request: unknown): Promise<CreateUploadResponse> {
+    /**
+     * A new upload ID and the form to upload to it, naming the actor as its uploader. The ID is
+     * unguessable: it names the upload later.
+     */
+    async createUpload(actor: Actor, request: unknown): Promise<CreateUploadResponse> {
+      if (actor.kind === 'agent') throw new OperationError(403, 'Agents cannot upload');
       const parsed = check(CreateUploadRequestSchema, request);
       if (!parsed.ok) throw new OperationError(400, parsed.message);
       const uploadId = newId(now());
-      return { uploadId, maxBytes: MAX_UPLOAD_BYTES, ...(await uploads.form(parsed.value.game, uploadId)) };
+      return { uploadId, maxBytes: MAX_UPLOAD_BYTES, ...(await uploads.form(parsed.value.game, uploadId, actorId(actor))) };
     },
 
-    /** Whether repack has accepted or rejected an upload yet; 404 if it was never uploaded or has expired. */
-    async uploadStatus(uploadId: string): Promise<UploadStatus> {
-      if (!isUploadId(uploadId)) throw new OperationError(404, `No upload ${uploadId}`);
-      const status = await uploads.status(uploadId);
-      if (!status) throw new OperationError(404, `No upload ${uploadId} (never uploaded, or expired)`);
-      return status;
+    /**
+     * Whether repack has accepted or rejected an upload yet. 404 if it was never uploaded, has
+     * expired, or is someone else's.
+     */
+    async uploadStatus(actor: Actor, uploadId: string): Promise<UploadStatus> {
+      const stored = isUploadId(uploadId) ? await uploads.status(uploadId) : undefined;
+      if (!stored || !mayUseUpload(actor, stored)) throw new OperationError(404, `No upload ${uploadId} (never uploaded, or expired)`);
+      return stored.status;
     },
   };
+}
+
+/** Whether an actor may see or use an upload: its uploader, or any admin. */
+export function mayUseUpload(actor: Actor, upload: StoredUpload): boolean {
+  if (actor.kind === 'admin') return true;
+  return actor.kind === 'user' && upload.uploader === actor.userId;
 }

@@ -45,12 +45,12 @@ export function adminHandler({ operations, uploads, instanceRoleNames, log = def
           return json(200, shapeServer(server, relation));
         }
         case 'POST /admin/uploads': {
-          const result = await uploads.createUpload(parseBody(event));
+          const result = await uploads.createUpload(actor, parseBody(event));
           log({ msg: 'upload started', caller, uploadId: result.uploadId });
           return json(201, result);
         }
         case 'GET /admin/uploads/{id}':
-          return json(200, await uploads.uploadStatus(event.pathParameters?.id ?? ''));
+          return json(200, await uploads.uploadStatus(actor, event.pathParameters?.id ?? ''));
         case 'GET /admin/servers/{id}/backups':
           return json(200, await operations.listBackups(actor, serverId));
         case 'POST /admin/servers/{id}/version': {

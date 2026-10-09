@@ -1,7 +1,8 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import type { ServerAccessRecord, ServerRecord, UploadStatus } from '@hearth/shared';
+import type { ServerAccessRecord, ServerRecord } from '@hearth/shared';
 import { InvalidCursor } from '@hearth/core';
 import type { Actor } from '../authz.js';
+import type { StoredUpload } from '../uploads.js';
 import { OperationError, serverOperations, type OperationDeps, type WorkflowName } from './operations.js';
 
 const ADMIN: Actor = { kind: 'admin', id: 'arn:admin' };
@@ -17,12 +18,13 @@ const OLD_ACCEPTED = '01K6ACCEPTED0000000000000Z'; // accepted before repack rec
 const REPACKING = '01K6REPACKNG00000000000000';
 const REJECTED = '01K6REJECTED00000000000000';
 const OTHER_GAME = '01K6THERGAME00000000000000';
-const UPLOADS: Record<string, UploadStatus> = {
-  [ACCEPTED]: { uploadId: ACCEPTED, status: 'accepted', bytes: 100, game: 'minecraft-java' },
-  [OLD_ACCEPTED]: { uploadId: OLD_ACCEPTED, status: 'accepted', bytes: 100 },
-  [REPACKING]: { uploadId: REPACKING, status: 'repacking' },
-  [REJECTED]: { uploadId: REJECTED, status: 'rejected', reason: 'no level.dat found' },
-  [OTHER_GAME]: { uploadId: OTHER_GAME, status: 'accepted', bytes: 100, game: 'terraria' },
+// u1 uploaded ACCEPTED; the others were uploaded by admins, or before uploaders were recorded.
+const UPLOADS: Record<string, StoredUpload> = {
+  [ACCEPTED]: { status: { uploadId: ACCEPTED, status: 'accepted', bytes: 100, game: 'minecraft-java' }, uploader: 'u1' },
+  [OLD_ACCEPTED]: { status: { uploadId: OLD_ACCEPTED, status: 'accepted', bytes: 100 } },
+  [REPACKING]: { status: { uploadId: REPACKING, status: 'repacking' } },
+  [REJECTED]: { status: { uploadId: REJECTED, status: 'rejected', reason: 'no level.dat found' } },
+  [OTHER_GAME]: { status: { uploadId: OTHER_GAME, status: 'accepted', bytes: 100, game: 'terraria' } },
 };
 
 const BACKUPS = [
@@ -736,6 +738,17 @@ describe('server operations', () => {
         expect(servers.get('ID1')).toMatchObject({ ownerId: 'u1', agentChannel: 'stable', status: 'PROVISIONING' });
         expect(owned).toEqual([expect.objectContaining({ serverId: 'ID1', userId: 'u1', role: 'owner', addedBy: 'u1' })]);
         expect(started).toEqual([{ workflow: 'create', serverId: 'ID1', operationId: 'ID2' }]);
+      });
+
+      it("creates from the user's own upload; anyone else's is 404, as if it didn't exist", async () => {
+        const { o, servers } = setup();
+        await o.createServer(owner, { ...body, upload: ACCEPTED });
+        expect(servers.get('ID1')?.restoreKey).toBe(`accepted/${ACCEPTED}.tar.gz`);
+        await expect(o.createServer(owner, { ...body, upload: OLD_ACCEPTED })).rejects.toMatchObject({
+          statusCode: 404,
+          message: `No upload ${OLD_ACCEPTED} (never uploaded, or expired)`,
+        });
+        expect(servers.size).toBe(1);
       });
 
       it('refuses a user an admin has not approved, or who never signed in, with 403', async () => {

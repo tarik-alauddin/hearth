@@ -5,9 +5,17 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
-import { GetObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
+import { GetObjectCommand, HeadObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import type { EventBridgeEvent } from 'aws-lambda';
-import { MAX_UPLOAD_BYTES, acceptedKey, parseLandingKey, rejectedKey, type GameId, type Rejection } from '@hearth/shared';
+import {
+  MAX_UPLOAD_BYTES,
+  UPLOADER_METADATA,
+  acceptedKey,
+  parseLandingKey,
+  rejectedKey,
+  type GameId,
+  type Rejection,
+} from '@hearth/shared';
 import { UPLOAD_RULES } from './games/index.js';
 import { repack } from './repack.js';
 import type { UploadRules } from './rules.js';
@@ -37,10 +45,27 @@ export function repackHandler({ bucket, s3, rules = UPLOAD_RULES, workDir = tmpd
     }
     const { game, uploadId } = landing;
 
+    // Who uploaded it (fixed by the signed form), carried onto the result: only they and admins
+    // may see or use it. Unknown if S3 can't say; the result is then for admins alone.
+    let uploader: Record<string, string> = {};
+    try {
+      const { Metadata } = await s3.send(new HeadObjectCommand({ Bucket: bucket, Key: key }));
+      const id = Metadata?.[UPLOADER_METADATA];
+      if (id) uploader = { [UPLOADER_METADATA]: id };
+    } catch (err) {
+      console.error(JSON.stringify({ msg: "couldn't read the uploader", uploadId, err: String(err) }));
+    }
+
     const reject = async (reason: string) => {
       const body: Rejection = { reason, at: now().toISOString() };
       await s3.send(
-        new PutObjectCommand({ Bucket: bucket, Key: rejectedKey(uploadId), Body: JSON.stringify(body), ContentType: 'application/json' }),
+        new PutObjectCommand({
+          Bucket: bucket,
+          Key: rejectedKey(uploadId),
+          Body: JSON.stringify(body),
+          ContentType: 'application/json',
+          Metadata: uploader,
+        }),
       );
       console.log(JSON.stringify({ msg: 'upload rejected', uploadId, game, reason }));
     };
@@ -67,7 +92,7 @@ export function repackHandler({ bucket, s3, rules = UPLOAD_RULES, workDir = tmpd
           ContentLength: (await stat(output)).size,
           ContentType: 'application/gzip',
           // Which game's rules accepted it: a server can only be created from its own game's upload.
-          Metadata: { game },
+          Metadata: { game, ...uploader },
         }),
       );
       console.log(JSON.stringify({ msg: 'upload accepted', uploadId, game, files: outcome.files, bytes: outcome.bytes }));
