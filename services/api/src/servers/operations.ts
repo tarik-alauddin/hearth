@@ -30,7 +30,7 @@ import type { z } from 'zod';
 import { AccessDenied, actorId, requireAdmin, serverAuthorizer, type Actor, type Relation } from '../authz.js';
 import { check } from '../validation.js';
 import type { BackupStorage } from '../backups.js';
-import type { UploadStorage } from '../uploads.js';
+import { mayUseUpload, type UploadStorage } from '../uploads.js';
 import type { GameVersions } from './versions.js';
 
 // The one implementation of every server operation. The admin routes use it now; the UI and
@@ -167,10 +167,11 @@ export function serverOperations({
     }
   }
 
-  /** Refuses an upload repack hasn't accepted, or accepted for another game. */
-  async function requireAccepted(uploadId: string, game: GameId): Promise<void> {
-    const status = isUploadId(uploadId) ? await uploads.status(uploadId) : undefined;
-    if (!status) throw new OperationError(404, `No upload ${uploadId} (never uploaded, or expired)`);
+  /** Refuses an upload repack hasn't accepted, accepted for another game, or someone else's. */
+  async function requireAccepted(actor: Actor, uploadId: string, game: GameId): Promise<void> {
+    const stored = isUploadId(uploadId) ? await uploads.status(uploadId) : undefined;
+    if (!stored || !mayUseUpload(actor, stored)) throw new OperationError(404, `No upload ${uploadId} (never uploaded, or expired)`);
+    const { status } = stored;
     if (status.status === 'repacking') throw new OperationError(409, `Upload ${uploadId} is still being checked; try again shortly`);
     if (status.status === 'rejected') throw new OperationError(409, `Upload ${uploadId} was rejected: ${status.reason}`);
     if (status.game && status.game !== game) throw new OperationError(409, `Upload ${uploadId} is for ${status.game}, not ${game}`);
@@ -236,7 +237,7 @@ export function serverOperations({
       if (parsed.agentChannel !== undefined) requireAdmin(actor);
       if (actor.kind === 'user') await requireMayCreate(actor.userId);
       if (!gameRegions.includes(region)) throw new OperationError(400, `No game infrastructure in ${region}`);
-      if (upload !== undefined) await requireAccepted(upload, game);
+      if (upload !== undefined) await requireAccepted(actor, upload, game);
       const at = now();
       const serverId = newId(at);
       const operationId = newId(at);

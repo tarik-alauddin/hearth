@@ -18,6 +18,13 @@ export const MAX_UNPACKED_BYTES = 8 * 1024 ** 3;
 /** The most files and folders an upload may hold. */
 export const MAX_UPLOAD_ENTRIES = 200_000;
 
+/**
+ * The S3 metadata naming who uploaded a file: a user's ID, or an admin's identity. The signed form
+ * fixes it on the landing file, and repack copies it onto the result; only they (and admins) may
+ * see or use the upload.
+ */
+export const UPLOADER_METADATA = 'uploader';
+
 /** What repack writes to `rejected/<uploadId>.json`. */
 export interface Rejection {
   reason: string;

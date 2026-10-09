@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { createGunzip, createGzip } from 'node:zlib';
-import { GetObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3';
+import { GetObjectCommand, HeadObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3';
 import { extract, pack } from 'tar-stream';
 import { beforeEach, describe, expect, it } from 'vitest';
 import yazl from 'yazl';
@@ -193,16 +193,20 @@ describe('repackHandler', () => {
   const event = (key: string, bucket = 'uploads') =>
     ({ detail: { bucket: { name: bucket }, object: { key, size: 100 } } }) as Parameters<ReturnType<typeof repackHandler>>[0];
 
-  function fakeS3(upload?: string) {
-    const puts: { key: string; body: string }[] = [];
+  function fakeS3(upload?: string, uploader: string | null = 'u-1') {
+    const puts: { key: string; body: string; metadata?: Record<string, string> }[] = [];
     const s3 = {
-      send: async (command: GetObjectCommand | PutObjectCommand) => {
+      send: async (command: HeadObjectCommand | GetObjectCommand | PutObjectCommand) => {
+        if (command instanceof HeadObjectCommand) {
+          if (!upload) throw new Error('S3 unavailable');
+          return { Metadata: uploader ? { uploader } : {} };
+        }
         if (command instanceof GetObjectCommand) {
           if (!upload) throw new Error('S3 unavailable');
           return { Body: createReadStream(upload) };
         }
         const body = command.input.Body;
-        puts.push({ key: command.input.Key!, body: typeof body === 'string' ? body : '<file>' });
+        puts.push({ key: command.input.Key!, body: typeof body === 'string' ? body : '<file>', metadata: command.input.Metadata });
         if (typeof body !== 'string') (body as Readable).resume();
         return {};
       },
@@ -215,7 +219,14 @@ describe('repackHandler', () => {
     const work = await mkdtemp(join(tmpdir(), 'work-'));
     await repackHandler({ bucket: 'uploads', s3, workDir: work })(event(`landing/minecraft-java/${UPLOAD}`));
     expect(puts.map((p) => p.key)).toEqual([`accepted/${UPLOAD}.tar.gz`]);
+    expect(puts[0]!.metadata).toEqual({ game: 'minecraft-java', uploader: 'u-1' });
     expect(await readdir(work)).toEqual([]);
+  });
+
+  it('accepts an upload with no recorded uploader (for admins alone)', async () => {
+    const { s3, puts } = fakeS3(await zip(SAVE), null);
+    await repackHandler({ bucket: 'uploads', s3, workDir: dir })(event(`landing/minecraft-java/${UPLOAD}`));
+    expect(puts[0]!.metadata).toEqual({ game: 'minecraft-java' });
   });
 
   it('writes a rejection with the reason', async () => {
@@ -226,6 +237,7 @@ describe('repackHandler', () => {
     expect(puts).toHaveLength(1);
     expect(puts[0]!.key).toBe(`rejected/${UPLOAD}.json`);
     expect(JSON.parse(puts[0]!.body)).toEqual({ reason: minecraftJava.missingReason, at: '2026-10-05T12:00:00.000Z' });
+    expect(puts[0]!.metadata).toEqual({ uploader: 'u-1' }); // the uploader sees why
   });
 
   it("rejects a game with no upload rules, and answers even when repack itself fails", async () => {
