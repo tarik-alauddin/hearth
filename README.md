@@ -56,7 +56,7 @@ pnpm hearth admin list | add <userId> | remove <userId>     # the Cognito admin 
 ```
 
 `hearth login` keeps its session in `~/.hearth/session-<env>.json` (30 days). Server commands use
-`/v1`; listing every server and uploads still use the admin routes (IAM) until `/v1` has them.
+`/v1`; listing every server still uses the admin routes (IAM) until `/v1` has it.
 
 To check a server end to end and join it, follow [docs/testing/game-server.md](docs/testing/game-server.md).
 

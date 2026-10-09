@@ -13,6 +13,7 @@ import { AccessDenied, toServerView } from '../authz.js';
 import { OperationError, type serverOperations } from '../servers/operations.js';
 import type { inviteOperations } from '../invites/operations.js';
 import type { memberOperations } from '../members/operations.js';
+import type { uploadOperations } from '../uploads.js';
 import type { userOperations } from '../users/operations.js';
 import { callerFromClaims, type Claims } from './claims.js';
 
@@ -24,6 +25,7 @@ export interface UserHandlerDeps {
   userOps: ReturnType<typeof userOperations>;
   inviteOps: ReturnType<typeof inviteOperations>;
   memberOps: ReturnType<typeof memberOperations>;
+  uploadOps: ReturnType<typeof uploadOperations>;
   serverOps: Pick<
     ReturnType<typeof serverOperations>,
     | 'relationTo'
@@ -47,7 +49,7 @@ export interface UserHandlerDeps {
  * One Lambda for every /v1 route (signed-in users; API Gateway checks their Cognito ID token),
  * dispatched by route key. Routes say who is calling; the operations decide what they may do.
  */
-export function userHandler({ users, userOps, serverOps, inviteOps, memberOps, now = () => new Date(), log = defaultLog }: UserHandlerDeps) {
+export function userHandler({ users, userOps, serverOps, inviteOps, memberOps, uploadOps, now = () => new Date(), log = defaultLog }: UserHandlerDeps) {
   return async function handle(event: Event): Promise<Result> {
     const caller = callerFromClaims(event.requestContext.authorizer?.jwt?.claims as Claims | undefined);
     if (!caller) return json(401, { message: 'Send the ID token from signing in (Authorization: Bearer <id token>)' });
@@ -118,6 +120,13 @@ export function userHandler({ users, userOps, serverOps, inviteOps, memberOps, n
           log({ msg: 'invite revoked', by: caller.userId, serverId: serverId(event) });
           return { statusCode: 204 };
         }
+        case 'POST /v1/uploads': {
+          const result = await uploadOps.createUpload(caller.actor, parseBody(event));
+          log({ msg: 'upload started', by: caller.userId, uploadId: result.uploadId });
+          return json(201, result);
+        }
+        case 'GET /v1/uploads/{id}':
+          return json(200, await uploadOps.uploadStatus(caller.actor, event.pathParameters?.id ?? ''));
         case 'POST /v1/invites/{code}/accept': {
           const { server, relation } = await inviteOps.acceptInvite(caller.actor, event.pathParameters?.code ?? '');
           log({ msg: 'invite accepted', by: caller.userId, serverId: server.serverId, role: relation });

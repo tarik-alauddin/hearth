@@ -124,11 +124,14 @@ export const API_ROUTES: readonly ApiRoute[] = [
     description:
       'Records it (PROVISIONING), owned by the caller, and runs the create workflow, which also starts it. ' +
       "The caller must be approved and under their server limit (destroyed servers don't count); " +
-      '`agentChannel` is for admins. Creating from an upload comes with the /v1 uploads.',
+      '`agentChannel` is for admins. With `upload` (the caller\'s own, accepted upload), the server starts ' +
+      'with that game data.',
     body: CreateServerRequestSchema,
     responses: {
       202: { description: 'Created; the create workflow is running', schema: ServerOperationResultSchema },
       403: { description: 'Not approved yet, at the server limit, or (not an admin) choosing an agent channel' },
+      404: { description: "No such upload (never uploaded, expired, or someone else's)" },
+      409: conflict('The upload is still being checked, was rejected, or is for another game'),
     },
   },
   {
@@ -237,6 +240,36 @@ export const API_ROUTES: readonly ApiRoute[] = [
     summary: 'Cancel a pending restore',
     description: 'Owners. Only while stopped: once it starts, the restore may be under way.',
     responses: { 200: { description: 'The server, with no restore pending', schema: ServerViewSchema }, 409: conflict('No longer stopped') },
+  },
+  {
+    id: 'createUpload',
+    method: 'POST',
+    path: '/v1/uploads',
+    handler: 'user',
+    caller: { kind: 'user' },
+    summary: 'Start an upload of game data',
+    description:
+      'Approved users and admins, as for creating a server. Answers a form to POST the file to S3 with ' +
+      '(its fields first, the file last), for up to 15 minutes. Repack then checks it: follow it with ' +
+      '`GET /v1/uploads/{id}`, and create a server from it once accepted.',
+    body: CreateUploadRequestSchema,
+    responses: {
+      201: { description: 'A form to upload the file with', schema: CreateUploadResponseSchema },
+      403: { description: 'Not approved yet' },
+    },
+  },
+  {
+    id: 'getUpload',
+    method: 'GET',
+    path: '/v1/uploads/{id}',
+    handler: 'user',
+    caller: { kind: 'user' },
+    summary: 'How the check of an upload is going',
+    description: 'Its uploader, and admins.',
+    responses: {
+      200: { description: 'Repacking, accepted or rejected', schema: UploadStatusSchema },
+      404: { description: 'No such upload: never uploaded, expired (7 days), or someone else\'s' },
+    },
   },
   {
     id: 'createInvite',

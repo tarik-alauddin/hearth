@@ -37,9 +37,7 @@ async function askOnTerminal(question: string): Promise<string> {
 export interface CommandDeps {
   /** The /v1 API, as the signed-in user (`hearth login`). */
   api: Api;
-  /**
-   * The admin routes (IAM): only for what isn't on /v1 yet, listing every server (7d) and uploads (7c).
-   */
+  /** The admin routes (IAM): only for listing every server, until /v1 has it (7d). */
   adminApi: Api;
   /** Runs the fleet check Lambda and returns its report. */
   fleetCheck?: () => Promise<FleetReport>;
@@ -86,13 +84,13 @@ export function commands({
     }
     if (bytes > MAX_UPLOAD_BYTES) throw new CommandError(`${file} is ${mebibytes(bytes)}; uploads can be at most ${mebibytes(MAX_UPLOAD_BYTES)}`);
 
-    const form = await adminApi.post<CreateUploadResponse>('/admin/uploads', { game });
+    const form = await api.post<CreateUploadResponse>('/v1/uploads', { game });
     print(`Uploading ${basename(file)} (${mebibytes(bytes)})…`);
     await sendUpload(form, file);
     print('Uploaded. Checking it…');
 
     for (let waited = 0; waited <= timeoutMs; waited += pollMs) {
-      const status = await adminApi.get<UploadStatus>(`/admin/uploads/${form.uploadId}`);
+      const status = await api.get<UploadStatus>(`/v1/uploads/${form.uploadId}`);
       if (status.status === 'accepted') {
         print(`Accepted (${mebibytes(status.bytes)} after repacking).`);
         return form.uploadId;
@@ -130,8 +128,7 @@ export function commands({
   return {
     /**
      * Creates a server with new game data, an earlier upload (`upload`, an upload ID), or a file
-     * uploaded first (`file`: upload, wait for repack to accept it, then create from it). Creating
-     * from an upload still goes through the admin routes until /v1 has uploads.
+     * uploaded first (`file`: upload, wait for repack to accept it, then create from it).
      */
     async create(opts: {
       game: string;
@@ -151,9 +148,7 @@ export function commands({
         ...(opts.channel ? { agentChannel: opts.channel as AgentChannel } : {}),
         ...(uploadId ? { upload: uploadId } : {}),
       };
-      const result = await (uploadId
-        ? adminApi.post<ServerOperationResult>('/admin/servers', body)
-        : api.post<ServerOperationResult>('/v1/servers', body));
+      const result = await api.post<ServerOperationResult>('/v1/servers', body);
       const from = uploadId ? ` from upload ${uploadId}` : '';
       print(`Creating ${result.serverId} (${opts.game} ${opts.version})${from}. The first start takes a few minutes.`);
       await followUp(result, 'RUNNING', opts.wait);

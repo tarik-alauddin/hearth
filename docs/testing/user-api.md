@@ -179,3 +179,19 @@ With the friend a member of `$id` (section 7):
 3. Accept a fresh invite as the friend again, then as the owner:
    `api -Method DELETE /v1/servers/$id/members/<friend's userId>`: `204`; again: `404`.
 4. As the owner: `api -Method POST /v1/servers/$id/leave` and removing their own userId: `409`.
+
+## 9. Uploads (`/v1/uploads`)
+
+Uploads belong to whoever started them: only they (and admins) can see one or create from it.
+The CLI does every step (form, upload, waiting for repack, create):
+
+1. As your admin: `pnpm hearth create --version 26.3 --upload <MyWorld.zip>`: `Uploading …`,
+   `Accepted (…)`, `Creating <id> … from upload <uploadId>`. Note the upload ID.
+2. As your unapproved user: `api -Method POST /v1/uploads -Body '{"game":"minecraft-java"}'`:
+   `403` ("until an admin approves your account"). Approve it (section 2): `201`, with a new
+   `uploadId`, a `url` and `fields` (among them `x-amz-meta-uploader`: its user ID).
+3. Still as that user: `api /v1/uploads/<the admin's uploadId from step 1>`: `404`, as for an
+   unknown ID; their own new one: `404` too until a file is posted to its form (then `repacking`,
+   then `accepted` or `rejected`). Creating a server with the admin's upload:
+   `api -Method POST /v1/servers -Body '{"game":"minecraft-java","version":"26.3","upload":"<it>"}'`:
+   `404`. Unapprove it afterwards.

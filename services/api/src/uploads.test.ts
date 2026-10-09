@@ -82,7 +82,12 @@ describe('uploadOperations', () => {
     accepted: (uploadId) => ({ bucket: 'uploads', key: `accepted/${uploadId}.tar.gz` }),
     downloadUrl: async (key) => `https://uploads.example/${key}`,
   };
-  const ops = uploadOperations({ uploads, now: () => NOW, newId: () => 'U1' });
+  // u-1 is approved; u-2 isn't.
+  const users = {
+    getUser: async (userId: string) =>
+      ({ userId, approved: userId === 'u-1', serverLimit: 3, createdAt: 'then', lastSeenAt: 'then' }),
+  };
+  const ops = uploadOperations({ uploads, users, now: () => NOW, newId: () => 'U1' });
 
   it("starts an upload: a new ID and a form for that game's landing key, naming the uploader", async () => {
     expect(await ops.createUpload(user, { game: 'minecraft-java' })).toEqual({
@@ -98,6 +103,15 @@ describe('uploadOperations', () => {
     await expect(ops.createUpload({ kind: 'agent', serverId: 's1', instanceId: 'i-1' }, { game: 'minecraft-java' })).rejects.toMatchObject({
       statusCode: 403,
     });
+  });
+
+  it('refuses a user an admin has not approved, before making a form', async () => {
+    forms.length = 0;
+    await expect(ops.createUpload({ kind: 'user', userId: 'u-2' }, { game: 'minecraft-java' })).rejects.toMatchObject({
+      statusCode: 403,
+      message: "You can't upload until an admin approves your account",
+    });
+    expect(forms).toEqual([]);
   });
 
   it("shows an upload's status to its uploader and admins; to anyone else it doesn't exist", async () => {
