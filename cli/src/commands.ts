@@ -5,17 +5,23 @@ import {
   DEFAULT_IDLE_STOP_MINUTES,
   GAME_DEFINITIONS,
   MAX_UPLOAD_BYTES,
+  type AgentChannel,
+  type CreateServerRequest,
   type CreateUploadResponse,
   type FleetReport,
-  type ListBackupsResponse,
+  type GameId,
   type ListServersResponse,
   type RestoreRequest,
+  type ServerBackupsResponse,
   type ServerOperationResult,
   type ServerRecord,
   type ServerStatus,
+  type ServerView,
+  type SetApprovalRequest,
   type SetVersionRequest,
   type UpdateSettingsRequest,
   type UploadStatus,
+  type UserRecord,
 } from '@hearth/shared';
 import { sendUpload as defaultSendUpload, type Api } from './client.js';
 
@@ -29,7 +35,12 @@ async function askOnTerminal(question: string): Promise<string> {
 }
 
 export interface CommandDeps {
+  /** The /v1 API, as the signed-in user (`hearth login`). */
   api: Api;
+  /**
+   * The admin routes (IAM): only for what isn't on /v1 yet, listing every server (7d) and uploads (7c).
+   */
+  adminApi: Api;
   /** Runs the fleet check Lambda and returns its report. */
   fleetCheck?: () => Promise<FleetReport>;
   print: (line: string) => void;
@@ -49,6 +60,7 @@ export class CommandError extends Error {}
 
 export function commands({
   api,
+  adminApi,
   fleetCheck,
   print,
   sleep = (ms) => new Promise((r) => setTimeout(r, ms)),
@@ -58,8 +70,8 @@ export function commands({
   fileSize = async (file) => (await stat(file)).size,
   ask = askOnTerminal,
 }: CommandDeps) {
-  const get = (id: string) => api.get<ServerRecord>(`/admin/servers/${encodeURIComponent(id)}`);
-
+  const path = (id: string, rest = '') => `/v1/servers/${encodeURIComponent(id)}${rest}`;
+  const get = (id: string) => api.get<ServerView>(path(id));
 
   /**
    * Uploads a file of game data and waits for repack to accept it: the same steps the UI takes.
@@ -74,13 +86,13 @@ export function commands({
     }
     if (bytes > MAX_UPLOAD_BYTES) throw new CommandError(`${file} is ${mebibytes(bytes)}; uploads can be at most ${mebibytes(MAX_UPLOAD_BYTES)}`);
 
-    const form = await api.post<CreateUploadResponse>('/admin/uploads', { game });
+    const form = await adminApi.post<CreateUploadResponse>('/admin/uploads', { game });
     print(`Uploading ${basename(file)} (${mebibytes(bytes)})…`);
     await sendUpload(form, file);
     print('Uploaded. Checking it…');
 
     for (let waited = 0; waited <= timeoutMs; waited += pollMs) {
-      const status = await api.get<UploadStatus>(`/admin/uploads/${form.uploadId}`);
+      const status = await adminApi.get<UploadStatus>(`/admin/uploads/${form.uploadId}`);
       if (status.status === 'accepted') {
         print(`Accepted (${mebibytes(status.bytes)} after repacking).`);
         return form.uploadId;
@@ -92,38 +104,34 @@ export function commands({
   }
 
   /** Follows the server until it reaches `target`, printing each change. Fails on FAILED or timeout. */
-  async function waitFor(id: string, target: ServerStatus): Promise<ServerRecord> {
+  async function waitFor(id: string, target: ServerStatus): Promise<ServerView> {
     let last = '';
     for (let waited = 0; waited <= timeoutMs; waited += pollMs) {
       const server = await get(id);
-      const line = `  ${server.status}${server.agentState ? ` · agent ${server.agentState}` : ''}`;
+      const line = `  ${server.status}${server.gameState ? ` · game ${server.gameState}` : ''}`;
       if (line !== last) print(line);
       last = line;
       if (server.status === 'FAILED') throw new CommandError(`Failed: ${server.statusMessage ?? 'no reason recorded'}`);
-      // The workflow records RUNNING together with the public IP, so there's nothing more to wait for.
+      // The workflow records RUNNING together with the address, so there's nothing more to wait for.
       if (server.status === target) return server;
       await sleep(pollMs);
     }
     throw new CommandError(`Still not ${target} after ${Math.round(timeoutMs / 60_000)} minutes; check \`hearth status ${id}\``);
   }
 
-  function address(server: ServerRecord): string {
-    return server.publicIp ? `${server.publicIp}:${GAME_DEFINITIONS[server.game].port}` : '-';
-  }
-
   async function followUp(result: ServerOperationResult, target: ServerStatus, wait: boolean) {
     if (!wait) return;
     const server = await waitFor(result.serverId, target);
-    if (target === 'RUNNING') print(`Ready. Join at ${address(server)}   (server ${server.serverId})`);
+    if (target === 'RUNNING') print(`Ready. Join at ${joinAddress(server.game, server.address)}   (server ${server.serverId})`);
     else if (server.lastStopClean === false) print('Stopped. The agent did not report a clean stop; the game may not be saved.');
-    // A clean stop's message is a problem that didn't stop it, e.g. a failed backup.
-    else print(`Stopped. Game saved.${server.agentMessage ? ` Agent: ${server.agentMessage}` : ''}`);
+    else print('Stopped. Game saved.');
   }
 
   return {
     /**
      * Creates a server with new game data, an earlier upload (`upload`, an upload ID), or a file
-     * uploaded first (`file`: upload, wait for repack to accept it, then create from it).
+     * uploaded first (`file`: upload, wait for repack to accept it, then create from it). Creating
+     * from an upload still goes through the admin routes until /v1 has uploads.
      */
     async create(opts: {
       game: string;
@@ -136,26 +144,29 @@ export function commands({
     }) {
       if (opts.upload && opts.file) throw new CommandError('Give a file to upload or an upload ID, not both');
       const uploadId = opts.file ? await upload(opts.game, opts.file) : opts.upload;
-      const result = await api.post<ServerOperationResult>('/admin/servers', {
-        game: opts.game,
+      const body: CreateServerRequest = {
+        game: opts.game as GameId,
         version: opts.version,
         ...(opts.region ? { region: opts.region } : {}),
-        ...(opts.channel ? { agentChannel: opts.channel } : {}),
+        ...(opts.channel ? { agentChannel: opts.channel as AgentChannel } : {}),
         ...(uploadId ? { upload: uploadId } : {}),
-      });
+      };
+      const result = await (uploadId
+        ? adminApi.post<ServerOperationResult>('/admin/servers', body)
+        : api.post<ServerOperationResult>('/v1/servers', body));
       const from = uploadId ? ` from upload ${uploadId}` : '';
       print(`Creating ${result.serverId} (${opts.game} ${opts.version})${from}. The first start takes a few minutes.`);
       await followUp(result, 'RUNNING', opts.wait);
     },
 
     async start(id: string, wait: boolean) {
-      const result = await api.post<ServerOperationResult>(`/admin/servers/${encodeURIComponent(id)}/start`);
+      const result = await api.post<ServerOperationResult>(path(id, '/start'));
       print(result.unchanged ? `Already ${result.status.toLowerCase()}.` : `Starting ${id}.`);
       await followUp(result, 'RUNNING', wait);
     },
 
     async stop(id: string, wait: boolean) {
-      const result = await api.post<ServerOperationResult>(`/admin/servers/${encodeURIComponent(id)}/stop`);
+      const result = await api.post<ServerOperationResult>(path(id, '/stop'));
       print(result.unchanged ? `Already ${result.status.toLowerCase()}.` : `Stopping ${id}; the agent saves and backs up the game first.`);
       await followUp(result, 'STOPPED', wait);
     },
@@ -181,17 +192,18 @@ export function commands({
           throw new CommandError('Not destroyed: that is not the server ID.');
         }
       }
-      const result = await api.post<ServerOperationResult>(`/admin/servers/${encodeURIComponent(id)}/destroy`);
+      const result = await api.post<ServerOperationResult>(path(id, '/destroy'));
       print(result.unchanged ? `${id} is already being destroyed.` : `Destroying ${id}.`);
       if (!opts.wait) return;
       await waitFor(id, 'DESTROYED');
       print(`Destroyed. Its backups are kept: \`hearth backups ${id}\`.`);
     },
 
-    /** Moves a server to another agent channel; it runs that channel's release from its next start. */
+    /** Moves a server to another agent channel (admins); it runs that channel's release from its next start. */
     async setChannel(id: string, channel: string) {
-      const server = await api.post<ServerRecord>(`/admin/servers/${encodeURIComponent(id)}/settings`, { agentChannel: channel });
-      print(`${server.serverId} is on the ${server.agentChannel} channel; it takes effect on the next start.`);
+      const body: UpdateSettingsRequest = { agentChannel: channel as AgentChannel };
+      const server = await api.patch<ServerView>(path(id), body);
+      print(`${server.serverId} is on the ${channel} channel; it takes effect on the next start.`);
     },
 
     /** Sets how long a server may sit with nobody playing before it stops: minutes, or "off". */
@@ -199,35 +211,36 @@ export function commands({
       const minutes = value === 'off' ? 0 : Number(value);
       if (!Number.isInteger(minutes) || minutes < 0) throw new CommandError('set-idle takes a whole number of minutes, or "off"');
       const body: UpdateSettingsRequest = { idleStopMinutes: minutes };
-      const server = await api.post<ServerRecord>(`/admin/servers/${encodeURIComponent(id)}/settings`, body);
-      print(`${server.serverId} ${idleStop(server)}, from its next start.`);
+      const server = await api.patch<ServerView>(path(id), body);
+      print(`${server.serverId} ${idleStop(server.idleStopMinutes)}, from its next start.`);
     },
 
     /** Moves a stopped server to a newer game release; it runs from the next start. */
     async setVersion(id: string, version: string) {
       const body: SetVersionRequest = { version };
-      const server = await api.post<ServerRecord>(`/admin/servers/${encodeURIComponent(id)}/version`, body);
+      const server = await api.post<ServerView>(path(id, '/version'), body);
       print(`${server.serverId} runs ${server.game} ${server.version} from its next start.`);
     },
 
+    /** A server as its owners and members see it (admins get instance and agent details in 7d). */
     async status(id: string) {
       const s = await get(id);
       const rows: [string, string | undefined][] = [
         ['server', s.serverId],
+        ['you are', s.role],
         ['game', `${s.game} ${s.version}`],
         ['status', s.status + (s.statusMessage ? ` (${s.statusMessage})` : '')],
-        ['agent', s.agentState && `${s.agentState}${s.agentVersion ? ` (${s.agentVersion})` : ''}${s.agentMessage ? `: ${s.agentMessage}` : ''}`],
-        ['channel', s.agentChannel ?? 'stable'],
-        ['idle stop', idleStop(s)],
-        ['instance', s.instanceId && `${s.instanceId} (${s.instanceState ?? 'unknown'})`],
-        ['join at', s.publicIp && address(s)],
+        ['game state', s.gameState],
+        ['idle stop', idleStop(s.idleStopMinutes)],
+        ['join at', s.address && joinAddress(s.game, s.address)],
+        ['last start', s.lastStartedAt],
         [
           'last stop',
           s.lastStoppedAt &&
             `${s.lastStoppedAt}${s.stopReason ? `: ${s.stopReason}` : ''}${s.lastStopClean === false ? ' (not clean)' : ''}`,
         ],
-        ['last backup', s.lastBackupAt && `${s.lastBackupAt} (${mebibytes(s.lastBackupBytes ?? 0)})`],
-        ['restore', s.restoreKey && `${restoreName(s)} on the next start`],
+        ['last backup', s.lastBackupAt],
+        ['restore', s.restorePending ? 'pending: replaces the game data on the next start' : undefined],
         ['destroyed', s.destroyedAt],
       ];
       for (const [k, v] of rows) if (v) print(`${k.padEnd(11)} ${v}`);
@@ -250,12 +263,12 @@ export function commands({
       if (r.stuck.length + r.failed.length + r.mismatched.length + r.untracked.length === 0) print('All clear.');
     },
 
-    /** Servers, sorted by ID; destroyed ones only with `all`. */
+    /** Every server (the admin routes, until 7d), sorted by ID; destroyed ones only with `all`. */
     async list(all = false) {
       const servers: ServerRecord[] = [];
       let cursor: string | undefined;
       do {
-        const page: ListServersResponse = await api.get('/admin/servers', { limit: '100', cursor, ...(all ? { all: 'true' } : {}) });
+        const page: ListServersResponse = await adminApi.get('/admin/servers', { limit: '100', cursor, ...(all ? { all: 'true' } : {}) });
         servers.push(...page.servers);
         cursor = page.cursor;
       } while (cursor);
@@ -264,27 +277,39 @@ export function commands({
         ['SERVER', 'GAME', 'VERSION', 'STATUS', 'AGENT', 'ADDRESS'],
         ...servers
           .sort((a, b) => a.serverId.localeCompare(b.serverId))
-          .map((s) => [s.serverId, s.game, s.version, s.status, s.agentState ?? '-', address(s)]),
+          .map((s) => [s.serverId, s.game, s.version, s.status, s.agentState ?? '-', joinAddress(s.game, s.publicIp)]),
       ]);
     },
 
     async backups(id: string) {
-      const { backups } = await api.get<ListBackupsResponse>(`/admin/servers/${encodeURIComponent(id)}/backups`);
+      const { backups } = await api.get<ServerBackupsResponse>(path(id, '/backups'));
       if (backups.length === 0) return print('No backups yet. One is taken each time the server stops.');
-      table([['TAKEN', 'SIZE', 'KEY'], ...backups.map((b) => [b.takenAt, mebibytes(b.bytes), b.key])]);
+      table([['TAKEN', 'SIZE', 'BACKUP'], ...backups.map((b) => [b.takenAt, mebibytes(b.bytes), b.id])]);
     },
 
-    /** Asks for a backup to replace the game data on the next start; nothing happens until then. */
+    /** Asks for a backup (by name; default: the newest) to replace the game data on the next start. */
     async restore(id: string, key: string | undefined, force: boolean) {
       const body: RestoreRequest = { ...(key ? { key } : {}), ...(force ? { force } : {}) };
-      const server = await api.post<ServerRecord>(`/admin/servers/${encodeURIComponent(id)}/restore`, body);
-      print(`${server.serverId} will restore ${server.restoreKey} on its next start, replacing the current game data.`);
+      const server = await api.post<ServerView>(path(id, '/restore'), body);
+      print(`${server.serverId} will restore ${key ?? 'its newest backup'} on its next start, replacing the current game data.`);
       print(`Start it with \`hearth start ${server.serverId}\`, or cancel with \`hearth restore ${server.serverId} --cancel\`.`);
     },
 
     async cancelRestore(id: string) {
-      await api.post<ServerRecord>(`/admin/servers/${encodeURIComponent(id)}/restore/cancel`);
+      await api.delete<ServerView>(path(id, '/restore'));
       print(`No restore pending for ${id}.`);
+    },
+
+    /** Approves a user (they may create servers), or takes it back; their servers keep running. */
+    async approve(userId: string, approved: boolean) {
+      const body: SetApprovalRequest = { approved };
+      const user = await api.post<UserRecord>(`/v1/admin/users/${encodeURIComponent(userId)}/approval`, body);
+      const who = user.displayName ?? user.name ?? user.username ?? user.email ?? user.userId;
+      print(
+        user.approved
+          ? `${who} is approved: they can create up to ${user.serverLimit} servers.`
+          : `${who} is no longer approved: they can't create servers (the ones they have keep running).`,
+      );
     },
   };
 
@@ -294,15 +319,13 @@ export function commands({
   }
 }
 
-/** A pending restore as people know it: the backup's key, or "upload <id>" for a server created from one. */
-function restoreName(server: ServerRecord): string {
-  const key = server.restoreKey ?? '';
-  return server.restoreSource === 'upload' ? `upload ${key.replace(/^accepted\//, '').replace(/\.tar\.gz$/, '')}` : key;
+/** Where players connect: the address and the game's port, or "-". */
+function joinAddress(game: GameId, ip: string | undefined): string {
+  return ip ? `${ip}:${GAME_DEFINITIONS[game].port}` : '-';
 }
 
 /** "stops after 30 minutes with nobody playing", or "never stops for being idle". */
-function idleStop(server: ServerRecord): string {
-  const minutes = server.idleStopMinutes ?? DEFAULT_IDLE_STOP_MINUTES;
+function idleStop(minutes: number = DEFAULT_IDLE_STOP_MINUTES): string {
   if (minutes === 0) return 'never stops for being idle';
   return `stops after ${minutes === 1 ? '1 minute' : `${minutes} minutes`} with nobody playing`;
 }

@@ -59,7 +59,7 @@ as part of each PR. The repo layout and commands are in [README.md](README.md).
 | M7 Move your world | Done (PR1–PR4; tested on dev with a real world) |
 | Before Phase 2 | Done: M7 docs, neutral wording, destroy (records kept as `DESTROYED`), state-sync tweak, stage and prod live with the release flow (details under Decisions) |
 | **Phase 1** | **Complete** (2026-10-07): dev, stage and prod run `v2026.10.07-3461efe`, agent `2026.10.06-de42566` |
-| M8 Accounts and access | In progress: PR1a–PR1c done (sign-in with password, Google, Discord, tested on dev); PR2–PR4 done (access data, authorization, API contract); PR5 merged (every server action on `/v1`); PR6 merged (invites, members); PR7a (CLI sign-in) in review |
+| M8 Accounts and access | In progress: PR1a–PR1c done (sign-in with password, Google, Discord, tested on dev); PR2–PR4 done (access data, authorization, API contract); PR5 merged (every server action on `/v1`); PR6 merged (invites, members); PR7a done (CLI sign-in); PR7b (CLI on `/v1`) in review |
 | M9 Game version catalog | Planned (Deferred's plan, V1–V4) |
 | M10 Web UI | Planned |
 
@@ -212,15 +212,25 @@ the CLI signs in the same way; backend only):
     ServerAccess rows (the store deletes members only) and query its byServer index.
 - PR7 CLI on Cognito, split in four. The CLI stays the owner's tool: it reads SSM (`api-url`,
   `auth`) with AWS credentials; everyone else uses the web app, so no invite or member commands.
-  - 7a, in review: `hearth login [--provider]` (browser, loopback 8976, PKCE; `cli/src/auth.ts`),
+  - 7a, merged (tested on dev): `hearth login [--provider]` (browser, loopback 8976, PKCE; `cli/src/auth.ts`),
     session in `~/.hearth/session-<env>.json` (ID token refreshed when within a minute of expiry;
     other commands never open the browser), `logout`, `whoami` (`/v1/me`, the first CLI call on
     `/v1`). `hearth admin list | add | remove <userId>`: the Cognito `admin` group, called directly
     with AWS credentials (finds the username by `sub`): no API route can grant admin. Takes effect
     at the user's next token refresh (an hour at most; groups are read at each refresh).
-  - 7b: the server commands on `/v1` with the session; `hearth approve` / `unapprove <userId>`.
-  - 7c: `/v1` uploads (`POST /v1/uploads`, `GET /v1/uploads/{id}`); `create --upload` on them.
-  - 7d: admin routes on `/v1` (every server, agent channel); `fleet-check` stays a direct Lambda call.
+  - 7b, in review: status, start, stop, destroy, create (not from an upload), set-idle,
+    set-version, set-channel (the `/v1` settings route; admins), backups (by name) and restore on
+    `/v1` with the session; `hearth approve` / `unapprove <userId>`. `list` and creating from an
+    upload stay on `/admin` (IAM, `adminApi`) until 7d/7c: servers created through `/admin` have
+    no owner row, so `/v1/servers` doesn't list them. `status` shows the `ServerView` (no
+    instance, agent or channel until 7d's admin detail). `ServerView` gains `lastStopClean`
+    (the stop's "game may not be saved"). The CLI needs a browser on the same machine (no CloudShell).
+    Rides along (cost guards): an admin can't change their own approval (409; admins need none),
+    and only admins may turn idle stop off (`idleStopMinutes: 0`; owners choose 1–1440, 403).
+  - 7c: `/v1` uploads (`POST /v1/uploads`, `GET /v1/uploads/{id}`), approved users and admins only
+    (like create); `create --upload` on them.
+  - 7d: admin routes on `/v1`: every server and one server's whole record (`list`, and `status`'s
+    instance and agent rows for admins); `fleet-check` stays a direct Lambda call.
 - PR8 Remove `/admin` routes, their handler and permissions.
 
 **M9** is the game version catalog plan under Deferred, its routes under `/v1`. **M10 Web UI**
@@ -340,6 +350,10 @@ and CloudFront's default domain until there is one; callback URLs and origins co
     No access → 404 (IDs don't leak); visible but forbidden → 403. Responses are shaped by role
     (users never see instance IDs, S3 keys, agent internals). `/agent/*` stays separate (IAM, the
     instance's own server); where it overlaps (idle stop) it calls the same operation.
+  - **What costs money is gated.** Creating (and uploading, from 7c) needs approval and is capped;
+    running time is bounded by idle stop, which only admins can turn off (owners: up to 24 h).
+    Unapproving stops new servers only: a user's servers keep running, and they and their members
+    can still start them; stop or destroy those to cut costs.
   - **Cap: 3 servers per user** (`serverLimit`, so it can vary later; admins have none), counted at create: owned
     servers not `DESTROYED`, one query on the owner index. Two simultaneous creates could both pass;
     accepted while the cap isn't billing.

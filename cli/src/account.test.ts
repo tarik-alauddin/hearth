@@ -33,11 +33,14 @@ function setup(overrides: Partial<AccountDeps> = {}) {
     email: 'friend@example.com',
     name: 'Friend',
   };
+  const notUsed = async () => {
+    throw new Error('not used');
+  };
   const api: Api = {
     get: async <T>(path: string) => (calls.push(`GET ${path}`), me as T),
-    post: async () => {
-      throw new Error('not used');
-    },
+    post: notUsed,
+    patch: notUsed,
+    delete: notUsed,
   };
   const run = accountCommands({
     env: 'dev',

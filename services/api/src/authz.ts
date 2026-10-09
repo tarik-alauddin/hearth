@@ -133,6 +133,7 @@ export function toServerView(server: ServerRecord, relation: Relation): ServerVi
     ...optional('stopReason', server.stopReason),
     ...optional('lastStartedAt', server.lastStartedAt),
     ...optional('lastStoppedAt', server.lastStoppedAt),
+    ...optional('lastStopClean', server.lastStopClean),
     ...optional('lastBackupAt', server.lastBackupAt),
     restorePending: server.restoreKey !== undefined,
     ...optional('createdAt', server.createdAt),

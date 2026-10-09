@@ -44,18 +44,19 @@ go test -tags harness -timeout 30m ./harness/   # real agent + Minecraft contain
 To check a real instance launched from the launch template, follow
 [docs/testing/game-instance.md](docs/testing/game-instance.md) (runs in AWS CloudShell).
 
-Servers are managed with the `hearth` CLI (admin API routes, signed with your AWS credentials):
+Servers are managed with the `hearth` CLI, the owner's tool (everyone else uses the web app). It
+finds the API and sign-in settings in SSM with your AWS credentials, then acts as you, signed in:
 
 ```sh
+pnpm hearth login [--env dev] [--provider Google|Discord]   # then: whoami, logout
 pnpm hearth create --version 1.21.4
 pnpm hearth list | status <id> | start <id> | stop <id>
-pnpm --filter @hearth/cli bundle   # cli/dist/hearth.cjs, a single file for CloudShell: node hearth.cjs …
-pnpm hearth login [--env dev] [--provider Google|Discord]   # then: whoami, logout
+pnpm hearth approve | unapprove <userId>                    # who may create servers
 pnpm hearth admin list | add <userId> | remove <userId>     # the Cognito admin group
 ```
 
-`hearth login` keeps its session in `~/.hearth/session-<env>.json` (30 days); the server commands
-move from the admin routes to `/v1` with it next.
+`hearth login` keeps its session in `~/.hearth/session-<env>.json` (30 days). Server commands use
+`/v1`; listing every server and uploads still use the admin routes (IAM) until `/v1` has them.
 
 To check a server end to end and join it, follow [docs/testing/game-server.md](docs/testing/game-server.md).
 

@@ -158,5 +158,9 @@ describe('shapeServer', () => {
     expect(view).not.toHaveProperty('address');
     expect(view).not.toHaveProperty('gameState');
     expect(view).toMatchObject({ role: 'owner', idleStopMinutes: 0 });
+    // Whether the last stop saved the game (the agent's message stays internal).
+    const unclean = shapeServer({ ...record, status: 'STOPPED', lastStopClean: false, agentMessage: 'timeout' }, 'owner');
+    expect(unclean).toMatchObject({ lastStopClean: false });
+    expect(unclean).not.toHaveProperty('agentMessage');
   });
 });

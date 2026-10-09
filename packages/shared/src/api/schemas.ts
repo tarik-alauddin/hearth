@@ -106,6 +106,7 @@ export const ServerViewSchema = named(
     stopReason: z.string().optional(),
     lastStartedAt: z.string().optional(),
     lastStoppedAt: z.string().optional(),
+    lastStopClean: z.boolean().optional().describe('False when the last stop may not have saved the game'),
     lastBackupAt: z.string().optional(),
     restorePending: z.boolean().describe('A restore will replace the game data on the next start'),
     createdAt: z.string().optional(),
@@ -136,7 +137,7 @@ export const UpdateSettingsRequestSchema = named(
         .min(0)
         .max(MAX_IDLE_STOP_MINUTES)
         .optional()
-        .describe(`Stop after this long with nobody playing (1–${MAX_IDLE_STOP_MINUTES}); 0 = never`),
+        .describe(`Stop after this long with nobody playing (1–${MAX_IDLE_STOP_MINUTES}); 0 = never (admins only)`),
     })
     .refine((s) => s.agentChannel !== undefined || s.idleStopMinutes !== undefined, 'No settings given'),
   'UpdateSettingsRequest',

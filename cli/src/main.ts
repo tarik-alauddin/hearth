@@ -1,6 +1,6 @@
-// hearth: create and manage game servers through the Hearth API's admin routes.
-// Signs requests with your AWS credentials (profile, environment or CloudShell); `hearth login`
-// signs you in to the user API (/v1), which the server commands move to next.
+// hearth: create and manage game servers through the Hearth API (/v1), signed in with `hearth login`.
+// Your AWS credentials (profile, environment or CloudShell) find the API and sign-in settings in SSM,
+// and reach what isn't on /v1 yet: listing every server, uploads, and the fleet check.
 import { parseArgs } from 'node:util';
 import { fromNodeProviderChain } from '@aws-sdk/credential-providers';
 import { accountCommands } from './account.js';
@@ -17,6 +17,9 @@ const USAGE = `Usage: hearth <command> [options]
   admin list                               the environment's admins
   admin add <userId>                       make a user an admin (the Cognito admin group)
   admin remove <userId>                    take admin away
+  (everything below needs hearth login)
+  approve <userId>                         let a user create servers (admins)
+  unapprove <userId>                       take that back; their servers keep running
 
   create --version <v> [--game minecraft-java] [--game-region <region>] [--channel canary|stable]
          [--upload <file.zip|file.tar.gz>]   start with this game data (e.g. a zipped Minecraft world); max 4 GiB
@@ -24,14 +27,14 @@ const USAGE = `Usage: hearth <command> [options]
   list [--all]                             servers; --all includes destroyed ones
   status <serverId>
   backups <serverId>                       the server's backups, newest first
-  restore <serverId> [<key>] [--force]     replace the game data with a backup (default: newest) on the next start
+  restore <serverId> [<backup>] [--force]  replace the game data with a backup (default: newest) on the next start
   restore <serverId> --cancel              cancel a requested restore
   start  <serverId>
   stop   <serverId>
   destroy <serverId> [--yes]               delete a stopped server's instance and data volume; keeps its backups and record
-  set-channel <serverId> <canary|stable>   agent releases to follow, from the next start
+  set-channel <serverId> <canary|stable>   agent releases to follow, from the next start (admins)
   set-version <serverId> <version>         a newer game release, from the next start (forward only)
-  set-idle <serverId> <minutes|off>        stop after this long with nobody playing, from the next start
+  set-idle <serverId> <minutes|off>        stop after this long with nobody playing (off: admins), from the next start
   fleet-check                              stuck, failed and mismatched servers; instances with no server
 
 Options:
@@ -105,12 +108,14 @@ async function main(argv: string[]): Promise<number> {
       return 0;
   }
 
-  const api = apiClient({
-    baseUrl: await findApiUrl(values.env, values.region),
-    region: values.region,
-    credentials: fromNodeProviderChain(),
+  const baseUrl = await findApiUrl(values.env, values.region);
+  const run = commands({
+    api: userApiClient({ baseUrl, idToken: () => currentIdToken(values.env, { config: authConfig, session }) }),
+    // Every server, and uploads: the admin routes (IAM) until /v1 has them.
+    adminApi: apiClient({ baseUrl, region: values.region, credentials: fromNodeProviderChain() }),
+    fleetCheck: () => invokeFleetCheck(values.env, values.region),
+    print,
   });
-  const run = commands({ api, fleetCheck: () => invokeFleetCheck(values.env, values.region), print });
   const wait = !values['no-wait'];
   const needId = () => {
     if (!id) throw new CommandError(`${command} needs a server ID`);
@@ -163,6 +168,11 @@ async function main(argv: string[]): Promise<number> {
     case 'set-idle':
       if (!arg) throw new CommandError('set-idle needs minutes or "off", e.g. set-idle <serverId> 30');
       await run.setIdle(needId(), arg);
+      return 0;
+    case 'approve':
+    case 'unapprove':
+      if (!id) throw new CommandError(`${command} needs a user ID (from their hearth whoami, or /v1/me)`);
+      await run.approve(id, command === 'approve');
       return 0;
     case 'fleet-check':
       await run.fleetCheck();

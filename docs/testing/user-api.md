@@ -72,6 +72,9 @@ Admins only. Users are approved by their user ID: the `userId` `/v1/me` shows th
    `approved: true`.
 3. Take it back with `-Body '{"approved":false}'`: `approved: false`, no `approvedAt`.
 4. A user ID that has never signed in answers `404`; a body like `{"approved":"yes"}` answers `400`.
+5. The CLI does the same, signed in as your admin (`pnpm hearth login`):
+   `pnpm hearth approve <userId>` ("… is approved: they can create up to 3 servers") and
+   `pnpm hearth unapprove <userId>`. Your own user ID: `409` (admins need no approval).
 
 ## 3. My servers (`GET /v1/servers`, `GET /v1/servers/{id}`)
 
@@ -132,9 +135,9 @@ With a server you created in section 4 (`$id`), as its owner:
 
 With a server you own (`$id`), **stopped** for the version and restore steps:
 
-1. Settings: `api -Method PATCH /v1/servers/$id -Body '{"idleStopMinutes":0}'`: `200`, the server
-   with `idleStopMinutes: 0` (never idle-stop; applies from its next start). With
-   `"agentChannel":"canary"` as a non-admin: `403`.
+1. Settings: `api -Method PATCH /v1/servers/$id -Body '{"idleStopMinutes":60}'`: `200`, the server
+   with `idleStopMinutes: 60` (applies from its next start). As a non-admin, `0` (never idle-stop)
+   and `"agentChannel":"canary"` answer `403`; as an admin both work.
 2. Backups: `api /v1/servers/$id/backups`: newest first, each with an `id` (its file name, e.g.
    `20261008T234112Z.tar.gz`), `takenAt` and `bytes`; no storage keys. A server stopped at least
    once has one.

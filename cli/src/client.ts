@@ -20,6 +20,8 @@ export class ApiError extends Error {
 export interface Api {
   get<T>(path: string, query?: Record<string, string | undefined>): Promise<T>;
   post<T>(path: string, body?: unknown): Promise<T>;
+  patch<T>(path: string, body: unknown): Promise<T>;
+  delete<T>(path: string): Promise<T>;
 }
 
 /** Calls the Hearth API, signing each request with your AWS credentials (IAM auth). */
@@ -56,6 +58,8 @@ export function apiClient(opts: {
   return {
     get: (path, query = {}) => request('GET', path, definedOnly(query)),
     post: (path, body) => request('POST', path, {}, body),
+    patch: (path, body) => request('PATCH', path, {}, body),
+    delete: (path) => request('DELETE', path),
   };
 }
 
@@ -78,6 +82,8 @@ export function userApiClient(opts: { baseUrl: string; idToken: () => Promise<st
   return {
     get: (path, query = {}) => request('GET', path, definedOnly(query)),
     post: (path, body) => request('POST', path, {}, body),
+    patch: (path, body) => request('PATCH', path, {}, body),
+    delete: (path) => request('DELETE', path),
   };
 }
 
