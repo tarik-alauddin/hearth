@@ -13,6 +13,7 @@ import type { IStateMachine } from 'aws-cdk-lib/aws-stepfunctions';
 import type { NodejsFunction } from 'aws-cdk-lib/aws-lambda-nodejs';
 import type { Construct } from 'constructs';
 import {
+  ACCESS_BY_SERVER_INDEX,
   AGENT_CHANNELS,
   INVITES_BY_SERVER_INDEX,
   SERVERS_BY_INSTANCE_INDEX,
@@ -251,7 +252,7 @@ export class ApiStack extends HearthStack {
     );
     // User routes (/v1): signed-in users, through the web app and later the CLI. Who they are (the
     // Users table), the servers they can reach (through their ServerAccess rows), and acting on
-    // them: create, start, stop, destroy, settings, version, backups list, restore, invites.
+    // them: create, start, stop, destroy, settings, version, backups list, restore, invites, members.
     const user = hearthFunction(this, 'User', {
       config: props.config,
       entry: 'api/src/user/lambda.ts',
@@ -304,11 +305,15 @@ export class ApiStack extends HearthStack {
         resources: [`${props.serversTable.tableArn}/index/${SERVERS_BY_OWNER_INDEX}`],
       }),
     );
-    // A user's rows are one Query on the table's key; one row is a GetItem; create adds the owner's.
+    // A user's rows are one Query on the table's key; one row is a GetItem; create and accepting an
+    // invite add one; removing or leaving deletes a member's. A server's rows: its byServer index.
     user.addToRolePolicy(
       new PolicyStatement({
-        actions: ['dynamodb:GetItem', 'dynamodb:Query', 'dynamodb:PutItem'],
-        resources: [props.serverAccessTable.tableArn],
+        actions: ['dynamodb:GetItem', 'dynamodb:Query', 'dynamodb:PutItem', 'dynamodb:DeleteItem'],
+        resources: [
+          props.serverAccessTable.tableArn,
+          `${props.serverAccessTable.tableArn}/index/${ACCESS_BY_SERVER_INDEX}`,
+        ],
       }),
     );
     user.addToRolePolicy(

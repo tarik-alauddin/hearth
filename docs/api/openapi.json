@@ -2224,6 +2224,238 @@
         }
       }
     },
+    "/v1/servers/{id}/leave": {
+      "post": {
+        "operationId": "leaveServer",
+        "summary": "Leave a server",
+        "description": "Members. Its owner cannot leave it (destroy it instead).",
+        "tags": [
+          "user"
+        ],
+        "security": [
+          {
+            "cognito": []
+          }
+        ],
+        "x-hearth-permission": "view",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Left",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No ID token, or an invalid or expired one: sign in again",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The caller may not do this",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such server, or the caller isn't a member of it",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The caller is its owner",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/servers/{id}/members": {
+      "get": {
+        "operationId": "listMembers",
+        "summary": "A server's owner and members",
+        "description": "Owners and members.",
+        "tags": [
+          "user"
+        ],
+        "security": [
+          {
+            "cognito": []
+          }
+        ],
+        "x-hearth-permission": "members",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Who has access",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListMembersResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No ID token, or an invalid or expired one: sign in again",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The caller may not do this",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such server (or none the caller can reach)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/servers/{id}/members/{user}": {
+      "delete": {
+        "operationId": "removeMember",
+        "summary": "Remove a member",
+        "description": "Owners. Takes their access away; an invite they still hold lets them back in until it is revoked.",
+        "tags": [
+          "user"
+        ],
+        "security": [
+          {
+            "cognito": []
+          }
+        ],
+        "x-hearth-permission": "removeMember",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "user",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Removed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No ID token, or an invalid or expired one: sign in again",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The caller may not do this",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such server, or they aren't a member of it",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "They're its owner",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/servers/{id}/restore": {
       "post": {
         "operationId": "requestServerRestore",
@@ -3062,6 +3294,22 @@
         ],
         "additionalProperties": false
       },
+      "ListMembersResponse": {
+        "type": "object",
+        "properties": {
+          "members": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Member"
+            },
+            "description": "The owner first, then members by when they joined"
+          }
+        },
+        "required": [
+          "members"
+        ],
+        "additionalProperties": false
+      },
       "ListMyServersResponse": {
         "type": "object",
         "properties": {
@@ -3094,6 +3342,44 @@
         },
         "required": [
           "servers"
+        ],
+        "additionalProperties": false
+      },
+      "Member": {
+        "type": "object",
+        "properties": {
+          "userId": {
+            "type": "string"
+          },
+          "role": {
+            "type": "string",
+            "enum": [
+              "owner",
+              "member"
+            ]
+          },
+          "name": {
+            "description": "Their display name, name or username, whichever their sign-in gave",
+            "type": "string"
+          },
+          "picture": {
+            "description": "Avatar URL",
+            "type": "string"
+          },
+          "addedAt": {
+            "type": "string",
+            "description": "When they got access (ISO 8601, UTC)"
+          },
+          "addedBy": {
+            "type": "string",
+            "description": "Who let them in: the invite's creator (the owner, for themselves)"
+          }
+        },
+        "required": [
+          "userId",
+          "role",
+          "addedAt",
+          "addedBy"
         ],
         "additionalProperties": false
       },

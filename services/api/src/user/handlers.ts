@@ -2,6 +2,7 @@ import type { APIGatewayProxyEventV2WithJWTAuthorizer, APIGatewayProxyStructured
 import type { UsersStore } from '@hearth/core';
 import type {
   ListInvitesResponse,
+  ListMembersResponse,
   ListMyServersResponse,
   MeResponse,
   ServerBackupsResponse,
@@ -11,6 +12,7 @@ import type {
 import { AccessDenied, toServerView } from '../authz.js';
 import { OperationError, type serverOperations } from '../servers/operations.js';
 import type { inviteOperations } from '../invites/operations.js';
+import type { memberOperations } from '../members/operations.js';
 import type { userOperations } from '../users/operations.js';
 import { callerFromClaims, type Claims } from './claims.js';
 
@@ -21,6 +23,7 @@ export interface UserHandlerDeps {
   users: Pick<UsersStore, 'recordSignIn'>;
   userOps: ReturnType<typeof userOperations>;
   inviteOps: ReturnType<typeof inviteOperations>;
+  memberOps: ReturnType<typeof memberOperations>;
   serverOps: Pick<
     ReturnType<typeof serverOperations>,
     | 'relationTo'
@@ -44,7 +47,7 @@ export interface UserHandlerDeps {
  * One Lambda for every /v1 route (signed-in users; API Gateway checks their Cognito ID token),
  * dispatched by route key. Routes say who is calling; the operations decide what they may do.
  */
-export function userHandler({ users, userOps, serverOps, inviteOps, now = () => new Date(), log = defaultLog }: UserHandlerDeps) {
+export function userHandler({ users, userOps, serverOps, inviteOps, memberOps, now = () => new Date(), log = defaultLog }: UserHandlerDeps) {
   return async function handle(event: Event): Promise<Result> {
     const caller = callerFromClaims(event.requestContext.authorizer?.jwt?.claims as Claims | undefined);
     if (!caller) return json(401, { message: 'Send the ID token from signing in (Authorization: Bearer <id token>)' });
@@ -119,6 +122,21 @@ export function userHandler({ users, userOps, serverOps, inviteOps, now = () => 
           const { server, relation } = await inviteOps.acceptInvite(caller.actor, event.pathParameters?.code ?? '');
           log({ msg: 'invite accepted', by: caller.userId, serverId: server.serverId, role: relation });
           return json(200, toServerView(server, relation));
+        }
+        case 'GET /v1/servers/{id}/members': {
+          const body: ListMembersResponse = { members: await memberOps.listMembers(caller.actor, serverId(event)) };
+          return json(200, body);
+        }
+        case 'DELETE /v1/servers/{id}/members/{user}': {
+          const userId = event.pathParameters?.user ?? '';
+          await memberOps.removeMember(caller.actor, serverId(event), userId);
+          log({ msg: 'member removed', by: caller.userId, serverId: serverId(event), userId });
+          return { statusCode: 204 };
+        }
+        case 'POST /v1/servers/{id}/leave': {
+          await memberOps.leaveServer(caller.actor, serverId(event));
+          log({ msg: 'member left', by: caller.userId, serverId: serverId(event) });
+          return { statusCode: 204 };
         }
         case 'GET /v1/servers/{id}/backups': {
           const { backups } = await serverOps.listBackups(caller.actor, serverId(event));
