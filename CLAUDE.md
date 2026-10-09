@@ -59,7 +59,7 @@ as part of each PR. The repo layout and commands are in [README.md](README.md).
 | M7 Move your world | Done (PR1–PR4; tested on dev with a real world) |
 | Before Phase 2 | Done: M7 docs, neutral wording, destroy (records kept as `DESTROYED`), state-sync tweak, stage and prod live with the release flow (details under Decisions) |
 | **Phase 1** | **Complete** (2026-10-07): dev, stage and prod run `v2026.10.07-3461efe`, agent `2026.10.06-de42566` |
-| M8 Accounts and access | In progress: PR1a–PR1c done (sign-in with password, Google, Discord, tested on dev); PR2–PR4 done (access data, authorization, API contract); PR5a–e merged (`/v1/me`, approving users; listing, creating, starting, stopping, destroying servers); PR5f (owner actions) in review |
+| M8 Accounts and access | In progress: PR1a–PR1c done (sign-in with password, Google, Discord, tested on dev); PR2–PR4 done (access data, authorization, API contract); PR5 merged (every server action on `/v1`); PR6a (invites) in review |
 | M9 Game version catalog | Planned (Deferred's plan, V1–V4) |
 | M10 Web UI | Planned |
 
@@ -185,7 +185,7 @@ the CLI signs in the same way; backend only):
     (owners): thin routes over the existing operations (`authorize` with `start`/`stop`/
     `destroy`); 202 when a workflow started, 200 unchanged. The User λ may start all four
     lifecycle workflows (the operations decide who may run which).
-  - 5f, in review: the owners' other actions over the existing operations: `PATCH
+  - 5f, merged: the owners' other actions over the existing operations: `PATCH
     /v1/servers/{id}` (settings; `agentChannel` admins only), `POST …/version`, `GET …/backups`,
     `POST` / `DELETE …/restore`. Answers are the caller's `ServerView` (role read with
     `relationTo`, one access lookup: the operations themselves are unchanged, `/admin` too).
@@ -196,7 +196,17 @@ the CLI signs in the same way; backend only):
   - Open (owner to decide): admins skip the limit today (and approval). Recommended: the limit
     applies to admins too (they can raise their own `serverLimit`); approval stays skipped.
   - Admin agent channels and `/v1` uploads follow as their own small PRs.
-- PR6 Invites and members: create, list, revoke, accept; list and remove members, leave.
+- PR6 Invites and members, split in two:
+  - 6a, in review: `POST`/`GET /v1/servers/{id}/invites`, `DELETE …/invites/{code}` (owners;
+    `invite` permission) and `POST /v1/invites/{code}/accept` (any signed-in user, no approval).
+    `services/api/src/invites/operations.ts`. Codes are answered as `XXXX-XXXX-XXXX-XXXX-XXXX`
+    (no links until the web app: M10 makes `/join/{code}`), accepted in any case with spaces
+    (`parseInviteCode`). Accepting grants `member` (addedBy the invite's creator, inviteCode kept)
+    unless the caller has access already (their role stays: an owner never becomes a member);
+    a wrong, expired or revoked code, or a destroyed server's, is 404 alike. No invites to a
+    destroyed server (409). Revoking stops new members only. The User λ reads, writes and
+    deletes Invites and queries its byServer index.
+  - 6b: list members (owners and members), remove one (owners), leave (members).
 - PR7 CLI on Cognito: `hearth login` (browser sign-in, session in `~/.hearth`), every command on `/v1`.
 - PR8 Remove `/admin` routes, their handler and permissions.
 

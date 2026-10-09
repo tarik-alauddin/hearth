@@ -14,6 +14,7 @@ import type { NodejsFunction } from 'aws-cdk-lib/aws-lambda-nodejs';
 import type { Construct } from 'constructs';
 import {
   AGENT_CHANNELS,
+  INVITES_BY_SERVER_INDEX,
   SERVERS_BY_INSTANCE_INDEX,
   SERVERS_BY_OWNER_INDEX,
   agentChannelParameter,
@@ -30,6 +31,7 @@ export interface ApiStackProps extends HearthStackProps {
   readonly serversTable: ITableV2;
   readonly usersTable: ITableV2;
   readonly serverAccessTable: ITableV2;
+  readonly invitesTable: ITableV2;
   /** AuthStack's user pool and clients: /v1 routes take ID tokens they issue. */
   readonly userPool: IUserPool;
   readonly userPoolClients: readonly IUserPoolClient[];
@@ -249,7 +251,7 @@ export class ApiStack extends HearthStack {
     );
     // User routes (/v1): signed-in users, through the web app and later the CLI. Who they are (the
     // Users table), the servers they can reach (through their ServerAccess rows), and acting on
-    // them: create, start, stop, destroy, settings, version, backups list, restore.
+    // them: create, start, stop, destroy, settings, version, backups list, restore, invites.
     const user = hearthFunction(this, 'User', {
       config: props.config,
       entry: 'api/src/user/lambda.ts',
@@ -266,8 +268,22 @@ export class ApiStack extends HearthStack {
         DESTROY_WORKFLOW_ARN: props.workflows.destroy.stateMachineArn,
         BACKUP_BUCKET: backups,
         BACKUP_BUCKET_REGION: props.config.homeRegion,
+        INVITES_TABLE: props.invitesTable.tableName,
       },
     });
+    // Invites: create, read one (accept), revoke; a server's, through the byServer index.
+    user.addToRolePolicy(
+      new PolicyStatement({
+        actions: ['dynamodb:GetItem', 'dynamodb:PutItem', 'dynamodb:DeleteItem'],
+        resources: [props.invitesTable.tableArn],
+      }),
+    );
+    user.addToRolePolicy(
+      new PolicyStatement({
+        actions: ['dynamodb:Query'],
+        resources: [`${props.invitesTable.tableArn}/index/${INVITES_BY_SERVER_INDEX}`],
+      }),
+    );
     // Listing a server's backups (its owner's list; a restore checks against it): its prefix only.
     user.addToRolePolicy(listServerBackups);
     user.addToRolePolicy(

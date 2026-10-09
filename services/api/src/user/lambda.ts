@@ -1,6 +1,7 @@
 // Lambda entry point for the /v1 routes (signed-in users); ApiStack points the User function here.
-import { createAccessStore, createOwnedServers, createServersStore, createUsersStore } from '@hearth/core';
+import { createAccessStore, createInvitesStore, createOwnedServers, createServersStore, createUsersStore } from '@hearth/core';
 import { s3BackupStorage } from '../backups.js';
+import { inviteOperations } from '../invites/operations.js';
 import { OperationError, serverOperations } from '../servers/operations.js';
 import { publishedVersions } from '../servers/versions.js';
 import { stepFunctionsWorkflows } from '../servers/workflows.js';
@@ -21,13 +22,16 @@ function notYet(what: string): never {
 const users = createUsersStore(requireEnv('USERS_TABLE'));
 const serversTable = requireEnv('SERVERS_TABLE');
 const accessTable = requireEnv('ACCESS_TABLE');
+const servers = createServersStore(serversTable);
+const access = createAccessStore(accessTable);
 
 export const handler = userHandler({
   users,
   userOps: userOperations({ users }),
+  inviteOps: inviteOperations({ servers, access, invites: createInvitesStore(requireEnv('INVITES_TABLE')) }),
   serverOps: serverOperations({
-    store: createServersStore(serversTable),
-    access: createAccessStore(accessTable),
+    store: servers,
+    access,
     ownership: createOwnedServers(serversTable, accessTable),
     users,
     workflows: stepFunctionsWorkflows({
