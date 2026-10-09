@@ -304,10 +304,10 @@ export class ApiStack extends HearthStack {
       new PolicyStatement({ actions: ['dynamodb:GetItem', 'dynamodb:UpdateItem'], resources: [props.usersTable.tableArn] }),
     );
     // Create puts the server and its owner row in one transaction (PutItem on both), and moves a
-    // server whose workflow didn't start to FAILED (UpdateItem).
+    // server whose workflow didn't start to FAILED (UpdateItem). Admins list every server (Scan).
     user.addToRolePolicy(
       new PolicyStatement({
-        actions: ['dynamodb:GetItem', 'dynamodb:PutItem', 'dynamodb:UpdateItem'],
+        actions: ['dynamodb:GetItem', 'dynamodb:PutItem', 'dynamodb:UpdateItem', 'dynamodb:Scan'],
         resources: [props.serversTable.tableArn],
       }),
     );

@@ -3,9 +3,6 @@ import { basename } from 'node:path';
 import { InvokeCommand, LambdaClient } from '@aws-sdk/client-lambda';
 import { GetParameterCommand, SSMClient } from '@aws-sdk/client-ssm';
 import { fleetCheckFunctionName, type CreateUploadResponse, type FleetReport } from '@hearth/shared';
-import { Sha256 } from '@aws-crypto/sha256-js';
-import { SignatureV4 } from '@smithy/signature-v4';
-import type { AwsCredentialIdentityProvider } from '@smithy/types';
 
 /** A non-2xx answer from the API, with its message. */
 export class ApiError extends Error {
@@ -24,46 +21,7 @@ export interface Api {
   delete<T>(path: string): Promise<T>;
 }
 
-/** Calls the Hearth API, signing each request with your AWS credentials (IAM auth). */
-export function apiClient(opts: {
-  baseUrl: string;
-  region: string;
-  credentials: AwsCredentialIdentityProvider;
-  fetch?: typeof globalThis.fetch;
-}): Api {
-  const url = new URL(opts.baseUrl);
-  const signer = new SignatureV4({ service: 'execute-api', region: opts.region, credentials: opts.credentials, sha256: Sha256 });
-  const doFetch = opts.fetch ?? globalThis.fetch;
-
-  async function request<T>(method: string, path: string, query: Record<string, string> = {}, body?: unknown): Promise<T> {
-    const payload = body === undefined ? undefined : JSON.stringify(body);
-    const signed = await signer.sign({
-      method,
-      protocol: url.protocol,
-      hostname: url.hostname,
-      path,
-      query,
-      headers: { host: url.host, ...(payload ? { 'content-type': 'application/json' } : {}) },
-      ...(payload ? { body: payload } : {}),
-    });
-    const qs = new URLSearchParams(query).toString();
-    const res = await doFetch(`${url.origin}${path}${qs ? `?${qs}` : ''}`, {
-      method,
-      headers: signed.headers,
-      ...(payload ? { body: payload } : {}),
-    });
-    return readResponse<T>(res);
-  }
-
-  return {
-    get: (path, query = {}) => request('GET', path, definedOnly(query)),
-    post: (path, body) => request('POST', path, {}, body),
-    patch: (path, body) => request('PATCH', path, {}, body),
-    delete: (path) => request('DELETE', path),
-  };
-}
-
-/** Calls the Hearth API's /v1 routes as a signed-in user (`hearth login`), with their ID token. */
+/** Calls the Hearth API as the signed-in user (`hearth login`), with their ID token. */
 export function userApiClient(opts: { baseUrl: string; idToken: () => Promise<string>; fetch?: typeof globalThis.fetch }): Api {
   const url = new URL(opts.baseUrl);
   const doFetch = opts.fetch ?? globalThis.fetch;

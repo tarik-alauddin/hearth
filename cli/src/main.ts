@@ -1,12 +1,11 @@
 // hearth: create and manage game servers through the Hearth API (/v1), signed in with `hearth login`.
-// Your AWS credentials (profile, environment or CloudShell) find the API and sign-in settings in SSM,
-// and reach what isn't on /v1 yet: listing every server, uploads, and the fleet check.
+// Your AWS credentials (a profile or the environment) find the API and sign-in settings in SSM, and
+// run the fleet check and the admin group commands.
 import { parseArgs } from 'node:util';
-import { fromNodeProviderChain } from '@aws-sdk/credential-providers';
 import { accountCommands } from './account.js';
 import { cognitoAdminGroup } from './admins.js';
 import { currentIdToken, readAuthConfig, sessionFile, signIn, SignInNeeded, type AuthConfig } from './auth.js';
-import { ApiError, apiClient, findApiUrl, invokeFleetCheck, userApiClient } from './client.js';
+import { ApiError, findApiUrl, invokeFleetCheck, userApiClient } from './client.js';
 import { CommandError, commands } from './commands.js';
 
 const USAGE = `Usage: hearth <command> [options]
@@ -111,8 +110,6 @@ async function main(argv: string[]): Promise<number> {
   const baseUrl = await findApiUrl(values.env, values.region);
   const run = commands({
     api: userApiClient({ baseUrl, idToken: () => currentIdToken(values.env, { config: authConfig, session }) }),
-    // Every server: the admin routes (IAM) until /v1 has it.
-    adminApi: apiClient({ baseUrl, region: values.region, credentials: fromNodeProviderChain() }),
     fleetCheck: () => invokeFleetCheck(values.env, values.region),
     print,
   });

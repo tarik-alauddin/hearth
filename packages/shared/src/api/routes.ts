@@ -374,6 +374,29 @@ export const API_ROUTES: readonly ApiRoute[] = [
       409: conflict("It's the caller's own (admins need no approval)"),
     },
   },
+  {
+    id: 'listEveryServer',
+    method: 'GET',
+    path: '/v1/admin/servers',
+    handler: 'user',
+    caller: { kind: 'user', adminOnly: true },
+    summary: 'List every server',
+    description:
+      'Whole records, whoever owns them (`/v1/servers` lists the caller\'s own). Destroyed servers only with ' +
+      '`all=true`; a page can then be short, so follow the cursor.',
+    query: ListServersQuerySchema,
+    responses: { 200: { description: 'One page of servers', schema: ListServersResponseSchema } },
+  },
+  {
+    id: 'getServerRecord',
+    method: 'GET',
+    path: '/v1/admin/servers/{id}',
+    handler: 'user',
+    caller: { kind: 'user', adminOnly: true },
+    summary: "A server's whole record",
+    description: 'Instance, agent and storage details included (`/v1/servers/{id}` answers what owners see).',
+    responses: { 200: server('The server'), 404: { description: 'No such server' } },
+  },
 
   // Admin routes (the hearth CLI).
   {

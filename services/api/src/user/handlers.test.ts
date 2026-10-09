@@ -147,6 +147,11 @@ describe('user routes', () => {
         if (id !== 's1') throw new AccessDenied(404, `No server ${id}`);
         return { server: record, relation: actor.kind === 'admin' ? 'admin' : 'member' };
       },
+      listServers: async (actor, limit, cursor, all) => {
+        calls.push(`list every ${actor.kind} ${limit} ${cursor} ${all}`);
+        if (actor.kind !== 'admin') throw new AccessDenied(403, 'Only Hearth admins can do that');
+        return { servers: [record], cursor: 'next' };
+      },
       createServer: async (actor, body) => {
         calls.push(`create ${actor.kind} ${JSON.stringify(body)}`);
         if ((body as { version?: string }).version === 'limit') throw new AccessDenied(403, 'You have 3 servers, your limit');
@@ -190,6 +195,21 @@ describe('user routes', () => {
       const { store } = fakeUsers();
       return userHandler({ users: store, serverOps, inviteOps: noInvites, memberOps: noMembers, uploadOps: noUploads, userOps: userOperations({ users: store, now: () => NOW }), log: () => {} });
     };
+
+    it('gives admins every server and whole records; everyone else 403', async () => {
+      calls.length = 0;
+      const admin = { ...googleClaims, 'cognito:groups': '[admin]' };
+      const h = handle();
+      const every = await h({ ...event('GET /v1/admin/servers', admin), queryStringParameters: { limit: '50', all: 'true' } } as never);
+      expect(JSON.parse(every.body!)).toEqual({ servers: [record], cursor: 'next' });
+      expect(calls).toEqual(['list every admin 50 undefined true']);
+      const one = await h(event('GET /v1/admin/servers/{id}', admin, { id: 's1' }));
+      expect(JSON.parse(one.body!)).toEqual(record); // instance ID, storage keys and all
+
+      expect((await h(event('GET /v1/admin/servers', googleClaims))).statusCode).toBe(403);
+      // An owner or member of s1 is still refused: this route answers whole records.
+      expect((await h(event('GET /v1/admin/servers/{id}', googleClaims, { id: 's1' }))).statusCode).toBe(403);
+    });
 
     it('lists my servers as the UI sees them: no instance IDs or storage keys', async () => {
       calls.length = 0;

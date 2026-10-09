@@ -59,7 +59,7 @@ as part of each PR. The repo layout and commands are in [README.md](README.md).
 | M7 Move your world | Done (PR1–PR4; tested on dev with a real world) |
 | Before Phase 2 | Done: M7 docs, neutral wording, destroy (records kept as `DESTROYED`), state-sync tweak, stage and prod live with the release flow (details under Decisions) |
 | **Phase 1** | **Complete** (2026-10-07): dev, stage and prod run `v2026.10.07-3461efe`, agent `2026.10.06-de42566` |
-| M8 Accounts and access | In progress: PR1a–PR1c done (sign-in with password, Google, Discord, tested on dev); PR2–PR4 done (access data, authorization, API contract); PR5 merged (every server action on `/v1`); PR6 merged (invites, members); PR7a–7c-1 merged (CLI sign-in, CLI on `/v1`, uploads tied to their uploader); PR7c-2 (`/v1` uploads) in review |
+| M8 Accounts and access | In progress: PR1a–PR1c done (sign-in with password, Google, Discord, tested on dev); PR2–PR4 done (access data, authorization, API contract); PR5 merged (every server action on `/v1`); PR6 merged (invites, members); PR7a–7c merged (CLI sign-in, CLI on `/v1`, uploads); PR7d (admin views on `/v1`; CLI off IAM) in review |
 | M9 Game version catalog | Planned (Deferred's plan, V1–V4) |
 | M10 Web UI | Planned |
 
@@ -233,13 +233,17 @@ the CLI signs in the same way; backend only):
     it on `accepted/` (with `game`) and `rejected/`. Upload status and creating from an upload:
     the uploader or any admin (`mayUseUpload`); anyone else 404, as for an unknown ID. Uploads
     from before have no uploader: admins only. No route or IAM change.
-  - 7c-2, in review: `POST /v1/uploads` (approved users and admins, like create: 403 otherwise)
+  - 7c-2, merged (tested on dev): `POST /v1/uploads` (approved users and admins, like create: 403 otherwise)
     and `GET /v1/uploads/{id}` (the uploader and admins; 404 otherwise). `POST /v1/servers` takes
     `upload` (the caller's own). The User λ gets Admin's upload access: PutObject `landing/*`
     (signing forms), GetObject `landing/`, `accepted/`, `rejected/`, ListBucket; `UPLOADS_BUCKET`.
     The CLI's `create --upload` and `--from-upload` are on `/v1`; only `list` uses `/admin` now.
-  - 7d: admin routes on `/v1`: every server and one server's whole record (`list`, and `status`'s
-    instance and agent rows for admins); `fleet-check` stays a direct Lambda call.
+  - 7d, in review: `GET /v1/admin/servers` (every server, whole records, paged; `?all=true`)
+    and `GET /v1/admin/servers/{id}` (the whole record; refused to non-admins even on their own
+    server, before reading it), both `adminOnly`. The User λ may Scan Servers. CLI: `list` and
+    `status` try the admin route and, on 403, show what the caller sees (their servers; the
+    `ServerView`). The CLI no longer signs API requests with IAM (SigV4 client and its four
+    dependencies removed); AWS credentials now only read SSM, run `fleet-check` and `admin`.
 - PR8 Remove `/admin` routes, their handler and permissions.
 
 **M9** is the game version catalog plan under Deferred, its routes under `/v1`. **M10 Web UI**

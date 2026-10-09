@@ -39,7 +39,7 @@ stop whose backup failed ends with `Agent: world saved, but the backup failed: â
 Check the backup (the bucket is `hearth-<env>-backups-<account>-us-west-2`):
 
 ```bash
-hearth status <serverId>            # "last backup <time>"
+hearth status <serverId>            # "last backup <time> (<size> MiB)" (signed in as an admin)
 hearth backups <serverId>           # newest first; the top one matches "last backup"
 aws s3 ls s3://<bucket>/servers/<serverId>/            # one <yyyymmdd>T<hhmmss>Z.tar.gz per stop
 aws s3 cp s3://<bucket>/<key> - | tar tz | head        # world/â€¦, server.properties; no logs/ or *.jar
