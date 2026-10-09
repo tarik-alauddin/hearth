@@ -72,6 +72,9 @@ Admins only. Users are approved by their user ID: the `userId` `/v1/me` shows th
    `approved: true`.
 3. Take it back with `-Body '{"approved":false}'`: `approved: false`, no `approvedAt`.
 4. A user ID that has never signed in answers `404`; a body like `{"approved":"yes"}` answers `400`.
+5. The CLI does the same, signed in as your admin (`pnpm hearth login`):
+   `pnpm hearth approve <userId>` ("… is approved: they can create up to 3 servers") and
+   `pnpm hearth unapprove <userId>`.
 
 ## 3. My servers (`GET /v1/servers`, `GET /v1/servers/{id}`)
 

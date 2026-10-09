@@ -3753,6 +3753,10 @@
           "lastStoppedAt": {
             "type": "string"
           },
+          "lastStopClean": {
+            "description": "False when the last stop may not have saved the game",
+            "type": "boolean"
+          },
           "lastBackupAt": {
             "type": "string"
           },

@@ -5,10 +5,9 @@ Minecraft client, stopped (with a backup) and started with its world intact, thr
 and lifecycle workflows. Rerun after changes to the
 agent, the API, the workflows, the startup script or the launch template.
 
-**Where to run:** locally (`pnpm hearth …`, with AWS credentials for the account) or in AWS CloudShell
-in `us-west-2`. For CloudShell, build the CLI once with `pnpm --filter @hearth/cli bundle`, upload
-`cli/dist/hearth.cjs` (**Actions → Upload file**) and run `node hearth.cjs …`. Commands below use
-`hearth` for either. **Costs:** a few cents per hour while the server runs.
+**Where to run:** locally (`pnpm hearth …`, with AWS credentials for the account), signed in with
+`pnpm hearth login` first (a browser on the same machine: not CloudShell). Commands below say
+`hearth`. **Costs:** a few cents per hour while the server runs.
 
 ## 0. Before you start
 
@@ -21,7 +20,7 @@ in `us-west-2`. For CloudShell, build the CLI once with `pnpm --filter @hearth/c
 hearth create --version 1.21.4      # your client's version
 ```
 
-Expect `PROVISIONING` → `STARTING · agent starting` → `RUNNING · agent ready`, then
+Expect `PROVISIONING` → `STARTING · game starting` → `RUNNING · game ready`, then
 `Ready. Join at <ip>:25565`. The first start takes about 3–5 minutes.
 
 ## 2. Join and leave a mark
@@ -31,7 +30,7 @@ Expect `PROVISIONING` → `STARTING · agent starting` → `RUNNING · agent rea
 ## 3. Stop
 
 ```bash
-hearth stop <serverId>              # ends with "Stopped. World saved."
+hearth stop <serverId>              # ends with "Stopped. Game saved."
 ```
 
 "Not clean" instead means the agent didn't report saving before the instance powered off. A clean
@@ -40,7 +39,7 @@ stop whose backup failed ends with `Agent: world saved, but the backup failed: �
 Check the backup (the bucket is `hearth-<env>-backups-<account>-us-west-2`):
 
 ```bash
-hearth status <serverId>            # "last backup  <time> (<size> MiB)"
+hearth status <serverId>            # "last backup <time>"
 hearth backups <serverId>           # newest first; the top one matches "last backup"
 aws s3 ls s3://<bucket>/servers/<serverId>/            # one <yyyymmdd>T<hhmmss>Z.tar.gz per stop
 aws s3 cp s3://<bucket>/<key> - | tar tz | head        # world/…, server.properties; no logs/ or *.jar
@@ -77,7 +76,7 @@ Needs the agent with restores: the server on a channel that has it (dev canary f
 
    ```bash
    hearth restore <serverId> <A's file name>
-   hearth start <serverId>           # STARTING · agent starting: restoring backup …
+   hearth start <serverId>           # STARTING · game starting (the restore comes first)
    ```
 
 4. Join: the new build is gone (the world is A's). `hearth status` shows no `restore` row.

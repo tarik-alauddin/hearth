@@ -1,160 +1,169 @@
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import type { FleetReport, ServerRecord, UploadStatus } from '@hearth/shared';
+import type { FleetReport, ServerRecord, ServerView, UploadStatus } from '@hearth/shared';
 import type { Api } from './client.js';
-import { CommandError, commands } from './commands.js';
+import { CommandError, commands, type CommandDeps } from './commands.js';
 
-function server(overrides: Partial<ServerRecord>): ServerRecord {
+function view(overrides: Partial<ServerView>): ServerView {
   return {
     serverId: 's1',
-    ownerId: 'o',
+    role: 'owner',
     game: 'minecraft-java',
     region: 'us-west-2',
     status: 'STARTING',
     version: '1.21.4',
-    autoUpdate: false,
+    idleStopMinutes: 30,
+    restorePending: false,
     ...overrides,
   };
 }
 
-/** An API whose GET /admin/servers/s1 walks through the given states, one per poll. */
-function fakeApi(states: Partial<ServerRecord>[], pages: ServerRecord[][] = []) {
-  const posts: string[] = [];
-  const gets: string[] = [];
-  let i = 0;
-  const api: Api = {
-    get: async <T>(path: string, query?: Record<string, string | undefined>) => {
-      gets.push(`${path} ${JSON.stringify(query ?? {})}`);
-      if (path === '/admin/servers') {
-        const page = pages.shift() ?? [];
-        return { servers: page, ...(pages.length ? { cursor: `c${pages.length}` } : {}) } as T;
-      }
-      return server(states[Math.min(i++, states.length - 1)] ?? {}) as T;
-    },
-    post: async <T>(path: string, body?: unknown) => {
-      posts.push(`${path} ${JSON.stringify(body ?? null)}`);
-      return { serverId: 's1', status: path.endsWith('/stop') ? 'STOPPING' : 'STARTING' } as T;
-    },
-  };
-  return { api, posts, gets };
+function record(overrides: Partial<ServerRecord>): ServerRecord {
+  return { serverId: 's1', ownerId: 'o', game: 'minecraft-java', region: 'us-west-2', status: 'STOPPED', version: '1.21.4', autoUpdate: false, ...overrides };
 }
 
-function run(api: Api) {
+/** An Api that records each call as "METHOD path body" and answers with `answer`. */
+function recorder(calls: string[], answer: (method: string, path: string, body: unknown) => unknown): Api {
+  const call = (method: string) => async (path: string, body?: unknown) => {
+    const shown = method === 'GET' ? (body && Object.keys(body).length ? ` ${JSON.stringify(body)}` : '') : body === undefined ? '' : ` ${JSON.stringify(body)}`;
+    calls.push(`${method} ${path}${shown}`);
+    return answer(method, path, body);
+  };
+  return { get: call('GET'), post: call('POST'), patch: call('PATCH'), delete: call('DELETE') } as Api;
+}
+
+/**
+ * The /v1 API: GET /v1/servers/s1 walks through `states` (the last repeats); actions answer as
+ * the API does (a workflow result, or the server as the caller sees it). The admin API serves
+ * `pages` of every server.
+ */
+function fakeApis(states: Partial<ServerView>[] = [], opts: { pages?: ServerRecord[][]; backups?: unknown[] } = {}) {
+  const calls: string[] = [];
+  const adminCalls: string[] = [];
+  let i = 0;
+  const api = recorder(calls, (method, path, body) => {
+    if (path.endsWith('/backups')) return { backups: opts.backups ?? [] };
+    if (path.startsWith('/v1/admin/users/')) {
+      return { userId: 'u-1', approved: (body as { approved: boolean }).approved, serverLimit: 3, createdAt: 'then', lastSeenAt: 'then', name: 'Friend' };
+    }
+    if (method === 'GET') return view(states[Math.min(i++, states.length - 1)] ?? {});
+    if (method === 'PATCH') return view(body as Partial<ServerView>);
+    if (path === '/v1/servers' || /\/(start|stop|destroy)$/.test(path)) {
+      return { serverId: 's1', status: path.endsWith('/stop') ? 'STOPPING' : path.endsWith('/destroy') ? 'DESTROYING' : 'STARTING' };
+    }
+    return view({ version: (body as { version?: string } | undefined)?.version ?? '1.21.4' });
+  });
+  const pages = [...(opts.pages ?? [])];
+  const adminApi = recorder(adminCalls, (_method, path) => {
+    if (path === '/admin/servers') return { servers: pages.shift() ?? [], ...(pages.length ? { cursor: `c${pages.length}` } : {}) };
+    return { serverId: 's1', status: 'PROVISIONING' };
+  });
+  return { api, adminApi, calls, adminCalls };
+}
+
+function run(apis: { api: Api; adminApi: Api }, deps: Partial<CommandDeps> = {}) {
   const out: string[] = [];
-  return { out, cmd: commands({ api, print: (l) => out.push(l), sleep: async () => {}, pollMs: 1, timeoutMs: 100 }) };
+  const cmd = commands({ ...apis, print: (l) => out.push(l), sleep: async () => {}, pollMs: 1, timeoutMs: 100, ...deps });
+  return { out, cmd };
 }
 
 describe('commands', () => {
-  it('create waits until running and prints the join address', async () => {
-    const { api, posts } = fakeApi([
+  it('create goes through /v1, waits until running and prints the join address', async () => {
+    const apis = fakeApis([
       { status: 'PROVISIONING' },
-      { status: 'STARTING', agentState: 'starting' },
-      { status: 'RUNNING', agentState: 'ready', publicIp: '35.1.2.3' }, // the IP comes with RUNNING
+      { status: 'STARTING', gameState: 'starting' },
+      { status: 'RUNNING', gameState: 'ready', address: '35.1.2.3' }, // the address comes with RUNNING
     ]);
-    const { out, cmd } = run(api);
+    const { out, cmd } = run(apis);
     await cmd.create({ game: 'minecraft-java', version: '1.21.4', wait: true });
 
-    expect(posts).toEqual(['/admin/servers {"game":"minecraft-java","version":"1.21.4"}']);
+    expect(apis.calls[0]).toBe('POST /v1/servers {"game":"minecraft-java","version":"1.21.4"}');
+    expect(apis.calls.slice(1)).toEqual(Array(3).fill('GET /v1/servers/s1'));
     expect(out).toEqual([
       'Creating s1 (minecraft-java 1.21.4). The first start takes a few minutes.',
       '  PROVISIONING',
-      '  STARTING · agent starting',
-      '  RUNNING · agent ready',
+      '  STARTING · game starting',
+      '  RUNNING · game ready',
       'Ready. Join at 35.1.2.3:25565   (server s1)',
     ]);
   });
 
   it('fails with the reason when the server fails', async () => {
-    const { api } = fakeApi([{ status: 'FAILED', statusMessage: 'AgentError: image pull failed' }]);
-    await expect(run(api).cmd.start('s1', true)).rejects.toThrow('Failed: AgentError: image pull failed');
+    const apis = fakeApis([{ status: 'FAILED', statusMessage: 'AgentError: image pull failed' }]);
+    await expect(run(apis).cmd.start('s1', true)).rejects.toThrow('Failed: AgentError: image pull failed');
   });
 
   it('gives up after the timeout', async () => {
-    const { api } = fakeApi([{ status: 'STARTING' }]);
-    await expect(run(api).cmd.start('s1', true)).rejects.toBeInstanceOf(CommandError);
+    await expect(run(fakeApis([{ status: 'STARTING' }])).cmd.start('s1', true)).rejects.toBeInstanceOf(CommandError);
+  });
+
+  it('starts and stops through /v1, and does not wait with --no-wait', async () => {
+    const apis = fakeApis();
+    const { cmd } = run(apis);
+    await cmd.start('s1', false);
+    await cmd.stop('s1', false);
+    expect(apis.calls).toEqual(['POST /v1/servers/s1/start', 'POST /v1/servers/s1/stop']);
   });
 
   it('stop reports whether the game was saved', async () => {
-    const { api } = fakeApi([{ status: 'STOPPING' }, { status: 'STOPPED', lastStopClean: false }]);
-    const { out, cmd } = run(api);
-    await cmd.stop('s1', true);
-    expect(out.at(-1)).toMatch(/did not report a clean stop/);
+    const unclean = run(fakeApis([{ status: 'STOPPING' }, { status: 'STOPPED', lastStopClean: false }]));
+    await unclean.cmd.stop('s1', true);
+    expect(unclean.out.at(-1)).toMatch(/did not report a clean stop/);
+    const clean = run(fakeApis([{ status: 'STOPPED', lastStopClean: true }]));
+    await clean.cmd.stop('s1', true);
+    expect(clean.out.at(-1)).toBe('Stopped. Game saved.');
   });
 
-  it('stop passes on what went wrong in an otherwise clean stop', async () => {
-    const agentMessage = 'game saved, but the backup failed: upload: timeout';
-    const { api } = fakeApi([{ status: 'STOPPING' }, { status: 'STOPPED', lastStopClean: true, agentMessage }]);
-    const { out, cmd } = run(api);
-    await cmd.stop('s1', true);
-    expect(out.at(-1)).toBe(`Stopped. Game saved. Agent: ${agentMessage}`);
-  });
-
-  it('lists backups as a table, or says there are none', async () => {
+  it('lists backups by name as a table, or says there are none', async () => {
     const backups = [
-      { key: 'servers/s1/20261005T120000Z.tar.gz', takenAt: '2026-10-05T12:00:10.000Z', bytes: 3 * 2 ** 20 },
-      { key: 'servers/s1/20261004T120000Z.tar.gz', takenAt: '2026-10-04T12:00:10.000Z', bytes: 2 ** 20 },
+      { id: '20261005T120000Z.tar.gz', takenAt: '2026-10-05T12:00:10.000Z', bytes: 3 * 2 ** 20 },
+      { id: '20261004T120000Z.tar.gz', takenAt: '2026-10-04T12:00:10.000Z', bytes: 2 ** 20 },
     ];
-    const api = { get: async () => ({ backups }) } as unknown as Api;
-    const { out, cmd } = run(api);
+    const apis = fakeApis([], { backups });
+    const { out, cmd } = run(apis);
     await cmd.backups('s1');
+    expect(apis.calls).toEqual(['GET /v1/servers/s1/backups']);
     expect(out).toEqual([
-      'TAKEN                     SIZE     KEY',
-      '2026-10-05T12:00:10.000Z  3.0 MiB  servers/s1/20261005T120000Z.tar.gz',
-      '2026-10-04T12:00:10.000Z  1.0 MiB  servers/s1/20261004T120000Z.tar.gz',
+      'TAKEN                     SIZE     BACKUP',
+      '2026-10-05T12:00:10.000Z  3.0 MiB  20261005T120000Z.tar.gz',
+      '2026-10-04T12:00:10.000Z  1.0 MiB  20261004T120000Z.tar.gz',
     ]);
 
-    const empty = run({ get: async () => ({ backups: [] }) } as unknown as Api);
+    const empty = run(fakeApis());
     await empty.cmd.backups('s1');
     expect(empty.out).toEqual(['No backups yet. One is taken each time the server stops.']);
   });
 
-  it('requests a restore with an optional key and force, and cancels one', async () => {
-    const posts: string[] = [];
-    const api = {
-      post: async (path: string, body?: unknown) => {
-        posts.push(`${path} ${JSON.stringify(body ?? null)}`);
-        return { serverId: 's1', restoreKey: 'servers/s1/20261004T120000Z.tar.gz' };
-      },
-    } as unknown as Api;
-    const { out, cmd } = run(api);
+  it('requests a restore with an optional backup and force, and cancels one', async () => {
+    const apis = fakeApis();
+    const { out, cmd } = run(apis);
     await cmd.restore('s1', undefined, false);
     await cmd.restore('s1', '20261004T120000Z.tar.gz', true);
     await cmd.cancelRestore('s1');
-    expect(posts).toEqual([
-      '/admin/servers/s1/restore {}',
-      '/admin/servers/s1/restore {"key":"20261004T120000Z.tar.gz","force":true}',
-      '/admin/servers/s1/restore/cancel null',
+    expect(apis.calls).toEqual([
+      'POST /v1/servers/s1/restore {}',
+      'POST /v1/servers/s1/restore {"key":"20261004T120000Z.tar.gz","force":true}',
+      'DELETE /v1/servers/s1/restore',
     ]);
-    expect(out[0]).toBe('s1 will restore servers/s1/20261004T120000Z.tar.gz on its next start, replacing the current game data.');
+    expect(out[0]).toBe('s1 will restore its newest backup on its next start, replacing the current game data.');
+    expect(out[2]).toBe('s1 will restore 20261004T120000Z.tar.gz on its next start, replacing the current game data.');
     expect(out.at(-1)).toBe('No restore pending for s1.');
   });
 
   it('sets the version', async () => {
-    const posts: string[] = [];
-    const api = {
-      post: async (path: string, body?: unknown) => {
-        posts.push(`${path} ${JSON.stringify(body)}`);
-        return { serverId: 's1', game: 'minecraft-java', version: '26.3' };
-      },
-    } as unknown as Api;
-    const { out, cmd } = run(api);
+    const apis = fakeApis();
+    const { out, cmd } = run(apis);
     await cmd.setVersion('s1', '26.3');
-    expect(posts).toEqual(['/admin/servers/s1/version {"version":"26.3"}']);
+    expect(apis.calls).toEqual(['POST /v1/servers/s1/version {"version":"26.3"}']);
     expect(out).toEqual(['s1 runs minecraft-java 26.3 from its next start.']);
   });
 
   it('sets the idle limit in minutes, or off', async () => {
-    const posts: string[] = [];
-    const api = {
-      post: async (path: string, body?: { idleStopMinutes: number }) => {
-        posts.push(`${path} ${JSON.stringify(body)}`);
-        return { serverId: 's1', idleStopMinutes: body?.idleStopMinutes };
-      },
-    } as unknown as Api;
-    const { out, cmd } = run(api);
+    const apis = fakeApis();
+    const { out, cmd } = run(apis);
     await cmd.setIdle('s1', '45');
     await cmd.setIdle('s1', 'off');
-    expect(posts).toEqual(['/admin/servers/s1/settings {"idleStopMinutes":45}', '/admin/servers/s1/settings {"idleStopMinutes":0}']);
+    expect(apis.calls).toEqual(['PATCH /v1/servers/s1 {"idleStopMinutes":45}', 'PATCH /v1/servers/s1 {"idleStopMinutes":0}']);
     expect(out).toEqual([
       's1 stops after 45 minutes with nobody playing, from its next start.',
       's1 never stops for being idle, from its next start.',
@@ -163,82 +172,77 @@ describe('commands', () => {
     await expect(cmd.setIdle('s1', '-5')).rejects.toBeInstanceOf(CommandError);
   });
 
-  it('status shows the idle limit, defaulting to 30 minutes', async () => {
-    const { api } = fakeApi([{ status: 'RUNNING' }]);
-    const { out, cmd } = run(api);
-    await cmd.status('s1');
-    expect(out).toContain('idle stop   stops after 30 minutes with nobody playing');
-  });
-
-  it('status shows why the server last stopped', async () => {
-    const { api } = fakeApi([
-      { status: 'STOPPED', lastStoppedAt: '2026-10-05T12:00:00Z', stopReason: 'no players for 30 minutes' },
+  it('creates on a channel and moves servers between channels', async () => {
+    const apis = fakeApis();
+    const { out, cmd } = run(apis);
+    await cmd.create({ game: 'minecraft-java', version: '1.21.4', channel: 'canary', wait: false });
+    await cmd.setChannel('s1', 'stable');
+    expect(apis.calls).toEqual([
+      'POST /v1/servers {"game":"minecraft-java","version":"1.21.4","agentChannel":"canary"}',
+      'PATCH /v1/servers/s1 {"agentChannel":"stable"}',
     ]);
-    const { out, cmd } = run(api);
-    await cmd.status('s1');
-    expect(out).toContain('last stop   2026-10-05T12:00:00Z: no players for 30 minutes');
+    expect(out.at(-1)).toBe('s1 is on the stable channel; it takes effect on the next start.');
   });
 
-  it('status names a pending restore of an upload by its upload ID', async () => {
-    const { api } = fakeApi([
-      { status: 'STARTING', restoreKey: 'accepted/01K6ABCDEF0123456789ABCDEF.tar.gz', restoreSource: 'upload' },
-    ]);
-    const { out, cmd } = run(api);
-    await cmd.status('s1');
-    expect(out).toContain('restore     upload 01K6ABCDEF0123456789ABCDEF on the next start');
-  });
+  describe('status', () => {
+    async function status(state: Partial<ServerView>) {
+      const { out, cmd } = run(fakeApis([state]));
+      await cmd.status('s1');
+      return out;
+    }
 
-  it('status shows a pending restore', async () => {
-    const { api } = fakeApi([{ status: 'STOPPED', restoreKey: 'servers/s1/20261004T120000Z.tar.gz' }]);
-    const { out, cmd } = run(api);
-    await cmd.status('s1');
-    expect(out).toContain('restore     servers/s1/20261004T120000Z.tar.gz on the next start');
-  });
+    it('shows the server as its owners and members see it', async () => {
+      expect(await status({ status: 'RUNNING', gameState: 'ready', address: '35.1.2.3', role: 'member' })).toEqual([
+        'server      s1',
+        'you are     member',
+        'game        minecraft-java 1.21.4',
+        'status      RUNNING',
+        'game state  ready',
+        'idle stop   stops after 30 minutes with nobody playing',
+        'join at     35.1.2.3:25565',
+      ]);
+    });
 
-  it('status shows the last backup', async () => {
-    const { api } = fakeApi([{ status: 'STOPPED', lastBackupAt: '2026-10-04T12:01:00.000Z', lastBackupBytes: 3 * 2 ** 20 }]);
-    const { out, cmd } = run(api);
-    await cmd.status('s1');
-    expect(out).toContain('last backup 2026-10-04T12:01:00.000Z (3.0 MiB)');
+    it('shows why the server last stopped, and whether cleanly', async () => {
+      expect(await status({ status: 'STOPPED', lastStoppedAt: '2026-10-05T12:00:00Z', stopReason: 'no players for 30 minutes' })).toContain(
+        'last stop   2026-10-05T12:00:00Z: no players for 30 minutes',
+      );
+      expect(await status({ status: 'STOPPED', lastStoppedAt: '2026-10-05T12:00:00Z', lastStopClean: false })).toContain(
+        'last stop   2026-10-05T12:00:00Z (not clean)',
+      );
+    });
+
+    it('shows the last backup, a pending restore and when it was destroyed', async () => {
+      const out = await status({
+        status: 'DESTROYED',
+        lastBackupAt: '2026-10-04T12:01:00.000Z',
+        restorePending: true,
+        destroyedAt: '2026-10-06T11:00:00.000Z',
+        idleStopMinutes: 0,
+      });
+      expect(out).toContain('last backup 2026-10-04T12:01:00.000Z');
+      expect(out).toContain('restore     pending: replaces the game data on the next start');
+      expect(out).toContain('destroyed   2026-10-06T11:00:00.000Z');
+      expect(out).toContain('idle stop   never stops for being idle');
+    });
   });
 
   describe('destroy', () => {
-    /** An API whose GET walks through `states` (the last one repeats), recording POSTs. */
-    function destroyApi(states: Partial<ServerRecord>[]) {
-      const posts: string[] = [];
-      let i = 0;
-      const api = {
-        get: async () => server(states[Math.min(i++, states.length - 1)] ?? {}),
-        post: async (path: string) => {
-          posts.push(path);
-          return { serverId: 's1', status: 'DESTROYING' };
-        },
-      } as unknown as Api;
-      return { api, posts };
-    }
-
-    function runDestroy(api: Api, answer = 's1') {
-      const out: string[] = [];
+    function runDestroy(states: Partial<ServerView>[], answer = 's1') {
+      const apis = fakeApis(states);
       const asked: string[] = [];
-      const cmd = commands({
-        api,
-        print: (l) => out.push(l),
-        sleep: async () => {},
-        pollMs: 1,
-        timeoutMs: 100,
-        ask: async (q) => (asked.push(q), answer),
-      });
-      return { out, asked, cmd };
+      const { out, cmd } = run(apis, { ask: async (q) => (asked.push(q), answer) });
+      const posts = () => apis.calls.filter((c) => c.startsWith('POST'));
+      return { out, asked, cmd, posts };
     }
 
     const stopped = { status: 'STOPPED' as const, lastBackupAt: '2026-10-06T10:00:00.000Z' };
 
     it('shows what goes, asks for the ID back, destroys, and follows it to DESTROYED', async () => {
-      const { api, posts } = destroyApi([stopped, { status: 'DESTROYING' }, { status: 'DESTROYED' }]);
-      const { out, asked, cmd } = runDestroy(api);
+      const { out, asked, cmd, posts } = runDestroy([stopped, { status: 'DESTROYING' }, { status: 'DESTROYED' }]);
       await cmd.destroy('s1', { yes: false, wait: true });
       expect(asked).toEqual(['Type the server ID to destroy it: ']);
-      expect(posts).toEqual(['/admin/servers/s1/destroy']);
+      expect(posts()).toEqual(['POST /v1/servers/s1/destroy']);
       expect(out).toEqual([
         'This destroys s1 (minecraft-java 1.21.4, STOPPED): its instance and data volume.',
         'Its backups are kept; the newest is from 2026-10-06T10:00:00.000Z.',
@@ -250,86 +254,63 @@ describe('commands', () => {
     });
 
     it('says when a server was already destroyed, asking nothing', async () => {
-      const { api, posts } = destroyApi([{ status: 'DESTROYED', destroyedAt: '2026-10-06T11:00:00.000Z' }]);
-      const { out, asked, cmd } = runDestroy(api);
+      const { out, asked, cmd, posts } = runDestroy([{ status: 'DESTROYED', destroyedAt: '2026-10-06T11:00:00.000Z' }]);
       await cmd.destroy('s1', { yes: false, wait: true });
       expect(out).toEqual(['s1 was already destroyed on 2026-10-06T11:00:00.000Z.']);
       expect(asked).toEqual([]);
-      expect(posts).toEqual([]);
+      expect(posts()).toEqual([]);
     });
 
     it('warns plainly when there are no backups', async () => {
-      const { api } = destroyApi([{ status: 'STOPPED' }]);
-      const { out, cmd } = runDestroy(api);
+      const { out, cmd } = runDestroy([{ status: 'STOPPED' }]);
       await cmd.destroy('s1', { yes: true, wait: false });
       expect(out[1]).toBe('It has no backups: its game data will be gone for good.');
     });
 
     it("doesn't destroy when the typed ID doesn't match", async () => {
-      const { api, posts } = destroyApi([stopped]);
-      const { cmd } = runDestroy(api, 's2');
+      const { cmd, posts } = runDestroy([stopped], 's2');
       await expect(cmd.destroy('s1', { yes: false, wait: false })).rejects.toThrow('Not destroyed');
-      expect(posts).toEqual([]);
+      expect(posts()).toEqual([]);
     });
 
     it('skips the question with --yes', async () => {
-      const { api, posts } = destroyApi([stopped]);
-      const { asked, cmd } = runDestroy(api);
+      const { asked, cmd, posts } = runDestroy([stopped]);
       await cmd.destroy('s1', { yes: true, wait: false });
       expect(asked).toEqual([]);
-      expect(posts).toEqual(['/admin/servers/s1/destroy']);
+      expect(posts()).toEqual(['POST /v1/servers/s1/destroy']);
     });
 
     it.each(['RUNNING', 'STARTING', 'STOPPING'] as const)('refuses a %s server before asking anything', async (status) => {
-      const { api, posts } = destroyApi([{ status }]);
-      const { asked, cmd } = runDestroy(api);
+      const { asked, cmd, posts } = runDestroy([{ status }]);
       await expect(cmd.destroy('s1', { yes: false, wait: false })).rejects.toThrow(/stop it before destroying it/);
       expect(asked).toEqual([]);
-      expect(posts).toEqual([]);
+      expect(posts()).toEqual([]);
     });
 
     it('fails with the reason if the destroy ends FAILED', async () => {
-      const { api } = destroyApi([stopped, { status: 'DESTROYING' }, { status: 'FAILED', statusMessage: 'Error: boom' }]);
-      const { cmd } = runDestroy(api);
+      const { cmd } = runDestroy([stopped, { status: 'DESTROYING' }, { status: 'FAILED', statusMessage: 'Error: boom' }]);
       await expect(cmd.destroy('s1', { yes: true, wait: true })).rejects.toThrow('Failed: Error: boom');
     });
   });
 
-  describe('create --upload', () => {
+  describe('create --upload (the admin routes until /v1 has uploads)', () => {
     const UPLOAD = '01K6ABCDEF0123456789ABCDEF';
 
-    /** An API that hands out an upload form, reports the given statuses in turn, and creates. */
-    function uploadApi(statuses: UploadStatus[]) {
+    /** Admin routes that hand out an upload form, report the given statuses in turn, and create. */
+    function uploadApis(statuses: UploadStatus[]) {
       const calls: string[] = [];
       let i = 0;
-      const api = {
-        post: async (path: string, body?: unknown) => {
-          calls.push(`POST ${path} ${JSON.stringify(body)}`);
-          if (path === '/admin/uploads') return { uploadId: UPLOAD, url: 'https://s3/', fields: { key: 'k' } };
-          return { serverId: 's1', status: 'PROVISIONING' };
-        },
-        get: async (path: string) => {
-          calls.push(`GET ${path}`);
-          return statuses[Math.min(i++, statuses.length - 1)];
-        },
-      } as unknown as Api;
-      return { api, calls };
+      const adminApi = recorder(calls, (method, path) => {
+        if (path === '/admin/uploads') return { uploadId: UPLOAD, url: 'https://s3/', fields: { key: 'k' } };
+        if (method === 'GET') return statuses[Math.min(i++, statuses.length - 1)];
+        return { serverId: 's1', status: 'PROVISIONING' };
+      });
+      return { api: fakeApis().api, adminApi, calls };
     }
 
-    function runUpload(api: Api, bytes = 3 * 2 ** 20) {
-      const out: string[] = [];
+    function runUpload(apis: { api: Api; adminApi: Api }, bytes = 3 * 2 ** 20) {
       const sent: string[] = [];
-      const cmd = commands({
-        api,
-        print: (l) => out.push(l),
-        sleep: async () => {},
-        pollMs: 1,
-        timeoutMs: 100,
-        fileSize: async () => bytes,
-        sendUpload: async (form, file) => {
-          sent.push(`${form.url} ${file}`);
-        },
-      });
+      const { out, cmd } = run(apis, { fileSize: async () => bytes, sendUpload: async (form, file) => void sent.push(`${form.url} ${file}`) });
       return { out, sent, cmd };
     }
 
@@ -338,14 +319,14 @@ describe('commands', () => {
     const opts = { game: 'minecraft-java', version: '26.3', file, wait: false };
 
     it('uploads, waits for repack to accept it, then creates from it', async () => {
-      const { api, calls } = uploadApi([
+      const apis = uploadApis([
         { uploadId: UPLOAD, status: 'repacking' },
         { uploadId: UPLOAD, status: 'accepted', bytes: 2 * 2 ** 20 },
       ]);
-      const { out, sent, cmd } = runUpload(api);
+      const { out, sent, cmd } = runUpload(apis);
       await cmd.create(opts);
       expect(sent).toEqual([`https://s3/ ${file}`]);
-      expect(calls).toEqual([
+      expect(apis.calls).toEqual([
         'POST /admin/uploads {"game":"minecraft-java"}',
         `GET /admin/uploads/${UPLOAD}`,
         `GET /admin/uploads/${UPLOAD}`,
@@ -360,81 +341,61 @@ describe('commands', () => {
     });
 
     it("stops with repack's reason and creates nothing when the upload is rejected", async () => {
-      const { api, calls } = uploadApi([{ uploadId: UPLOAD, status: 'rejected', reason: 'no level.dat found' }]);
-      const { cmd } = runUpload(api);
-      await expect(cmd.create(opts)).rejects.toThrow('The upload was rejected: no level.dat found');
-      expect(calls.some((c) => c.startsWith('POST /admin/servers'))).toBe(false);
+      const apis = uploadApis([{ uploadId: UPLOAD, status: 'rejected', reason: 'no level.dat found' }]);
+      await expect(runUpload(apis).cmd.create(opts)).rejects.toThrow('The upload was rejected: no level.dat found');
+      expect(apis.calls.some((c) => c.startsWith('POST /admin/servers'))).toBe(false);
     });
 
     it('refuses a file over the limit before asking for a form', async () => {
-      const { api, calls } = uploadApi([]);
-      const { cmd } = runUpload(api, 5 * 2 ** 30);
-      await expect(cmd.create(opts)).rejects.toThrow(/uploads can be at most 4096.0 MiB/);
-      expect(calls).toEqual([]);
+      const apis = uploadApis([]);
+      await expect(runUpload(apis, 5 * 2 ** 30).cmd.create(opts)).rejects.toThrow(/uploads can be at most 4096.0 MiB/);
+      expect(apis.calls).toEqual([]);
     });
 
     it('refuses both a file and an upload ID', async () => {
-      const { api } = uploadApi([]);
-      const { cmd } = runUpload(api);
-      await expect(cmd.create({ ...opts, upload: UPLOAD })).rejects.toBeInstanceOf(CommandError);
+      await expect(runUpload(uploadApis([])).cmd.create({ ...opts, upload: UPLOAD })).rejects.toBeInstanceOf(CommandError);
+    });
+
+    it('creates from an accepted upload', async () => {
+      const apis = fakeApis();
+      const { out, cmd } = run(apis);
+      await cmd.create({ game: 'minecraft-java', version: '26.3', upload: UPLOAD, wait: false });
+      expect(apis.adminCalls).toEqual([`POST /admin/servers {"game":"minecraft-java","version":"26.3","upload":"${UPLOAD}"}`]);
+      expect(apis.calls).toEqual([]);
+      expect(out[0]).toMatch(/from upload 01K6ABCDEF0123456789ABCDEF/);
     });
   });
 
-  it('creates from an accepted upload', async () => {
-    const { api, posts } = fakeApi([{ status: 'RUNNING' }]);
-    const { out, cmd } = run(api);
-    await cmd.create({ game: 'minecraft-java', version: '26.3', upload: '01K6ABCDEF0123456789ABCDEF', wait: false });
-    expect(posts[0]).toBe('/admin/servers {"game":"minecraft-java","version":"26.3","upload":"01K6ABCDEF0123456789ABCDEF"}');
-    expect(out[0]).toMatch(/from upload 01K6ABCDEF0123456789ABCDEF/);
-  });
-
-  it('creates on a channel and moves servers between channels', async () => {
-    const { api, posts } = fakeApi([{ status: 'RUNNING', publicIp: '1.2.3.4' }]);
-    const { out, cmd } = run(api);
-    await cmd.create({ game: 'minecraft-java', version: '1.21.4', channel: 'canary', wait: false });
-    expect(posts[0]).toBe('/admin/servers {"game":"minecraft-java","version":"1.21.4","agentChannel":"canary"}');
-
-    api.post = (async (path: string, body?: unknown) => {
-      posts.push(`${path} ${JSON.stringify(body)}`);
-      return { serverId: 's1', agentChannel: 'stable' };
-    }) as Api['post'];
-    await cmd.setChannel('s1', 'stable');
-    expect(posts.at(-1)).toBe('/admin/servers/s1/settings {"agentChannel":"stable"}');
-    expect(out.at(-1)).toBe('s1 is on the stable channel; it takes effect on the next start.');
-  });
-
-  it('does not wait with --no-wait', async () => {
-    const { api, gets } = fakeApi([]);
-    await run(api).cmd.start('s1', false);
-    expect(gets).toEqual([]);
-  });
-
-  it('list follows cursors and prints a table', async () => {
-    const { api, gets } = fakeApi(
-      [],
-      [[server({ serverId: 'b', status: 'RUNNING', publicIp: '35.1.2.3', agentState: 'ready' })], [server({ serverId: 'a', status: 'STOPPED' })]],
-    );
-    const { out, cmd } = run(api);
+  it('list reads every server through the admin routes, following cursors', async () => {
+    const apis = fakeApis([], {
+      pages: [[record({ serverId: 'b', status: 'RUNNING', publicIp: '35.1.2.3', agentState: 'ready' })], [record({ serverId: 'a' })]],
+    });
+    const { out, cmd } = run(apis);
     await cmd.list();
-    expect(gets).toEqual(['/admin/servers {"limit":"100"}', '/admin/servers {"limit":"100","cursor":"c1"}']);
+    expect(apis.adminCalls).toEqual(['GET /admin/servers {"limit":"100"}', 'GET /admin/servers {"limit":"100","cursor":"c1"}']);
     expect(out[0]).toMatch(/^SERVER\s+GAME\s+VERSION\s+STATUS\s+AGENT\s+ADDRESS$/);
     expect(out[1]).toMatch(/^a\s+minecraft-java\s+1\.21\.4\s+STOPPED\s+-\s+-$/);
     expect(out[2]).toMatch(/^b .*RUNNING\s+ready\s+35\.1\.2\.3:25565$/);
   });
 
   it('list --all asks for destroyed servers too', async () => {
-    const { api, gets } = fakeApi([], [[server({ serverId: 'gone', status: 'DESTROYED' })]]);
-    const { out, cmd } = run(api);
+    const apis = fakeApis([], { pages: [[record({ serverId: 'gone', status: 'DESTROYED' })]] });
+    const { out, cmd } = run(apis);
     await cmd.list(true);
-    expect(gets).toEqual(['/admin/servers {"limit":"100","all":"true"}']);
+    expect(apis.adminCalls).toEqual(['GET /admin/servers {"limit":"100","all":"true"}']);
     expect(out[1]).toMatch(/^gone .*DESTROYED/);
   });
 
-  it('status shows when a server was destroyed', async () => {
-    const { api } = fakeApi([{ status: 'DESTROYED', destroyedAt: '2026-10-06T11:00:00.000Z' }]);
-    const { out, cmd } = run(api);
-    await cmd.status('s1');
-    expect(out).toContain('destroyed   2026-10-06T11:00:00.000Z');
+  it('approves a user and takes it back', async () => {
+    const apis = fakeApis();
+    const { out, cmd } = run(apis);
+    await cmd.approve('u-1', true);
+    await cmd.approve('u-1', false);
+    expect(apis.calls).toEqual(['POST /v1/admin/users/u-1/approval {"approved":true}', 'POST /v1/admin/users/u-1/approval {"approved":false}']);
+    expect(out).toEqual([
+      'Friend is approved: they can create up to 3 servers.',
+      "Friend is no longer approved: they can't create servers (the ones they have keep running).",
+    ]);
   });
 
   it('fleet-check prints each finding, with the untracked instances to fix', async () => {
@@ -445,8 +406,8 @@ describe('commands', () => {
       untracked: [{ instanceId: 'i-1', region: 'us-west-2', state: 'running', launchedAt: '2026-10-02T19:00:56.000Z', serverId: 's9' }],
       running: 2,
     };
-    const out: string[] = [];
-    await commands({ api: fakeApi([]).api, fleetCheck: async () => report, print: (l) => out.push(l) }).fleetCheck();
+    const { out, cmd } = run(fakeApis(), { fleetCheck: async () => report });
+    await cmd.fleetCheck();
     expect(out).toEqual([
       'running     2',
       'stuck       none',
@@ -459,8 +420,8 @@ describe('commands', () => {
 
   it('fleet-check says when all is clear', async () => {
     const report: FleetReport = { stuck: [], failed: [], mismatched: [], untracked: [], running: 0 };
-    const out: string[] = [];
-    await commands({ api: fakeApi([]).api, fleetCheck: async () => report, print: (l) => out.push(l) }).fleetCheck();
+    const { out, cmd } = run(fakeApis(), { fleetCheck: async () => report });
+    await cmd.fleetCheck();
     expect(out.at(-1)).toBe('All clear.');
   });
 });

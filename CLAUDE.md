@@ -59,7 +59,7 @@ as part of each PR. The repo layout and commands are in [README.md](README.md).
 | M7 Move your world | Done (PR1–PR4; tested on dev with a real world) |
 | Before Phase 2 | Done: M7 docs, neutral wording, destroy (records kept as `DESTROYED`), state-sync tweak, stage and prod live with the release flow (details under Decisions) |
 | **Phase 1** | **Complete** (2026-10-07): dev, stage and prod run `v2026.10.07-3461efe`, agent `2026.10.06-de42566` |
-| M8 Accounts and access | In progress: PR1a–PR1c done (sign-in with password, Google, Discord, tested on dev); PR2–PR4 done (access data, authorization, API contract); PR5 merged (every server action on `/v1`); PR6 merged (invites, members); PR7a (CLI sign-in) in review |
+| M8 Accounts and access | In progress: PR1a–PR1c done (sign-in with password, Google, Discord, tested on dev); PR2–PR4 done (access data, authorization, API contract); PR5 merged (every server action on `/v1`); PR6 merged (invites, members); PR7a done (CLI sign-in); PR7b (CLI on `/v1`) in review |
 | M9 Game version catalog | Planned (Deferred's plan, V1–V4) |
 | M10 Web UI | Planned |
 
@@ -212,15 +212,22 @@ the CLI signs in the same way; backend only):
     ServerAccess rows (the store deletes members only) and query its byServer index.
 - PR7 CLI on Cognito, split in four. The CLI stays the owner's tool: it reads SSM (`api-url`,
   `auth`) with AWS credentials; everyone else uses the web app, so no invite or member commands.
-  - 7a, in review: `hearth login [--provider]` (browser, loopback 8976, PKCE; `cli/src/auth.ts`),
+  - 7a, merged (tested on dev): `hearth login [--provider]` (browser, loopback 8976, PKCE; `cli/src/auth.ts`),
     session in `~/.hearth/session-<env>.json` (ID token refreshed when within a minute of expiry;
     other commands never open the browser), `logout`, `whoami` (`/v1/me`, the first CLI call on
     `/v1`). `hearth admin list | add | remove <userId>`: the Cognito `admin` group, called directly
     with AWS credentials (finds the username by `sub`): no API route can grant admin. Takes effect
     at the user's next token refresh (an hour at most; groups are read at each refresh).
-  - 7b: the server commands on `/v1` with the session; `hearth approve` / `unapprove <userId>`.
+  - 7b, in review: status, start, stop, destroy, create (not from an upload), set-idle,
+    set-version, set-channel (the `/v1` settings route; admins), backups (by name) and restore on
+    `/v1` with the session; `hearth approve` / `unapprove <userId>`. `list` and creating from an
+    upload stay on `/admin` (IAM, `adminApi`) until 7d/7c: servers created through `/admin` have
+    no owner row, so `/v1/servers` doesn't list them. `status` shows the `ServerView` (no
+    instance, agent or channel until 7d's admin detail). `ServerView` gains `lastStopClean`
+    (the stop's "game may not be saved"). The CLI needs a browser on the same machine (no CloudShell).
   - 7c: `/v1` uploads (`POST /v1/uploads`, `GET /v1/uploads/{id}`); `create --upload` on them.
-  - 7d: admin routes on `/v1` (every server, agent channel); `fleet-check` stays a direct Lambda call.
+  - 7d: admin routes on `/v1`: every server and one server's whole record (`list`, and `status`'s
+    instance and agent rows for admins); `fleet-check` stays a direct Lambda call.
 - PR8 Remove `/admin` routes, their handler and permissions.
 
 **M9** is the game version catalog plan under Deferred, its routes under `/v1`. **M10 Web UI**

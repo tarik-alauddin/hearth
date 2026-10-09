@@ -106,6 +106,7 @@ export const ServerViewSchema = named(
     stopReason: z.string().optional(),
     lastStartedAt: z.string().optional(),
     lastStoppedAt: z.string().optional(),
+    lastStopClean: z.boolean().optional().describe('False when the last stop may not have saved the game'),
     lastBackupAt: z.string().optional(),
     restorePending: z.boolean().describe('A restore will replace the game data on the next start'),
     createdAt: z.string().optional(),
