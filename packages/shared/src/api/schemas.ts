@@ -195,6 +195,22 @@ export const BackupSummarySchema = named(
   'BackupSummary',
 );
 
+export const ServerBackupsResponseSchema = named(
+  z.object({
+    backups: z
+      .array(
+        z.object({
+          id: z.string().describe('Its file name, e.g. 20261005T120000Z.tar.gz: what a restore takes as `key`'),
+          takenAt: isoTime('When it finished'),
+          bytes: z.number().int(),
+        }),
+      )
+      .describe('Newest first'),
+  }),
+  'ServerBackupsResponse',
+  "A server's backups, as owners see them (no storage keys).",
+);
+
 export const ListBackupsResponseSchema = named(z.object({ backups: z.array(BackupSummarySchema) }), 'ListBackupsResponse', 'Newest first.');
 
 // The signed-in user.
@@ -355,4 +371,5 @@ export type IdleReport = z.infer<typeof IdleReportSchema>;
 export type ErrorResponse = z.infer<typeof ErrorResponseSchema>;
 export type MeResponse = z.infer<typeof MeResponseSchema>;
 export type ListMyServersResponse = z.infer<typeof ListMyServersResponseSchema>;
+export type ServerBackupsResponse = z.infer<typeof ServerBackupsResponseSchema>;
 export type SetApprovalRequest = z.infer<typeof SetApprovalRequestSchema>;

@@ -96,7 +96,13 @@ describe('ApiStack', () => {
       for (const name of ['Create', 'Start', 'Stop', 'Destroy']) {
         expect(JSON.stringify(workflows[0]?.Resource)).toMatch(new RegExp(`Workflows${name}StateMachine`));
       }
-      expect(statements).toHaveLength(5);
+      // Backups: listed, only under servers/, never read or written.
+      const backups = statements.filter((s) => s.Action === 's3:ListBucket');
+      expect(backups).toEqual([
+        expect.objectContaining({ Condition: { StringLike: { 's3:prefix': 'servers/*/*' } } }),
+      ]);
+      expect(statements.some((s) => [s.Action].flat().some((a) => a.startsWith('s3:') && a !== 's3:ListBucket'))).toBe(false);
+      expect(statements).toHaveLength(6);
     });
   });
 

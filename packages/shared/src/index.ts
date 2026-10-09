@@ -29,6 +29,7 @@ export type {
   RestoreDoneReport,
   RestoreRequest,
   RestoreTarget,
+  ServerBackupsResponse,
   ServerOperationResult,
   ServerView,
   SetApprovalRequest,

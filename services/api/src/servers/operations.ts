@@ -177,6 +177,11 @@ export function serverOperations({
 
   return {
     /** The server, and what the caller is to it (for shaping the response). */
+    /** What the caller is to a server they can see (for shaping an answer); 404 if they can't. */
+    relationTo(actor: Actor, serverId: string): Promise<Relation> {
+      return authorize(actor, 'view', serverId);
+    },
+
     async getServer(actor: Actor, serverId: string): Promise<{ server: ServerRecord; relation: Relation }> {
       const relation = await authorize(actor, 'view', serverId);
       return { server: await requireServer(serverId), relation };

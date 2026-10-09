@@ -248,8 +248,8 @@ export class ApiStack extends HearthStack {
       }),
     );
     // User routes (/v1): signed-in users, through the web app and later the CLI. Who they are (the
-    // Users table), the servers they can reach (through their ServerAccess rows), creating,
-    // starting, stopping and destroying them; settings, versions, backups and restores: M8 PR5f.
+    // Users table), the servers they can reach (through their ServerAccess rows), and acting on
+    // them: create, start, stop, destroy, settings, version, backups list, restore.
     const user = hearthFunction(this, 'User', {
       config: props.config,
       entry: 'api/src/user/lambda.ts',
@@ -264,8 +264,12 @@ export class ApiStack extends HearthStack {
         START_WORKFLOW_ARN: props.workflows.start.stateMachineArn,
         STOP_WORKFLOW_ARN: props.workflows.stop.stateMachineArn,
         DESTROY_WORKFLOW_ARN: props.workflows.destroy.stateMachineArn,
+        BACKUP_BUCKET: backups,
+        BACKUP_BUCKET_REGION: props.config.homeRegion,
       },
     });
+    // Listing a server's backups (its owner's list; a restore checks against it): its prefix only.
+    user.addToRolePolicy(listServerBackups);
     user.addToRolePolicy(
       new PolicyStatement({ actions: ['dynamodb:GetItem', 'dynamodb:UpdateItem'], resources: [props.usersTable.tableArn] }),
     );
