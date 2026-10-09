@@ -3,9 +3,10 @@ import { createAccessStore, createInvitesStore, createOwnedServers, createServer
 import { s3BackupStorage } from '../backups.js';
 import { inviteOperations } from '../invites/operations.js';
 import { memberOperations } from '../members/operations.js';
-import { OperationError, serverOperations } from '../servers/operations.js';
+import { serverOperations } from '../servers/operations.js';
 import { publishedVersions } from '../servers/versions.js';
 import { stepFunctionsWorkflows } from '../servers/workflows.js';
+import { s3UploadStorage, uploadOperations } from '../uploads.js';
 import { userOperations } from '../users/operations.js';
 import { userHandler } from './handlers.js';
 
@@ -15,22 +16,19 @@ function requireEnv(name: string): string {
   return value;
 }
 
-/** A dependency no /v1 route uses yet (uploads come with the /v1 uploads). */
-function notYet(what: string): never {
-  throw new Error(`${what} is not available to the /v1 routes yet`);
-}
-
 const users = createUsersStore(requireEnv('USERS_TABLE'));
 const serversTable = requireEnv('SERVERS_TABLE');
 const accessTable = requireEnv('ACCESS_TABLE');
 const servers = createServersStore(serversTable);
 const access = createAccessStore(accessTable);
+const uploads = s3UploadStorage({ bucket: requireEnv('UPLOADS_BUCKET'), region: requireEnv('UPLOADS_BUCKET_REGION') });
 
 export const handler = userHandler({
   users,
   userOps: userOperations({ users }),
   inviteOps: inviteOperations({ servers, access, invites: createInvitesStore(requireEnv('INVITES_TABLE')) }),
   memberOps: memberOperations({ access, users }),
+  uploadOps: uploadOperations({ uploads, users }),
   serverOps: serverOperations({
     store: servers,
     access,
@@ -48,13 +46,7 @@ export const handler = userHandler({
       region: requireEnv('BACKUP_BUCKET_REGION'),
       writerRoleArn: '',
     }),
-    // A request naming an upload is the caller's to fix, so a 400 rather than an error.
-    uploads: {
-      status: async () => {
-        throw new OperationError(400, 'Creating a server from an upload comes with the /v1 uploads');
-      },
-      accepted: () => notYet('Uploads'),
-    },
+    uploads,
     versions: publishedVersions(),
     homeRegion: requireEnv('HOME_REGION'),
     gameRegions: requireEnv('GAME_REGIONS').split(','),

@@ -270,8 +270,21 @@ export class ApiStack extends HearthStack {
         BACKUP_BUCKET: backups,
         BACKUP_BUCKET_REGION: props.config.homeRegion,
         INVITES_TABLE: props.invitesTable.tableName,
+        UPLOADS_BUCKET: uploads,
+        UPLOADS_BUCKET_REGION: props.config.homeRegion,
       },
     });
+    // Uploads, as for Admin: forms are signed with this role (landing files only); status reads
+    // where an upload has got to, and listing makes a missing key a 404 rather than a 403.
+    user.addToRolePolicy(new PolicyStatement({ actions: ['s3:PutObject'], resources: [landing] }));
+    user.addToRolePolicy(new PolicyStatement({ actions: ['s3:GetObject'], resources: [landing, accepted, rejected] }));
+    user.addToRolePolicy(new PolicyStatement({ actions: ['s3:ListBucket'], resources: [uploadsArn] }));
+    for (const resource of [landing, accepted, rejected]) {
+      Validations.of(user).acknowledge({
+        id: `AwsSolutions-IAM5[Resource::${resource}]`,
+        reason: 'Uploads are keyed by a random ID under fixed prefixes; each role gets only the prefixes it needs.',
+      });
+    }
     // Invites: create, read one (accept), revoke; a server's, through the byServer index.
     user.addToRolePolicy(
       new PolicyStatement({

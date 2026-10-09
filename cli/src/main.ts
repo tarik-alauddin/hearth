@@ -111,7 +111,7 @@ async function main(argv: string[]): Promise<number> {
   const baseUrl = await findApiUrl(values.env, values.region);
   const run = commands({
     api: userApiClient({ baseUrl, idToken: () => currentIdToken(values.env, { config: authConfig, session }) }),
-    // Every server, and uploads: the admin routes (IAM) until /v1 has them.
+    // Every server: the admin routes (IAM) until /v1 has it.
     adminApi: apiClient({ baseUrl, region: values.region, credentials: fromNodeProviderChain() }),
     fleetCheck: () => invokeFleetCheck(values.env, values.region),
     print,

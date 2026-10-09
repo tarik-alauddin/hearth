@@ -1,7 +1,7 @@
 import { GetObjectCommand, HeadObjectCommand, NoSuchKey, NotFound, S3Client } from '@aws-sdk/client-s3';
 import { createPresignedPost } from '@aws-sdk/s3-presigned-post';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
-import { newId as defaultNewId } from '@hearth/core';
+import { newId as defaultNewId, type UsersStore } from '@hearth/core';
 import {
   GAMES,
   MAX_UPLOAD_BYTES,
@@ -16,7 +16,7 @@ import {
   type UploadStatus,
 } from '@hearth/shared';
 import { CreateUploadRequestSchema } from '@hearth/shared/api';
-import { actorId, type Actor } from './authz.js';
+import { AccessDenied, actorId, type Actor } from './authz.js';
 import { OperationError } from './servers/operations.js';
 import { check } from './validation.js';
 
@@ -118,13 +118,16 @@ export function s3UploadStorage(opts: {
   };
 }
 
-/** Starting uploads: the one implementation, for the admin routes now and the UI later. */
+/** Uploads: the one implementation, for the admin routes, /v1, the CLI and the UI. */
 export function uploadOperations({
   uploads,
+  users,
   now = () => new Date(),
   newId = defaultNewId,
 }: {
   uploads: UploadStorage;
+  /** For user callers (/v1): only approved users may upload, as only they may create servers. */
+  users?: Pick<UsersStore, 'getUser'>;
   now?: () => Date;
   newId?: (now: Date) => string;
 }) {
@@ -137,6 +140,13 @@ export function uploadOperations({
       if (actor.kind === 'agent') throw new OperationError(403, 'Agents cannot upload');
       const parsed = check(CreateUploadRequestSchema, request);
       if (!parsed.ok) throw new OperationError(400, parsed.message);
+      // An upload costs storage and a repack run, and only serves to create a server: approved users only.
+      if (actor.kind === 'user') {
+        if (!users) throw new Error('No users store: this route takes no user callers');
+        if (!(await users.getUser(actor.userId))?.approved) {
+          throw new AccessDenied(403, "You can't upload until an admin approves your account");
+        }
+      }
       const uploadId = newId(now());
       return { uploadId, maxBytes: MAX_UPLOAD_BYTES, ...(await uploads.form(parsed.value.game, uploadId, actorId(actor))) };
     },

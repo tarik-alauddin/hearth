@@ -293,19 +293,19 @@ describe('commands', () => {
     });
   });
 
-  describe('create --upload (the admin routes until /v1 has uploads)', () => {
+  describe('create --upload', () => {
     const UPLOAD = '01K6ABCDEF0123456789ABCDEF';
 
-    /** Admin routes that hand out an upload form, report the given statuses in turn, and create. */
+    /** /v1 routes that hand out an upload form, report the given statuses in turn, and create. */
     function uploadApis(statuses: UploadStatus[]) {
       const calls: string[] = [];
       let i = 0;
-      const adminApi = recorder(calls, (method, path) => {
-        if (path === '/admin/uploads') return { uploadId: UPLOAD, url: 'https://s3/', fields: { key: 'k' } };
+      const api = recorder(calls, (method, path) => {
+        if (path === '/v1/uploads') return { uploadId: UPLOAD, url: 'https://s3/', fields: { key: 'k' } };
         if (method === 'GET') return statuses[Math.min(i++, statuses.length - 1)];
         return { serverId: 's1', status: 'PROVISIONING' };
       });
-      return { api: fakeApis().api, adminApi, calls };
+      return { api, adminApi: fakeApis().adminApi, calls };
     }
 
     function runUpload(apis: { api: Api; adminApi: Api }, bytes = 3 * 2 ** 20) {
@@ -327,10 +327,10 @@ describe('commands', () => {
       await cmd.create(opts);
       expect(sent).toEqual([`https://s3/ ${file}`]);
       expect(apis.calls).toEqual([
-        'POST /admin/uploads {"game":"minecraft-java"}',
-        `GET /admin/uploads/${UPLOAD}`,
-        `GET /admin/uploads/${UPLOAD}`,
-        `POST /admin/servers {"game":"minecraft-java","version":"26.3","upload":"${UPLOAD}"}`,
+        'POST /v1/uploads {"game":"minecraft-java"}',
+        `GET /v1/uploads/${UPLOAD}`,
+        `GET /v1/uploads/${UPLOAD}`,
+        `POST /v1/servers {"game":"minecraft-java","version":"26.3","upload":"${UPLOAD}"}`,
       ]);
       expect(out).toEqual([
         'Uploading MyWorld.zip (3.0 MiB)…',
@@ -343,7 +343,7 @@ describe('commands', () => {
     it("stops with repack's reason and creates nothing when the upload is rejected", async () => {
       const apis = uploadApis([{ uploadId: UPLOAD, status: 'rejected', reason: 'no level.dat found' }]);
       await expect(runUpload(apis).cmd.create(opts)).rejects.toThrow('The upload was rejected: no level.dat found');
-      expect(apis.calls.some((c) => c.startsWith('POST /admin/servers'))).toBe(false);
+      expect(apis.calls.some((c) => c.startsWith('POST /v1/servers'))).toBe(false);
     });
 
     it('refuses a file over the limit before asking for a form', async () => {
@@ -360,8 +360,8 @@ describe('commands', () => {
       const apis = fakeApis();
       const { out, cmd } = run(apis);
       await cmd.create({ game: 'minecraft-java', version: '26.3', upload: UPLOAD, wait: false });
-      expect(apis.adminCalls).toEqual([`POST /admin/servers {"game":"minecraft-java","version":"26.3","upload":"${UPLOAD}"}`]);
-      expect(apis.calls).toEqual([]);
+      expect(apis.calls).toEqual([`POST /v1/servers {"game":"minecraft-java","version":"26.3","upload":"${UPLOAD}"}`]);
+      expect(apis.adminCalls).toEqual([]);
       expect(out[0]).toMatch(/from upload 01K6ABCDEF0123456789ABCDEF/);
     });
   });

@@ -101,15 +101,25 @@ describe('ApiStack', () => {
         expect(JSON.stringify(workflows[0]?.Resource)).toMatch(new RegExp(`Workflows${name}StateMachine`));
       }
       // Backups: listed, only under servers/, never read or written.
-      const backups = statements.filter((s) => s.Action === 's3:ListBucket');
-      expect(backups).toEqual([
-        expect.objectContaining({ Condition: { StringLike: { 's3:prefix': 'servers/*/*' } } }),
+      const s3 = (action: string) => statements.filter((s) => s.Action === action).map((s) => JSON.stringify(s));
+      expect(s3('s3:ListBucket').filter((s) => s.includes('backups'))).toEqual([
+        expect.stringContaining('"s3:prefix":"servers/*/*"'),
       ]);
-      expect(statements.some((s) => [s.Action].flat().some((a) => a.startsWith('s3:') && a !== 's3:ListBucket'))).toBe(false);
+      expect(statements.some((s) => JSON.stringify(s).includes('backups') && s.Action !== 's3:ListBucket')).toBe(false);
+      // Uploads: forms write landing files only; status reads all three prefixes; listing the bucket.
+      const put = s3('s3:PutObject');
+      expect(put).toHaveLength(1);
+      expect(put[0]).toContain('/landing/*');
+      expect(put[0]).not.toMatch(/accepted|rejected/);
+      const get = s3('s3:GetObject');
+      expect(get).toHaveLength(1);
+      for (const prefix of ['landing', 'accepted', 'rejected']) expect(get[0]).toContain(`-uploads-138300868928-us-west-2/${prefix}/*`);
+      expect(s3('s3:ListBucket').filter((s) => s.includes('uploads'))).toHaveLength(1);
+      expect(statements.some((s) => [s.Action].flat().some((a) => a.startsWith('s3:Delete')))).toBe(false);
       // Invites: create, read and revoke on the table; a server's list through its byServer index.
       expect(on('Invites')).toContainEqual(['dynamodb:DeleteItem', 'dynamodb:GetItem', 'dynamodb:PutItem']);
       expect(JSON.stringify(statements)).toContain('/index/byServer');
-      expect(statements.length).toBeLessThanOrEqual(8);
+      expect(statements.length).toBeLessThanOrEqual(11);
     });
   });
 

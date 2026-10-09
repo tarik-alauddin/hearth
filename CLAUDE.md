@@ -59,7 +59,7 @@ as part of each PR. The repo layout and commands are in [README.md](README.md).
 | M7 Move your world | Done (PR1–PR4; tested on dev with a real world) |
 | Before Phase 2 | Done: M7 docs, neutral wording, destroy (records kept as `DESTROYED`), state-sync tweak, stage and prod live with the release flow (details under Decisions) |
 | **Phase 1** | **Complete** (2026-10-07): dev, stage and prod run `v2026.10.07-3461efe`, agent `2026.10.06-de42566` |
-| M8 Accounts and access | In progress: PR1a–PR1c done (sign-in with password, Google, Discord, tested on dev); PR2–PR4 done (access data, authorization, API contract); PR5 merged (every server action on `/v1`); PR6 merged (invites, members); PR7a–7b merged (CLI sign-in, CLI on `/v1`); PR7c-1 (uploads tied to their uploader) in review |
+| M8 Accounts and access | In progress: PR1a–PR1c done (sign-in with password, Google, Discord, tested on dev); PR2–PR4 done (access data, authorization, API contract); PR5 merged (every server action on `/v1`); PR6 merged (invites, members); PR7a–7c-1 merged (CLI sign-in, CLI on `/v1`, uploads tied to their uploader); PR7c-2 (`/v1` uploads) in review |
 | M9 Game version catalog | Planned (Deferred's plan, V1–V4) |
 | M10 Web UI | Planned |
 
@@ -227,14 +227,17 @@ the CLI signs in the same way; backend only):
     (the stop's "game may not be saved"). The CLI needs a browser on the same machine (no CloudShell).
     Rides along (cost guards): an admin can't change their own approval (409; admins need none),
     and only admins may turn idle stop off (`idleStopMinutes: 0`; owners choose 1–1440, 403).
-  - 7c-1, in review: uploads tied to their uploader, before users can upload. The form fixes
+  - 7c-1, merged (tested on dev): uploads tied to their uploader, before users can upload. The form fixes
     `x-amz-meta-uploader` (the actor's ID: a user's sub, or an admin's ARN; each form field is a
     condition of the signed policy, so S3 refuses another); repack reads it (HeadObject) and puts
     it on `accepted/` (with `game`) and `rejected/`. Upload status and creating from an upload:
     the uploader or any admin (`mayUseUpload`); anyone else 404, as for an unknown ID. Uploads
     from before have no uploader: admins only. No route or IAM change.
-  - 7c-2: `/v1` uploads (`POST /v1/uploads`, `GET /v1/uploads/{id}`), approved users and admins
-    only (like create); the User λ's S3 access (as Admin's); `create --upload` on them.
+  - 7c-2, in review: `POST /v1/uploads` (approved users and admins, like create: 403 otherwise)
+    and `GET /v1/uploads/{id}` (the uploader and admins; 404 otherwise). `POST /v1/servers` takes
+    `upload` (the caller's own). The User λ gets Admin's upload access: PutObject `landing/*`
+    (signing forms), GetObject `landing/`, `accepted/`, `rejected/`, ListBucket; `UPLOADS_BUCKET`.
+    The CLI's `create --upload` and `--from-upload` are on `/v1`; only `list` uses `/admin` now.
   - 7d: admin routes on `/v1`: every server and one server's whole record (`list`, and `status`'s
     instance and agent rows for admins); `fleet-check` stays a direct Lambda call.
 - PR8 Remove `/admin` routes, their handler and permissions.
