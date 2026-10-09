@@ -145,3 +145,21 @@ With a server you own (`$id`), **stopped** for the version and restore steps:
    `200` with the new `version` (needs a clean stop with a backup since it last ran; else `409`
    says why). An older version: `409`.
 5. As another user without access, any of these: `404`.
+
+## 7. Invites (`/v1/servers/{id}/invites`, `/v1/invites/{code}/accept`)
+
+Owners invite; anyone signed in accepts, no approval needed, and becomes a **member**: they see the
+server, its address, and can start and stop it, nothing more. Two of your sign-ins make the test:
+the owner (`api` as usual) and a friend (`api -SignOut`, then `api /v1/me -Provider Discord`, or
+whichever sign-in isn't the owner). Switch between them with `-SignOut` and a sign-in.
+
+1. As the owner of `$id`: `api -Method POST /v1/servers/$id/invites`: `201` with a `code` like
+   `K7QX-M2PD-9VTR-H4NB-W3ZA` and `expiresAt` 7 days on. `api /v1/servers/$id/invites` lists it.
+2. As the friend: `api -Method POST /v1/invites/<code>/accept`: `200`, the server with
+   `role: member`. Lower case and spaces in the code work too.
+3. The friend now has it in `api /v1/servers` (`role: member`), and can
+   `api -Method POST /v1/servers/$id/start` and `/stop`; `/destroy` answers `403`, and creating
+   invites `403`.
+4. As the owner, revoke it: `api -Method DELETE /v1/servers/$id/invites/<code>`: `204`. The friend
+   stays a member (members are removed separately, next PR); accepting the revoked code again, as
+   anyone, is `404`. A made-up code: `404`.

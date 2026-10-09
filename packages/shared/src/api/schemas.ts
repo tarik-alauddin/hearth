@@ -195,6 +195,22 @@ export const BackupSummarySchema = named(
   'BackupSummary',
 );
 
+export const InviteSchema = named(
+  z.object({
+    code: z.string().describe('XXXX-XXXX-XXXX-XXXX-XXXX: what a friend accepts (dashes, spaces and case don\'t matter)'),
+    createdBy: z.string().describe("The creator's user ID"),
+    createdAt: isoTime('Created'),
+    expiresAt: isoTime('When it stops working (7 days)'),
+  }),
+  'Invite',
+  'A code that makes whoever accepts it a member of a server: they can see it, start and stop it.',
+);
+
+export const ListInvitesResponseSchema = named(
+  z.object({ invites: z.array(InviteSchema).describe('Unexpired, newest first') }),
+  'ListInvitesResponse',
+);
+
 export const ServerBackupsResponseSchema = named(
   z.object({
     backups: z
@@ -372,4 +388,6 @@ export type ErrorResponse = z.infer<typeof ErrorResponseSchema>;
 export type MeResponse = z.infer<typeof MeResponseSchema>;
 export type ListMyServersResponse = z.infer<typeof ListMyServersResponseSchema>;
 export type ServerBackupsResponse = z.infer<typeof ServerBackupsResponseSchema>;
+export type Invite = z.infer<typeof InviteSchema>;
+export type ListInvitesResponse = z.infer<typeof ListInvitesResponseSchema>;
 export type SetApprovalRequest = z.infer<typeof SetApprovalRequestSchema>;

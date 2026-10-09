@@ -84,7 +84,8 @@ describe('ApiStack', () => {
       const on = (table: string) =>
         statements
           .filter((s) => new RegExp(`FnGetAtt${table}[0-9A-F]{8}`).test(JSON.stringify(s.Resource)))
-          .map((s) => [s.Action].flat());
+          .map((s) => [s.Action].flat())
+          .sort((a, b) => a.join().localeCompare(b.join())); // CDK may order (and merge) statements its own way
       expect(on('Users')).toEqual([['dynamodb:GetItem', 'dynamodb:UpdateItem']]);
       // The table (create's transaction, a failed workflow's undo), then the byOwner index (the limit).
       expect(on('Servers')).toEqual([['dynamodb:GetItem', 'dynamodb:PutItem', 'dynamodb:UpdateItem'], ['dynamodb:Query']]);
@@ -102,7 +103,10 @@ describe('ApiStack', () => {
         expect.objectContaining({ Condition: { StringLike: { 's3:prefix': 'servers/*/*' } } }),
       ]);
       expect(statements.some((s) => [s.Action].flat().some((a) => a.startsWith('s3:') && a !== 's3:ListBucket'))).toBe(false);
-      expect(statements).toHaveLength(6);
+      // Invites: create, read and revoke on the table; a server's list through its byServer index.
+      expect(on('Invites')).toContainEqual(['dynamodb:DeleteItem', 'dynamodb:GetItem', 'dynamodb:PutItem']);
+      expect(JSON.stringify(statements)).toContain('/index/byServer');
+      expect(statements.length).toBeLessThanOrEqual(8);
     });
   });
 
