@@ -1,11 +1,22 @@
 // hearth: create and manage game servers through the Hearth API's admin routes.
-// Signs requests with your AWS credentials (profile, environment or CloudShell).
+// Signs requests with your AWS credentials (profile, environment or CloudShell); `hearth login`
+// signs you in to the user API (/v1), which the server commands move to next.
 import { parseArgs } from 'node:util';
 import { fromNodeProviderChain } from '@aws-sdk/credential-providers';
-import { ApiError, apiClient, findApiUrl, invokeFleetCheck } from './client.js';
+import { accountCommands } from './account.js';
+import { cognitoAdminGroup } from './admins.js';
+import { currentIdToken, readAuthConfig, sessionFile, signIn, SignInNeeded, type AuthConfig } from './auth.js';
+import { ApiError, apiClient, findApiUrl, invokeFleetCheck, userApiClient } from './client.js';
 import { CommandError, commands } from './commands.js';
 
 const USAGE = `Usage: hearth <command> [options]
+
+  login [--provider Google|Discord]        sign in through the browser (the session lasts 30 days)
+  logout                                   forget this machine's session
+  whoami                                   who you're signed in as: user ID, admin, approved
+  admin list                               the environment's admins
+  admin add <userId>                       make a user an admin (the Cognito admin group)
+  admin remove <userId>                    take admin away
 
   create --version <v> [--game minecraft-java] [--game-region <region>] [--channel canary|stable]
          [--upload <file.zip|file.tar.gz>]   start with this game data (e.g. a zipped Minecraft world); max 4 GiB
@@ -47,6 +58,7 @@ async function main(argv: string[]): Promise<number> {
       cancel: { type: 'boolean', default: false },
       yes: { type: 'boolean', default: false },
       all: { type: 'boolean', default: false },
+      provider: { type: 'string' },
       help: { type: 'boolean', short: 'h', default: false },
     },
   });
@@ -56,12 +68,49 @@ async function main(argv: string[]): Promise<number> {
     return values.help ? 0 : 2;
   }
 
+  // Signing in, and the admin group: Cognito and /v1, not the admin routes.
+  let auth: Promise<AuthConfig> | undefined;
+  const authConfig = () => (auth ??= readAuthConfig(values.env, values.region));
+  const session = sessionFile(values.env);
+  const print = (line: string) => process.stdout.write(`${line}\n`);
+  const account = accountCommands({
+    env: values.env,
+    signIn: async (provider) => signIn(await authConfig(), { provider, print }),
+    session,
+    api: async () =>
+      userApiClient({
+        baseUrl: await findApiUrl(values.env, values.region),
+        idToken: () => currentIdToken(values.env, { config: authConfig, session }),
+      }),
+    admins: async () => {
+      const { userPoolId, region } = await authConfig();
+      return cognitoAdminGroup(userPoolId, region);
+    },
+    print,
+  });
+  switch (command) {
+    case 'login':
+      await account.login(values.provider);
+      return 0;
+    case 'logout':
+      await account.logout();
+      return 0;
+    case 'whoami':
+      await account.whoami();
+      return 0;
+    case 'admin':
+      if (id === 'list') await account.adminList();
+      else if ((id === 'add' || id === 'remove') && arg) await (id === 'add' ? account.adminAdd(arg) : account.adminRemove(arg));
+      else throw new CommandError('Use: hearth admin list | admin add <userId> | admin remove <userId>');
+      return 0;
+  }
+
   const api = apiClient({
     baseUrl: await findApiUrl(values.env, values.region),
     region: values.region,
     credentials: fromNodeProviderChain(),
   });
-  const run = commands({ api, fleetCheck: () => invokeFleetCheck(values.env, values.region), print: (line) => process.stdout.write(`${line}\n`) });
+  const run = commands({ api, fleetCheck: () => invokeFleetCheck(values.env, values.region), print });
   const wait = !values['no-wait'];
   const needId = () => {
     if (!id) throw new CommandError(`${command} needs a server ID`);
@@ -127,8 +176,9 @@ async function main(argv: string[]): Promise<number> {
 main(process.argv.slice(2)).then(
   (code) => process.exit(code),
   (err: unknown) => {
-    if (err instanceof ApiError) process.stderr.write(`API ${err.status}: ${err.message}\n`);
-    else if (err instanceof CommandError) process.stderr.write(`${err.message}\n`);
+    if (err instanceof ApiError && err.status === 401) process.stderr.write(`API 401: ${err.message}. Try hearth login.\n`);
+    else if (err instanceof ApiError) process.stderr.write(`API ${err.status}: ${err.message}\n`);
+    else if (err instanceof CommandError || err instanceof SignInNeeded) process.stderr.write(`${err.message}\n`);
     else process.stderr.write(`${err instanceof Error ? err.message : String(err)}\n`);
     process.exit(1);
   },

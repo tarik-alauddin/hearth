@@ -50,7 +50,12 @@ Servers are managed with the `hearth` CLI (admin API routes, signed with your AW
 pnpm hearth create --version 1.21.4
 pnpm hearth list | status <id> | start <id> | stop <id>
 pnpm --filter @hearth/cli bundle   # cli/dist/hearth.cjs, a single file for CloudShell: node hearth.cjs …
+pnpm hearth login [--env dev] [--provider Google|Discord]   # then: whoami, logout
+pnpm hearth admin list | add <userId> | remove <userId>     # the Cognito admin group
 ```
+
+`hearth login` keeps its session in `~/.hearth/session-<env>.json` (30 days); the server commands
+move from the admin routes to `/v1` with it next.
 
 To check a server end to end and join it, follow [docs/testing/game-server.md](docs/testing/game-server.md).
 

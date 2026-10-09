@@ -59,7 +59,7 @@ as part of each PR. The repo layout and commands are in [README.md](README.md).
 | M7 Move your world | Done (PR1–PR4; tested on dev with a real world) |
 | Before Phase 2 | Done: M7 docs, neutral wording, destroy (records kept as `DESTROYED`), state-sync tweak, stage and prod live with the release flow (details under Decisions) |
 | **Phase 1** | **Complete** (2026-10-07): dev, stage and prod run `v2026.10.07-3461efe`, agent `2026.10.06-de42566` |
-| M8 Accounts and access | In progress: PR1a–PR1c done (sign-in with password, Google, Discord, tested on dev); PR2–PR4 done (access data, authorization, API contract); PR5 merged (every server action on `/v1`); PR6a (invites) and PR6b (members) in review |
+| M8 Accounts and access | In progress: PR1a–PR1c done (sign-in with password, Google, Discord, tested on dev); PR2–PR4 done (access data, authorization, API contract); PR5 merged (every server action on `/v1`); PR6 merged (invites, members); PR7a (CLI sign-in) in review |
 | M9 Game version catalog | Planned (Deferred's plan, V1–V4) |
 | M10 Web UI | Planned |
 
@@ -193,11 +193,10 @@ the CLI signs in the same way; backend only):
     and restore takes it (the operation already accepts a file name and checks it's one of this
     server's backups). The User λ lists backups (the same prefix-limited `ListBucket` as Admin; no
     read or write) and fetches Mojang's version list (no IAM).
-  - Open (owner to decide): admins skip the limit today (and approval). Recommended: the limit
-    applies to admins too (they can raise their own `serverLimit`); approval stays skipped.
+  - Decided: admins have no limit and need no approval (admin is a coveted role).
   - Admin agent channels and `/v1` uploads follow as their own small PRs.
 - PR6 Invites and members, split in two:
-  - 6a, in review: `POST`/`GET /v1/servers/{id}/invites`, `DELETE …/invites/{code}` (owners;
+  - 6a, merged: `POST`/`GET /v1/servers/{id}/invites`, `DELETE …/invites/{code}` (owners;
     `invite` permission) and `POST /v1/invites/{code}/accept` (any signed-in user, no approval).
     `services/api/src/invites/operations.ts`. Codes are answered as `XXXX-XXXX-XXXX-XXXX-XXXX`
     (no links until the web app: M10 makes `/join/{code}`), accepted in any case with spaces
@@ -206,12 +205,22 @@ the CLI signs in the same way; backend only):
     a wrong, expired or revoked code, or a destroyed server's, is 404 alike. No invites to a
     destroyed server (409). Revoking stops new members only. The User λ reads, writes and
     deletes Invites and queries its byServer index.
-  - 6b, in review: `GET /v1/servers/{id}/members` (owners and members: the owner first, then by
+  - 6b, merged: `GET /v1/servers/{id}/members` (owners and members: the owner first, then by
     join time; name and picture from Users, never emails), `DELETE …/members/{user}` (owners;
     the owner's row 409, not a member 404), `POST …/leave` (members; the owner 409, an admin
     with no row 404). `services/api/src/members/operations.ts`. The User λ may DeleteItem
     ServerAccess rows (the store deletes members only) and query its byServer index.
-- PR7 CLI on Cognito: `hearth login` (browser sign-in, session in `~/.hearth`), every command on `/v1`.
+- PR7 CLI on Cognito, split in four. The CLI stays the owner's tool: it reads SSM (`api-url`,
+  `auth`) with AWS credentials; everyone else uses the web app, so no invite or member commands.
+  - 7a, in review: `hearth login [--provider]` (browser, loopback 8976, PKCE; `cli/src/auth.ts`),
+    session in `~/.hearth/session-<env>.json` (ID token refreshed when within a minute of expiry;
+    other commands never open the browser), `logout`, `whoami` (`/v1/me`, the first CLI call on
+    `/v1`). `hearth admin list | add | remove <userId>`: the Cognito `admin` group, called directly
+    with AWS credentials (finds the username by `sub`): no API route can grant admin. Takes effect
+    at the user's next token refresh (an hour at most; groups are read at each refresh).
+  - 7b: the server commands on `/v1` with the session; `hearth approve` / `unapprove <userId>`.
+  - 7c: `/v1` uploads (`POST /v1/uploads`, `GET /v1/uploads/{id}`); `create --upload` on them.
+  - 7d: admin routes on `/v1` (every server, agent channel); `fleet-check` stays a direct Lambda call.
 - PR8 Remove `/admin` routes, their handler and permissions.
 
 **M9** is the game version catalog plan under Deferred, its routes under `/v1`. **M10 Web UI**
@@ -331,7 +340,7 @@ and CloudFront's default domain until there is one; callback URLs and origins co
     No access → 404 (IDs don't leak); visible but forbidden → 403. Responses are shaped by role
     (users never see instance IDs, S3 keys, agent internals). `/agent/*` stays separate (IAM, the
     instance's own server); where it overlaps (idle stop) it calls the same operation.
-  - **Cap: 3 servers per user** (`serverLimit`, so it can vary later), counted at create: owned
+  - **Cap: 3 servers per user** (`serverLimit`, so it can vary later; admins have none), counted at create: owned
     servers not `DESTROYED`, one query on the owner index. Two simultaneous creates could both pass;
     accepted while the cap isn't billing.
   - **Friends join by invite link:** the owner creates a code (~100 bits, reusable, 7 days,
