@@ -161,5 +161,18 @@ whichever sign-in isn't the owner). Switch between them with `-SignOut` and a si
    `api -Method POST /v1/servers/$id/start` and `/stop`; `/destroy` answers `403`, and creating
    invites `403`.
 4. As the owner, revoke it: `api -Method DELETE /v1/servers/$id/invites/<code>`: `204`. The friend
-   stays a member (members are removed separately, next PR); accepting the revoked code again, as
+   stays a member (removing members: section 8); accepting the revoked code again, as
    anyone, is `404`. A made-up code: `404`.
+
+## 8. Members (`/v1/servers/{id}/members`, `/v1/servers/{id}/leave`)
+
+With the friend a member of `$id` (section 7):
+
+1. As either: `api /v1/servers/$id/members`: the owner first, then the friend (`role: member`), each
+   with a `name` and `picture` where their sign-in gave one, and no emails.
+2. As the friend: `api -Method DELETE /v1/servers/$id/members/<owner's userId>`: `403`. Then
+   `api -Method POST /v1/servers/$id/leave`: `204`; the server is gone from their `/v1/servers`,
+   and `/v1/servers/$id` is `404`.
+3. Accept a fresh invite as the friend again, then as the owner:
+   `api -Method DELETE /v1/servers/$id/members/<friend's userId>`: `204`; again: `404`.
+4. As the owner: `api -Method POST /v1/servers/$id/leave` and removing their own userId: `409`.

@@ -22,6 +22,7 @@ function notUsed<T>(): T {
 }
 const noServers = notUsed<UserHandlerDeps['serverOps']>();
 const noInvites = notUsed<UserHandlerDeps['inviteOps']>();
+const noMembers = notUsed<UserHandlerDeps['memberOps']>();
 
 function event(
   routeKey: string,
@@ -82,7 +83,7 @@ describe('user routes', () => {
     it('records a first-time user, not yet approved, and logs them as new', async () => {
       const { store, users } = fakeUsers();
       const logs: Record<string, unknown>[] = [];
-      const res = await userHandler({ users: store, serverOps: noServers, inviteOps: noInvites, userOps: userOperations({ users: store, now: () => NOW }), now: () => NOW, log: (e) => logs.push(e) })(event('GET /v1/me', googleClaims));
+      const res = await userHandler({ users: store, serverOps: noServers, inviteOps: noInvites, memberOps: noMembers, userOps: userOperations({ users: store, now: () => NOW }), now: () => NOW, log: (e) => logs.push(e) })(event('GET /v1/me', googleClaims));
 
       expect(res.statusCode).toBe(200);
       expect(JSON.parse(res.body!)).toEqual({
@@ -101,13 +102,13 @@ describe('user routes', () => {
 
     it("keeps a returning user's approval and limit, refreshing their profile", async () => {
       const { store } = fakeUsers([{ userId: SUB, approved: true, serverLimit: 5, createdAt: '2026-10-01T00:00:00.000Z', name: 'Old name' }]);
-      const res = await userHandler({ users: store, serverOps: noServers, inviteOps: noInvites, userOps: userOperations({ users: store, now: () => NOW }), now: () => NOW, log: () => {} })(event('GET /v1/me', googleClaims));
+      const res = await userHandler({ users: store, serverOps: noServers, inviteOps: noInvites, memberOps: noMembers, userOps: userOperations({ users: store, now: () => NOW }), now: () => NOW, log: () => {} })(event('GET /v1/me', googleClaims));
       expect(JSON.parse(res.body!)).toMatchObject({ approved: true, serverLimit: 5, name: 'Tarik', createdAt: '2026-10-01T00:00:00.000Z' });
     });
 
     it('says whether the caller is an admin, from their groups', async () => {
       const { store } = fakeUsers();
-      const res = await userHandler({ users: store, serverOps: noServers, inviteOps: noInvites, userOps: userOperations({ users: store, now: () => NOW }), now: () => NOW, log: () => {} })(
+      const res = await userHandler({ users: store, serverOps: noServers, inviteOps: noInvites, memberOps: noMembers, userOps: userOperations({ users: store, now: () => NOW }), now: () => NOW, log: () => {} })(
         event('GET /v1/me', { ...googleClaims, 'cognito:groups': '[admin]' }),
       );
       expect(JSON.parse(res.body!).admin).toBe(true);
@@ -116,7 +117,7 @@ describe('user routes', () => {
 
   it('answers 401 to an access token, or no claims at all', async () => {
     const { store } = fakeUsers();
-    const handle = userHandler({ users: store, serverOps: noServers, inviteOps: noInvites, userOps: userOperations({ users: store, now: () => NOW }), now: () => NOW, log: () => {} });
+    const handle = userHandler({ users: store, serverOps: noServers, inviteOps: noInvites, memberOps: noMembers, userOps: userOperations({ users: store, now: () => NOW }), now: () => NOW, log: () => {} });
     expect((await handle(event('GET /v1/me', { ...googleClaims, token_use: 'access' }))).statusCode).toBe(401);
     expect((await handle(event('GET /v1/me', undefined))).statusCode).toBe(401);
   });
@@ -186,7 +187,7 @@ describe('user routes', () => {
     };
     const handle = () => {
       const { store } = fakeUsers();
-      return userHandler({ users: store, serverOps, inviteOps: noInvites, userOps: userOperations({ users: store, now: () => NOW }), log: () => {} });
+      return userHandler({ users: store, serverOps, inviteOps: noInvites, memberOps: noMembers, userOps: userOperations({ users: store, now: () => NOW }), log: () => {} });
     };
 
     it('lists my servers as the UI sees them: no instance IDs or storage keys', async () => {
@@ -300,7 +301,7 @@ describe('user routes', () => {
     };
     const handle = () => {
       const { store } = fakeUsers();
-      return userHandler({ users: store, serverOps: noServers, inviteOps, userOps: userOperations({ users: store, now: () => NOW }), log: () => {} });
+      return userHandler({ users: store, serverOps: noServers, inviteOps, memberOps: noMembers, userOps: userOperations({ users: store, now: () => NOW }), log: () => {} });
     };
 
     it('creates (201), lists and revokes (204) invites as the caller', async () => {
@@ -329,6 +330,36 @@ describe('user routes', () => {
     });
   });
 
+  describe('members', () => {
+    const member = { userId: 'f', role: 'member' as const, name: 'Friend', addedAt: 'then', addedBy: SUB };
+    const calls: string[] = [];
+    const memberOps: UserHandlerDeps['memberOps'] = {
+      listMembers: async (actor, id) => (calls.push(`list ${actor.kind} ${id}`), [member]),
+      removeMember: async (actor, id, userId) => {
+        calls.push(`remove ${actor.kind} ${id} ${userId}`);
+        if (userId === SUB) throw new OperationError(409, 'an owner can\'t be removed');
+      },
+      leaveServer: async (actor, id) => void calls.push(`leave ${actor.kind} ${id}`),
+    };
+    const handle = () => {
+      const { store } = fakeUsers();
+      return userHandler({ users: store, serverOps: noServers, inviteOps: noInvites, memberOps, userOps: userOperations({ users: store, now: () => NOW }), log: () => {} });
+    };
+
+    it('lists, removes (204) and leaves (204) as the caller; refusals pass through', async () => {
+      calls.length = 0;
+      const h = handle();
+      const listed = await h(event('GET /v1/servers/{id}/members', googleClaims, { id: 's1' }));
+      expect(JSON.parse(listed.body!)).toEqual({ members: [member] });
+      const remove = (userId: string) =>
+        h({ ...event('DELETE /v1/servers/{id}/members/{user}', googleClaims), pathParameters: { id: 's1', user: userId } } as never);
+      expect((await remove('f')).statusCode).toBe(204);
+      expect((await remove(SUB)).statusCode).toBe(409);
+      expect((await h(event('POST /v1/servers/{id}/leave', googleClaims, { id: 's1' }))).statusCode).toBe(204);
+      expect(calls).toEqual(['list user s1', 'remove user s1 f', `remove user s1 ${SUB}`, 'leave user s1']);
+    });
+  });
+
   describe('POST /v1/admin/users/{id}/approval', () => {
     const ROUTE = 'POST /v1/admin/users/{id}/approval';
     const admin = { ...googleClaims, 'cognito:groups': '[admin]' };
@@ -337,7 +368,7 @@ describe('user routes', () => {
       const logs: Record<string, unknown>[] = [];
       const handle = userHandler({
         users: store,
-        serverOps: noServers, inviteOps: noInvites, userOps: userOperations({ users: store, now: () => NOW }),
+        serverOps: noServers, inviteOps: noInvites, memberOps: noMembers, userOps: userOperations({ users: store, now: () => NOW }),
         now: () => NOW,
         log: (e) => logs.push(e),
       });
@@ -377,7 +408,7 @@ describe('user routes', () => {
 
   it('answers 404 for a route it does not serve', async () => {
     const { store } = fakeUsers();
-    const res = await userHandler({ users: store, serverOps: noServers, inviteOps: noInvites, userOps: userOperations({ users: store, now: () => NOW }), now: () => NOW, log: () => {} })(event('GET /v1/nope', googleClaims));
+    const res = await userHandler({ users: store, serverOps: noServers, inviteOps: noInvites, memberOps: noMembers, userOps: userOperations({ users: store, now: () => NOW }), now: () => NOW, log: () => {} })(event('GET /v1/nope', googleClaims));
     expect(res.statusCode).toBe(404);
   });
 });

@@ -59,7 +59,7 @@ as part of each PR. The repo layout and commands are in [README.md](README.md).
 | M7 Move your world | Done (PR1–PR4; tested on dev with a real world) |
 | Before Phase 2 | Done: M7 docs, neutral wording, destroy (records kept as `DESTROYED`), state-sync tweak, stage and prod live with the release flow (details under Decisions) |
 | **Phase 1** | **Complete** (2026-10-07): dev, stage and prod run `v2026.10.07-3461efe`, agent `2026.10.06-de42566` |
-| M8 Accounts and access | In progress: PR1a–PR1c done (sign-in with password, Google, Discord, tested on dev); PR2–PR4 done (access data, authorization, API contract); PR5 merged (every server action on `/v1`); PR6a (invites) in review |
+| M8 Accounts and access | In progress: PR1a–PR1c done (sign-in with password, Google, Discord, tested on dev); PR2–PR4 done (access data, authorization, API contract); PR5 merged (every server action on `/v1`); PR6a (invites) and PR6b (members) in review |
 | M9 Game version catalog | Planned (Deferred's plan, V1–V4) |
 | M10 Web UI | Planned |
 
@@ -206,7 +206,11 @@ the CLI signs in the same way; backend only):
     a wrong, expired or revoked code, or a destroyed server's, is 404 alike. No invites to a
     destroyed server (409). Revoking stops new members only. The User λ reads, writes and
     deletes Invites and queries its byServer index.
-  - 6b: list members (owners and members), remove one (owners), leave (members).
+  - 6b, in review: `GET /v1/servers/{id}/members` (owners and members: the owner first, then by
+    join time; name and picture from Users, never emails), `DELETE …/members/{user}` (owners;
+    the owner's row 409, not a member 404), `POST …/leave` (members; the owner 409, an admin
+    with no row 404). `services/api/src/members/operations.ts`. The User λ may DeleteItem
+    ServerAccess rows (the store deletes members only) and query its byServer index.
 - PR7 CLI on Cognito: `hearth login` (browser sign-in, session in `~/.hearth`), every command on `/v1`.
 - PR8 Remove `/admin` routes, their handler and permissions.
 

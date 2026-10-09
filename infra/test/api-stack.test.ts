@@ -90,7 +90,10 @@ describe('ApiStack', () => {
       // The table (create's transaction, a failed workflow's undo), then the byOwner index (the limit).
       expect(on('Servers')).toEqual([['dynamodb:GetItem', 'dynamodb:PutItem', 'dynamodb:UpdateItem'], ['dynamodb:Query']]);
       expect(JSON.stringify(statements.find((s) => s.Action === 'dynamodb:Query')?.Resource)).toContain('/index/byOwner');
-      expect(on('ServerAccess')).toEqual([['dynamodb:GetItem', 'dynamodb:PutItem', 'dynamodb:Query']]);
+      // The table and its byServer index (a server's members); deleting a member's row.
+      expect(on('ServerAccess')).toEqual([['dynamodb:DeleteItem', 'dynamodb:GetItem', 'dynamodb:PutItem', 'dynamodb:Query']]);
+      const access = statements.find((s) => /FnGetAttServerAccess/.test(JSON.stringify(s.Resource)));
+      expect(JSON.stringify(access?.Resource)).toContain('/index/byServer');
       // The four lifecycle workflows (operations decide who may run which).
       const workflows = statements.filter((s) => s.Action === 'states:StartExecution');
       expect(workflows).toHaveLength(1);

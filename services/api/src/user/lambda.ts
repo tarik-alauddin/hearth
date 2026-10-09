@@ -2,6 +2,7 @@
 import { createAccessStore, createInvitesStore, createOwnedServers, createServersStore, createUsersStore } from '@hearth/core';
 import { s3BackupStorage } from '../backups.js';
 import { inviteOperations } from '../invites/operations.js';
+import { memberOperations } from '../members/operations.js';
 import { OperationError, serverOperations } from '../servers/operations.js';
 import { publishedVersions } from '../servers/versions.js';
 import { stepFunctionsWorkflows } from '../servers/workflows.js';
@@ -29,6 +30,7 @@ export const handler = userHandler({
   users,
   userOps: userOperations({ users }),
   inviteOps: inviteOperations({ servers, access, invites: createInvitesStore(requireEnv('INVITES_TABLE')) }),
+  memberOps: memberOperations({ access, users }),
   serverOps: serverOperations({
     store: servers,
     access,

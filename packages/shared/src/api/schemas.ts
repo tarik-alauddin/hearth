@@ -211,6 +211,24 @@ export const ListInvitesResponseSchema = named(
   'ListInvitesResponse',
 );
 
+export const MemberSchema = named(
+  z.object({
+    userId: z.string(),
+    role: z.enum(['owner', 'member']),
+    name: z.string().optional().describe('Their display name, name or username, whichever their sign-in gave'),
+    picture: z.string().optional().describe('Avatar URL'),
+    addedAt: isoTime('When they got access'),
+    addedBy: z.string().describe('Who let them in: the invite\'s creator (the owner, for themselves)'),
+  }),
+  'Member',
+  'Someone with access to a server. No email: members see each other.',
+);
+
+export const ListMembersResponseSchema = named(
+  z.object({ members: z.array(MemberSchema).describe('The owner first, then members by when they joined') }),
+  'ListMembersResponse',
+);
+
 export const ServerBackupsResponseSchema = named(
   z.object({
     backups: z
@@ -390,4 +408,6 @@ export type ListMyServersResponse = z.infer<typeof ListMyServersResponseSchema>;
 export type ServerBackupsResponse = z.infer<typeof ServerBackupsResponseSchema>;
 export type Invite = z.infer<typeof InviteSchema>;
 export type ListInvitesResponse = z.infer<typeof ListInvitesResponseSchema>;
+export type Member = z.infer<typeof MemberSchema>;
+export type ListMembersResponse = z.infer<typeof ListMembersResponseSchema>;
 export type SetApprovalRequest = z.infer<typeof SetApprovalRequestSchema>;
