@@ -98,6 +98,20 @@ first (step 3).
    separate user.
 3. Make it an admin with its `user` (`Discord_…`), as for Google, then run 2 again: `groups admin`.
 
+## 6. The CLI (`hearth login`)
+
+From the repo, with your AWS credentials (the CLI reads `/hearth/<env>/auth` and `api-url`):
+
+1. `pnpm hearth whoami`: `Not signed in to dev: run hearth login --env dev`.
+2. `pnpm hearth login` (or `--provider Google` / `Discord`): the browser opens; after signing in,
+   `Signed in to dev as …`. `~/.hearth/session-dev.json` exists.
+3. `pnpm hearth whoami`: your user ID, sign-in, `admin yes`, `approved`, server limit.
+4. `pnpm hearth admin list`: the admins' user IDs and emails. With another sign-in's user ID
+   (from its `whoami`, or `/v1/me`): `pnpm hearth admin add <userId>`; after it signs in again (or
+   within the hour), its `whoami` says `admin yes`. `pnpm hearth admin remove <userId>` undoes it
+   the same way. A made-up ID: `No user … in dev's user pool`.
+5. `pnpm hearth logout`, then `whoami`: not signed in again.
+
 ## If something goes wrong
 
 | What you see | Why, and what to do |
@@ -108,4 +122,4 @@ first (step 3).
 | Discord: "Invalid OAuth2 redirect_uri" | The Discord app's Redirects list lacks this env's `…/oauth2/idpresponse` |
 | Cognito page after Discord: an error mentioning the token or attributes | Cognito couldn't use Discord's response; send the message and the script's output (the fallback is a wrapper λ) |
 | `Timed out after 5 minutes` | The browser never came back; run it again |
-| Port 8976 already in use | Another sign-in script (or later, `hearth login`) is still waiting; close it |
+| Port 8976 already in use | Another sign-in script or `hearth login` is still waiting; close it |

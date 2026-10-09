@@ -2,7 +2,7 @@ import { mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { ApiError, apiClient, sendUpload } from './client.js';
+import { ApiError, apiClient, sendUpload, userApiClient } from './client.js';
 
 describe('sendUpload', () => {
   async function file(content: string) {
@@ -79,5 +79,23 @@ describe('apiClient', () => {
       message: "Server s1 is STOPPING and can't be started",
     });
     await expect(api.post('/admin/servers/s1/start')).rejects.toBeInstanceOf(ApiError);
+  });
+});
+
+describe('userApiClient', () => {
+  it('sends the ID token as a bearer token, fetched for each request', async () => {
+    const { fetch, calls } = fakeFetch(200, '{"userId":"u-1"}');
+    let n = 0;
+    const api = userApiClient({ baseUrl: 'https://abc.example.com', idToken: async () => `token-${++n}`, fetch });
+    expect(await api.get('/v1/me')).toEqual({ userId: 'u-1' });
+    await api.post('/v1/servers', { game: 'minecraft-java' });
+    expect(calls.map((c) => (c.init.headers as Record<string, string>).authorization)).toEqual(['Bearer token-1', 'Bearer token-2']);
+    expect(calls[1]?.init.body).toBe('{"game":"minecraft-java"}');
+  });
+
+  it('turns error responses into ApiError', async () => {
+    const { fetch } = fakeFetch(401, '{"message":"Unauthorized"}');
+    const api = userApiClient({ baseUrl: 'https://abc.example.com', idToken: async () => 't', fetch });
+    await expect(api.get('/v1/me')).rejects.toMatchObject({ status: 401, message: 'Unauthorized' });
   });
 });
