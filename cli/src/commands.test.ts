@@ -1,7 +1,7 @@
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import type { FleetReport, ServerRecord, ServerView, UploadStatus } from '@hearth/shared';
-import type { Api } from './client.js';
+import { ApiError, type Api } from './client.js';
 import { CommandError, commands, type CommandDeps } from './commands.js';
 
 function view(overrides: Partial<ServerView>): ServerView {
@@ -34,14 +34,23 @@ function recorder(calls: string[], answer: (method: string, path: string, body: 
 
 /**
  * The /v1 API: GET /v1/servers/s1 walks through `states` (the last repeats); actions answer as
- * the API does (a workflow result, or the server as the caller sees it). The admin API serves
- * `pages` of every server.
+ * the API does (a workflow result, or the server as the caller sees it). With `admin`, the caller
+ * is an admin: the admin routes serve its `pages` of every server and its `record`; without, 403.
  */
-function fakeApis(states: Partial<ServerView>[] = [], opts: { pages?: ServerRecord[][]; backups?: unknown[] } = {}) {
+function fakeApis(
+  states: Partial<ServerView>[] = [],
+  opts: { admin?: { pages?: ServerRecord[][]; record?: ServerRecord }; mine?: ServerView[]; backups?: unknown[] } = {},
+) {
   const calls: string[] = [];
-  const adminCalls: string[] = [];
   let i = 0;
+  const pages = [...(opts.admin?.pages ?? [])];
   const api = recorder(calls, (method, path, body) => {
+    if (path.startsWith('/v1/admin/servers')) {
+      if (!opts.admin) throw new ApiError(403, 'Only Hearth admins can do that');
+      if (path === '/v1/admin/servers') return { servers: pages.shift() ?? [], ...(pages.length ? { cursor: `c${pages.length}` } : {}) };
+      return opts.admin.record;
+    }
+    if (method === 'GET' && path === '/v1/servers') return { servers: opts.mine ?? [] };
     if (path.endsWith('/backups')) return { backups: opts.backups ?? [] };
     if (path.startsWith('/v1/admin/users/')) {
       return { userId: 'u-1', approved: (body as { approved: boolean }).approved, serverLimit: 3, createdAt: 'then', lastSeenAt: 'then', name: 'Friend' };
@@ -53,15 +62,10 @@ function fakeApis(states: Partial<ServerView>[] = [], opts: { pages?: ServerReco
     }
     return view({ version: (body as { version?: string } | undefined)?.version ?? '1.21.4' });
   });
-  const pages = [...(opts.pages ?? [])];
-  const adminApi = recorder(adminCalls, (_method, path) => {
-    if (path === '/admin/servers') return { servers: pages.shift() ?? [], ...(pages.length ? { cursor: `c${pages.length}` } : {}) };
-    return { serverId: 's1', status: 'PROVISIONING' };
-  });
-  return { api, adminApi, calls, adminCalls };
+  return { api, calls };
 }
 
-function run(apis: { api: Api; adminApi: Api }, deps: Partial<CommandDeps> = {}) {
+function run(apis: { api: Api }, deps: Partial<CommandDeps> = {}) {
   const out: string[] = [];
   const cmd = commands({ ...apis, print: (l) => out.push(l), sleep: async () => {}, pollMs: 1, timeoutMs: 100, ...deps });
   return { out, cmd };
@@ -191,6 +195,49 @@ describe('commands', () => {
       return out;
     }
 
+    it("gives admins the whole record: owner, agent, channel, instance, the backup's size, the restore", async () => {
+      const apis = fakeApis([], {
+        admin: {
+          record: record({
+            status: 'RUNNING',
+            ownerId: 'u-1',
+            agentState: 'ready',
+            agentVersion: '2026.10.06-de42566',
+            agentChannel: 'canary',
+            instanceId: 'i-1',
+            instanceState: 'running',
+            publicIp: '35.1.2.3',
+            lastBackupAt: '2026-10-04T12:01:00.000Z',
+            lastBackupBytes: 3 * 2 ** 20,
+            restoreKey: 'accepted/01K6ABCDEF0123456789ABCDEF.tar.gz',
+            restoreSource: 'upload',
+          }),
+        },
+      });
+      const { out, cmd } = run(apis);
+      await cmd.status('s1');
+      expect(apis.calls).toEqual(['GET /v1/admin/servers/s1']);
+      expect(out).toEqual([
+        'server      s1',
+        'owner       u-1',
+        'game        minecraft-java 1.21.4',
+        'status      RUNNING',
+        'agent       ready (2026.10.06-de42566)',
+        'channel     canary',
+        'idle stop   stops after 30 minutes with nobody playing',
+        'instance    i-1 (running)',
+        'join at     35.1.2.3:25565',
+        'last backup 2026-10-04T12:01:00.000Z (3.0 MiB)',
+        'restore     upload 01K6ABCDEF0123456789ABCDEF on the next start',
+      ]);
+    });
+
+    it('falls back to what owners and members see for anyone else', async () => {
+      const apis = fakeApis([{ status: 'STOPPED' }]);
+      await run(apis).cmd.status('s1');
+      expect(apis.calls).toEqual(['GET /v1/admin/servers/s1', 'GET /v1/servers/s1']);
+    });
+
     it('shows the server as its owners and members see it', async () => {
       expect(await status({ status: 'RUNNING', gameState: 'ready', address: '35.1.2.3', role: 'member' })).toEqual([
         'server      s1',
@@ -305,10 +352,10 @@ describe('commands', () => {
         if (method === 'GET') return statuses[Math.min(i++, statuses.length - 1)];
         return { serverId: 's1', status: 'PROVISIONING' };
       });
-      return { api, adminApi: fakeApis().adminApi, calls };
+      return { api, calls };
     }
 
-    function runUpload(apis: { api: Api; adminApi: Api }, bytes = 3 * 2 ** 20) {
+    function runUpload(apis: { api: Api }, bytes = 3 * 2 ** 20) {
       const sent: string[] = [];
       const { out, cmd } = run(apis, { fileSize: async () => bytes, sendUpload: async (form, file) => void sent.push(`${form.url} ${file}`) });
       return { out, sent, cmd };
@@ -361,29 +408,40 @@ describe('commands', () => {
       const { out, cmd } = run(apis);
       await cmd.create({ game: 'minecraft-java', version: '26.3', upload: UPLOAD, wait: false });
       expect(apis.calls).toEqual([`POST /v1/servers {"game":"minecraft-java","version":"26.3","upload":"${UPLOAD}"}`]);
-      expect(apis.adminCalls).toEqual([]);
       expect(out[0]).toMatch(/from upload 01K6ABCDEF0123456789ABCDEF/);
     });
   });
 
-  it('list reads every server through the admin routes, following cursors', async () => {
+  it('list gives admins every server, following cursors', async () => {
     const apis = fakeApis([], {
-      pages: [[record({ serverId: 'b', status: 'RUNNING', publicIp: '35.1.2.3', agentState: 'ready' })], [record({ serverId: 'a' })]],
+      admin: { pages: [[record({ serverId: 'b', status: 'RUNNING', publicIp: '35.1.2.3', agentState: 'ready' })], [record({ serverId: 'a' })]] },
     });
     const { out, cmd } = run(apis);
     await cmd.list();
-    expect(apis.adminCalls).toEqual(['GET /admin/servers {"limit":"100"}', 'GET /admin/servers {"limit":"100","cursor":"c1"}']);
+    expect(apis.calls).toEqual(['GET /v1/admin/servers {"limit":"100"}', 'GET /v1/admin/servers {"limit":"100","cursor":"c1"}']);
     expect(out[0]).toMatch(/^SERVER\s+GAME\s+VERSION\s+STATUS\s+AGENT\s+ADDRESS$/);
     expect(out[1]).toMatch(/^a\s+minecraft-java\s+1\.21\.4\s+STOPPED\s+-\s+-$/);
     expect(out[2]).toMatch(/^b .*RUNNING\s+ready\s+35\.1\.2\.3:25565$/);
   });
 
   it('list --all asks for destroyed servers too', async () => {
-    const apis = fakeApis([], { pages: [[record({ serverId: 'gone', status: 'DESTROYED' })]] });
+    const apis = fakeApis([], { admin: { pages: [[record({ serverId: 'gone', status: 'DESTROYED' })]] } });
     const { out, cmd } = run(apis);
     await cmd.list(true);
-    expect(apis.adminCalls).toEqual(['GET /admin/servers {"limit":"100","all":"true"}']);
+    expect(apis.calls).toEqual(['GET /v1/admin/servers {"limit":"100","all":"true"}']);
     expect(out[1]).toMatch(/^gone .*DESTROYED/);
+  });
+
+  it("list gives anyone else their own servers, as they see them", async () => {
+    const apis = fakeApis([], { mine: [view({ serverId: 'mine', status: 'RUNNING', gameState: 'ready', address: '35.1.2.3', role: 'member' })] });
+    const { out, cmd } = run(apis);
+    await cmd.list(true);
+    expect(apis.calls).toEqual(['GET /v1/admin/servers {"limit":"100","all":"true"}', 'GET /v1/servers {"all":"true"}']);
+    expect(out[0]).toMatch(/^SERVER\s+GAME\s+VERSION\s+STATUS\s+GAME STATE\s+ADDRESS$/);
+    expect(out[1]).toMatch(/^mine .*RUNNING\s+ready\s+35\.1\.2\.3:25565$/);
+    const none = run(fakeApis());
+    await none.cmd.list();
+    expect(none.out).toEqual(['No servers.']);
   });
 
   it('approves a user and takes it back', async () => {

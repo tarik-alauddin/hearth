@@ -195,3 +195,13 @@ The CLI does every step (form, upload, waiting for repack, create):
    then `accepted` or `rejected`). Creating a server with the admin's upload:
    `api -Method POST /v1/servers -Body '{"game":"minecraft-java","version":"26.3","upload":"<it>"}'`:
    `404`. Unapprove it afterwards.
+
+## 10. Every server, for admins (`/v1/admin/servers`)
+
+1. As your admin: `api /v1/admin/servers`: every server's whole record (`instanceId`,
+   `agentVersion`, …), whoever owns it, including servers created before `/v1` (no owner row).
+   `api /v1/admin/servers/<id>`: one record.
+2. As a non-admin: both answer `403`, even for a server they own (`/v1/servers/<id>` is theirs).
+3. The CLI, signed in as your admin: `pnpm hearth list` (every server) and `pnpm hearth status <id>`
+   (`owner`, `agent`, `channel`, `instance` rows). Signed in as the non-admin: `list` shows only
+   their servers (a `GAME STATE` column), `status` what owners see.

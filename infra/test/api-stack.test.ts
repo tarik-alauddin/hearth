@@ -87,8 +87,9 @@ describe('ApiStack', () => {
           .map((s) => [s.Action].flat())
           .sort((a, b) => a.join().localeCompare(b.join())); // CDK may order (and merge) statements its own way
       expect(on('Users')).toEqual([['dynamodb:GetItem', 'dynamodb:UpdateItem']]);
-      // The table (create's transaction, a failed workflow's undo), then the byOwner index (the limit).
-      expect(on('Servers')).toEqual([['dynamodb:GetItem', 'dynamodb:PutItem', 'dynamodb:UpdateItem'], ['dynamodb:Query']]);
+      // The table (create's transaction, a failed workflow's undo, admins' list of every server), then
+      // the byOwner index (the limit).
+      expect(on('Servers')).toEqual([['dynamodb:GetItem', 'dynamodb:PutItem', 'dynamodb:Scan', 'dynamodb:UpdateItem'], ['dynamodb:Query']]);
       expect(JSON.stringify(statements.find((s) => s.Action === 'dynamodb:Query')?.Resource)).toContain('/index/byOwner');
       // The table and its byServer index (a server's members); deleting a member's row.
       expect(on('ServerAccess')).toEqual([['dynamodb:DeleteItem', 'dynamodb:GetItem', 'dynamodb:PutItem', 'dynamodb:Query']]);

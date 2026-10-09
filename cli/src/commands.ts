@@ -10,6 +10,7 @@ import {
   type CreateUploadResponse,
   type FleetReport,
   type GameId,
+  type ListMyServersResponse,
   type ListServersResponse,
   type RestoreRequest,
   type ServerBackupsResponse,
@@ -23,7 +24,7 @@ import {
   type UploadStatus,
   type UserRecord,
 } from '@hearth/shared';
-import { sendUpload as defaultSendUpload, type Api } from './client.js';
+import { ApiError, sendUpload as defaultSendUpload, type Api } from './client.js';
 
 async function askOnTerminal(question: string): Promise<string> {
   const terminal = createInterface({ input: process.stdin, output: process.stdout });
@@ -37,8 +38,6 @@ async function askOnTerminal(question: string): Promise<string> {
 export interface CommandDeps {
   /** The /v1 API, as the signed-in user (`hearth login`). */
   api: Api;
-  /** The admin routes (IAM): only for listing every server, until /v1 has it (7d). */
-  adminApi: Api;
   /** Runs the fleet check Lambda and returns its report. */
   fleetCheck?: () => Promise<FleetReport>;
   print: (line: string) => void;
@@ -58,7 +57,6 @@ export class CommandError extends Error {}
 
 export function commands({
   api,
-  adminApi,
   fleetCheck,
   print,
   sleep = (ms) => new Promise((r) => setTimeout(r, ms)),
@@ -70,6 +68,16 @@ export function commands({
 }: CommandDeps) {
   const path = (id: string, rest = '') => `/v1/servers/${encodeURIComponent(id)}${rest}`;
   const get = (id: string) => api.get<ServerView>(path(id));
+
+  /** An admin route's answer, or undefined when the caller isn't an admin (they get what users see). */
+  async function asAdmin<T>(request: () => Promise<T>): Promise<T | undefined> {
+    try {
+      return await request();
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 403) return undefined;
+      throw err;
+    }
+  }
 
   /**
    * Uploads a file of game data and waits for repack to accept it: the same steps the UI takes.
@@ -217,8 +225,10 @@ export function commands({
       print(`${server.serverId} runs ${server.game} ${server.version} from its next start.`);
     },
 
-    /** A server as its owners and members see it (admins get instance and agent details in 7d). */
+    /** A server: for admins its whole record (instance and agent too); for others what owners and members see. */
     async status(id: string) {
+      const record = await asAdmin(() => api.get<ServerRecord>(`/v1/admin/servers/${encodeURIComponent(id)}`));
+      if (record) return statusOf(record);
       const s = await get(id);
       const rows: [string, string | undefined][] = [
         ['server', s.serverId],
@@ -258,22 +268,33 @@ export function commands({
       if (r.stuck.length + r.failed.length + r.mismatched.length + r.untracked.length === 0) print('All clear.');
     },
 
-    /** Every server (the admin routes, until 7d), sorted by ID; destroyed ones only with `all`. */
+    /**
+     * Servers, sorted by ID; destroyed ones only with `all`. Admins see every server; anyone else
+     * the ones they own or are a member of.
+     */
     async list(all = false) {
-      const servers: ServerRecord[] = [];
-      let cursor: string | undefined;
-      do {
-        const page: ListServersResponse = await adminApi.get('/admin/servers', { limit: '100', cursor, ...(all ? { all: 'true' } : {}) });
-        servers.push(...page.servers);
-        cursor = page.cursor;
-      } while (cursor);
-      if (servers.length === 0) return print('No servers.');
-      table([
-        ['SERVER', 'GAME', 'VERSION', 'STATUS', 'AGENT', 'ADDRESS'],
-        ...servers
-          .sort((a, b) => a.serverId.localeCompare(b.serverId))
-          .map((s) => [s.serverId, s.game, s.version, s.status, s.agentState ?? '-', joinAddress(s.game, s.publicIp)]),
-      ]);
+      const every = await asAdmin(async () => {
+        const servers: ServerRecord[] = [];
+        let cursor: string | undefined;
+        do {
+          const page: ListServersResponse = await api.get('/v1/admin/servers', { limit: '100', cursor, ...(all ? { all: 'true' } : {}) });
+          servers.push(...page.servers);
+          cursor = page.cursor;
+        } while (cursor);
+        return servers.map((s) => [s.serverId, s.game, s.version, s.status, s.agentState ?? '-', joinAddress(s.game, s.publicIp)]);
+      });
+      const rows =
+        every ??
+        (await api.get<ListMyServersResponse>('/v1/servers', all ? { all: 'true' } : {})).servers.map((s) => [
+          s.serverId,
+          s.game,
+          s.version,
+          s.status,
+          s.gameState ?? '-',
+          joinAddress(s.game, s.address),
+        ]);
+      if (rows.length === 0) return print('No servers.');
+      table([['SERVER', 'GAME', 'VERSION', 'STATUS', every ? 'AGENT' : 'GAME STATE', 'ADDRESS'], ...rows.sort((a, b) => a[0]!.localeCompare(b[0]!))]);
     },
 
     async backups(id: string) {
@@ -308,10 +329,41 @@ export function commands({
     },
   };
 
+  /** A server's whole record, as admins see it. */
+  function statusOf(s: ServerRecord) {
+    const rows: [string, string | undefined][] = [
+      ['server', s.serverId],
+      ['owner', s.ownerId],
+      ['game', `${s.game} ${s.version}`],
+      ['status', s.status + (s.statusMessage ? ` (${s.statusMessage})` : '')],
+      ['agent', s.agentState && `${s.agentState}${s.agentVersion ? ` (${s.agentVersion})` : ''}${s.agentMessage ? `: ${s.agentMessage}` : ''}`],
+      ['channel', s.agentChannel ?? 'stable'],
+      ['idle stop', idleStop(s.idleStopMinutes)],
+      ['instance', s.instanceId && `${s.instanceId} (${s.instanceState ?? 'unknown'})`],
+      ['join at', s.status === 'RUNNING' && s.publicIp ? joinAddress(s.game, s.publicIp) : undefined],
+      ['last start', s.lastStartedAt],
+      [
+        'last stop',
+        s.lastStoppedAt &&
+          `${s.lastStoppedAt}${s.stopReason ? `: ${s.stopReason}` : ''}${s.lastStopClean === false ? ' (not clean)' : ''}`,
+      ],
+      ['last backup', s.lastBackupAt && `${s.lastBackupAt} (${mebibytes(s.lastBackupBytes ?? 0)})`],
+      ['restore', s.restoreKey && `${restoreName(s)} on the next start`],
+      ['destroyed', s.destroyedAt],
+    ];
+    for (const [k, v] of rows) if (v) print(`${k.padEnd(11)} ${v}`);
+  }
+
   function table(rows: string[][]) {
     const widths = rows[0]!.map((_, i) => Math.max(...rows.map((r) => r[i]!.length)));
     for (const r of rows) print(r.map((cell, i) => cell.padEnd(widths[i]!)).join('  ').trimEnd());
   }
+}
+
+/** A pending restore as admins know it: the backup's key, or "upload <id>" for a server created from one. */
+function restoreName(server: ServerRecord): string {
+  const key = server.restoreKey ?? '';
+  return server.restoreSource === 'upload' ? `upload ${key.replace(/^accepted\//, '').replace(/\.tar\.gz$/, '')}` : key;
 }
 
 /** Where players connect: the address and the game's port, or "-". */

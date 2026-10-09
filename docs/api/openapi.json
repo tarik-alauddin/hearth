@@ -1374,6 +1374,168 @@
         }
       }
     },
+    "/v1/admin/servers": {
+      "get": {
+        "operationId": "listEveryServer",
+        "summary": "List every server",
+        "description": "Whole records, whoever owns them (`/v1/servers` lists the caller's own). Destroyed servers only with `all=true`; a page can then be short, so follow the cursor.",
+        "tags": [
+          "user"
+        ],
+        "security": [
+          {
+            "cognito": []
+          }
+        ],
+        "x-hearth-admin-only": true,
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "description": "1–100, default 50",
+            "schema": {
+              "description": "1–100, default 50",
+              "type": "string"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "description": "From the previous page",
+            "schema": {
+              "description": "From the previous page",
+              "type": "string"
+            }
+          },
+          {
+            "name": "all",
+            "in": "query",
+            "required": false,
+            "description": "Include destroyed servers",
+            "schema": {
+              "description": "Include destroyed servers",
+              "type": "string",
+              "enum": [
+                "true",
+                "false"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "One page of servers",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListServersResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request is malformed (the message says how)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No ID token, or an invalid or expired one: sign in again",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The caller is not a Hearth admin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/admin/servers/{id}": {
+      "get": {
+        "operationId": "getServerRecord",
+        "summary": "A server's whole record",
+        "description": "Instance, agent and storage details included (`/v1/servers/{id}` answers what owners see).",
+        "tags": [
+          "user"
+        ],
+        "security": [
+          {
+            "cognito": []
+          }
+        ],
+        "x-hearth-admin-only": true,
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The server",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ServerRecord"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No ID token, or an invalid or expired one: sign in again",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The caller is not a Hearth admin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such server",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/admin/users/{id}/approval": {
       "post": {
         "operationId": "setUserApproval",

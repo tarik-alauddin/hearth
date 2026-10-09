@@ -2,7 +2,7 @@ import { mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { ApiError, apiClient, sendUpload, userApiClient } from './client.js';
+import { ApiError, sendUpload, userApiClient } from './client.js';
 
 describe('sendUpload', () => {
   async function file(content: string) {
@@ -37,8 +37,6 @@ describe('sendUpload', () => {
   });
 });
 
-const credentials = async () => ({ accessKeyId: 'AKIDEXAMPLE', secretAccessKey: 'secret', sessionToken: 'token' });
-
 function fakeFetch(status: number, body: string) {
   const calls: { url: string; init: RequestInit }[] = [];
   const fetch = (async (url: string, init: RequestInit) => {
@@ -47,40 +45,6 @@ function fakeFetch(status: number, body: string) {
   }) as unknown as typeof globalThis.fetch;
   return { fetch, calls };
 }
-
-describe('apiClient', () => {
-  it('signs requests for execute-api in the API region', async () => {
-    const { fetch, calls } = fakeFetch(200, '{"servers":[]}');
-    const api = apiClient({ baseUrl: 'https://abc.execute-api.us-west-2.amazonaws.com', region: 'us-west-2', credentials, fetch });
-    await api.get('/admin/servers', { limit: '100', cursor: undefined });
-
-    expect(calls[0]?.url).toBe('https://abc.execute-api.us-west-2.amazonaws.com/admin/servers?limit=100');
-    const headers = calls[0]?.init.headers as Record<string, string>;
-    expect(headers.authorization).toMatch(/^AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE\/\d{8}\/us-west-2\/execute-api\/aws4_request/);
-    expect(headers['x-amz-security-token']).toBe('token');
-  });
-
-  it('sends JSON bodies', async () => {
-    const { fetch, calls } = fakeFetch(202, '{"serverId":"s1","status":"PROVISIONING"}');
-    const api = apiClient({ baseUrl: 'https://abc.example.com', region: 'us-west-2', credentials, fetch });
-    expect(await api.post('/admin/servers', { game: 'minecraft-java', version: '1.21.4' })).toEqual({
-      serverId: 's1',
-      status: 'PROVISIONING',
-    });
-    expect(calls[0]?.init.body).toBe('{"game":"minecraft-java","version":"1.21.4"}');
-    expect((calls[0]?.init.headers as Record<string, string>)['content-type']).toBe('application/json');
-  });
-
-  it('turns error responses into ApiError with the message', async () => {
-    const { fetch } = fakeFetch(409, '{"message":"Server s1 is STOPPING and can\'t be started"}');
-    const api = apiClient({ baseUrl: 'https://abc.example.com', region: 'us-west-2', credentials, fetch });
-    await expect(api.post('/admin/servers/s1/start')).rejects.toMatchObject({
-      status: 409,
-      message: "Server s1 is STOPPING and can't be started",
-    });
-    await expect(api.post('/admin/servers/s1/start')).rejects.toBeInstanceOf(ApiError);
-  });
-});
 
 describe('userApiClient', () => {
   it('sends the ID token as a bearer token, fetched for each request', async () => {
@@ -91,11 +55,14 @@ describe('userApiClient', () => {
     await api.post('/v1/servers', { game: 'minecraft-java' });
     expect(calls.map((c) => (c.init.headers as Record<string, string>).authorization)).toEqual(['Bearer token-1', 'Bearer token-2']);
     expect(calls[1]?.init.body).toBe('{"game":"minecraft-java"}');
+    await api.get('/v1/admin/servers', { limit: '100', cursor: undefined });
+    expect(calls[2]?.url).toBe('https://abc.example.com/v1/admin/servers?limit=100');
   });
 
   it('turns error responses into ApiError', async () => {
     const { fetch } = fakeFetch(401, '{"message":"Unauthorized"}');
     const api = userApiClient({ baseUrl: 'https://abc.example.com', idToken: async () => 't', fetch });
     await expect(api.get('/v1/me')).rejects.toMatchObject({ status: 401, message: 'Unauthorized' });
+    await expect(api.get('/v1/me')).rejects.toBeInstanceOf(ApiError);
   });
 });

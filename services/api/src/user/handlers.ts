@@ -4,12 +4,13 @@ import type {
   ListInvitesResponse,
   ListMembersResponse,
   ListMyServersResponse,
+  ListServersResponse,
   MeResponse,
   ServerBackupsResponse,
   ServerOperationResult,
   ServerRecord,
 } from '@hearth/shared';
-import { AccessDenied, toServerView } from '../authz.js';
+import { AccessDenied, requireAdmin, toServerView } from '../authz.js';
 import { OperationError, type serverOperations } from '../servers/operations.js';
 import type { inviteOperations } from '../invites/operations.js';
 import type { memberOperations } from '../members/operations.js';
@@ -31,6 +32,7 @@ export interface UserHandlerDeps {
     | 'relationTo'
     | 'getServer'
     | 'listMyServers'
+    | 'listServers'
     | 'createServer'
     | 'startServer'
     | 'stopServer'
@@ -158,6 +160,17 @@ export function userHandler({ users, userOps, serverOps, inviteOps, memberOps, u
         case 'GET /v1/servers/{id}': {
           const { server, relation } = await serverOps.getServer(caller.actor, event.pathParameters?.id ?? '');
           return json(200, toServerView(server, relation));
+        }
+        case 'GET /v1/admin/servers': {
+          const query = event.queryStringParameters ?? {};
+          const body: ListServersResponse = await serverOps.listServers(caller.actor, query.limit, query.cursor, query.all === 'true');
+          return json(200, body);
+        }
+        case 'GET /v1/admin/servers/{id}': {
+          // The whole record, for admins alone (getServer would let owners and members through).
+          requireAdmin(caller.actor);
+          const { server } = await serverOps.getServer(caller.actor, serverId(event));
+          return json(200, server);
         }
         case 'POST /v1/admin/users/{id}/approval': {
           const userId = event.pathParameters?.id ?? '';
