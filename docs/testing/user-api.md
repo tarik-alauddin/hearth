@@ -127,3 +127,21 @@ With a server you created in section 4 (`$id`), as its owner:
    then destroy: `202`, `DESTROYING`, then `DESTROYED` (it leaves `api /v1/servers`; `?all=true`
    still lists it). The owner's limit counts one fewer.
 4. As another user with no access to it, any of the three: `404`, as for a server that doesn't exist.
+
+## 6. Settings, version, backups, restore (owners)
+
+With a server you own (`$id`), **stopped** for the version and restore steps:
+
+1. Settings: `api -Method PATCH /v1/servers/$id -Body '{"idleStopMinutes":0}'`: `200`, the server
+   with `idleStopMinutes: 0` (never idle-stop; applies from its next start). With
+   `"agentChannel":"canary"` as a non-admin: `403`.
+2. Backups: `api /v1/servers/$id/backups`: newest first, each with an `id` (its file name, e.g.
+   `20261008T234112Z.tar.gz`), `takenAt` and `bytes`; no storage keys. A server stopped at least
+   once has one.
+3. Restore: `api -Method POST /v1/servers/$id/restore -Body '{"key":"<an id>"}'` (or `'{}'` for the
+   newest): `200`, `restorePending: true`. Cancel it: `api -Method DELETE /v1/servers/$id/restore`:
+   `restorePending: false`. A made-up id: `404`.
+4. Version: `api -Method POST /v1/servers/$id/version -Body '{"version":"<a newer release>"}'`:
+   `200` with the new `version` (needs a clean stop with a backup since it last ran; else `409`
+   says why). An older version: `409`.
+5. As another user without access, any of these: `404`.

@@ -59,7 +59,7 @@ as part of each PR. The repo layout and commands are in [README.md](README.md).
 | M7 Move your world | Done (PR1–PR4; tested on dev with a real world) |
 | Before Phase 2 | Done: M7 docs, neutral wording, destroy (records kept as `DESTROYED`), state-sync tweak, stage and prod live with the release flow (details under Decisions) |
 | **Phase 1** | **Complete** (2026-10-07): dev, stage and prod run `v2026.10.07-3461efe`, agent `2026.10.06-de42566` |
-| M8 Accounts and access | In progress: PR1a–PR1c done (sign-in with password, Google, Discord, tested on dev); PR2–PR4 done (access data, authorization, API contract); PR5a–d merged (`/v1/me`, approving users, listing and creating servers); PR5e (start, stop, destroy) in review |
+| M8 Accounts and access | In progress: PR1a–PR1c done (sign-in with password, Google, Discord, tested on dev); PR2–PR4 done (access data, authorization, API contract); PR5a–e merged (`/v1/me`, approving users; listing, creating, starting, stopping, destroying servers); PR5f (owner actions) in review |
 | M9 Game version catalog | Planned (Deferred's plan, V1–V4) |
 | M10 Web UI | Planned |
 
@@ -181,13 +181,18 @@ the CLI signs in the same way; backend only):
     `/v1` uploads. The User λ gains: Servers PutItem/UpdateItem, the byOwner index (Query),
     ServerAccess PutItem, StartExecution on the create workflow only; `CREATE_WORKFLOW_ARN`,
     `GAME_REGIONS`.
-  - 5e, in review: `POST /v1/servers/{id}/start`, `/stop` (owners and members), `/destroy`
+  - 5e, merged: `POST /v1/servers/{id}/start`, `/stop` (owners and members), `/destroy`
     (owners): thin routes over the existing operations (`authorize` with `start`/`stop`/
     `destroy`); 202 when a workflow started, 200 unchanged. The User λ may start all four
     lifecycle workflows (the operations decide who may run which).
-  - 5f: the owners' other actions: settings (`PATCH /v1/servers/{id}`: idle stop), version,
-    backups list, restore and cancel. The User λ needs the backups bucket (list) and Mojang's
-    version list then.
+  - 5f, in review: the owners' other actions over the existing operations: `PATCH
+    /v1/servers/{id}` (settings; `agentChannel` admins only), `POST …/version`, `GET …/backups`,
+    `POST` / `DELETE …/restore`. Answers are the caller's `ServerView` (role read with
+    `relationTo`, one access lookup: the operations themselves are unchanged, `/admin` too).
+    Backups are listed as `{ id, takenAt, bytes }`: `id` is the file name, never the storage key,
+    and restore takes it (the operation already accepts a file name and checks it's one of this
+    server's backups). The User λ lists backups (the same prefix-limited `ListBucket` as Admin; no
+    read or write) and fetches Mojang's version list (no IAM).
   - Open (owner to decide): admins skip the limit today (and approval). Recommended: the limit
     applies to admins too (they can raise their own `serverLimit`); approval stays skipped.
   - Admin agent channels and `/v1` uploads follow as their own small PRs.

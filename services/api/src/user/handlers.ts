@@ -1,6 +1,6 @@
 import type { APIGatewayProxyEventV2WithJWTAuthorizer, APIGatewayProxyStructuredResultV2 } from 'aws-lambda';
 import type { UsersStore } from '@hearth/core';
-import type { ListMyServersResponse, MeResponse, ServerOperationResult } from '@hearth/shared';
+import type { ListMyServersResponse, MeResponse, ServerBackupsResponse, ServerOperationResult, ServerRecord } from '@hearth/shared';
 import { AccessDenied, toServerView } from '../authz.js';
 import { OperationError, type serverOperations } from '../servers/operations.js';
 import type { userOperations } from '../users/operations.js';
@@ -14,7 +14,18 @@ export interface UserHandlerDeps {
   userOps: ReturnType<typeof userOperations>;
   serverOps: Pick<
     ReturnType<typeof serverOperations>,
-    'getServer' | 'listMyServers' | 'createServer' | 'startServer' | 'stopServer' | 'destroyServer'
+    | 'relationTo'
+    | 'getServer'
+    | 'listMyServers'
+    | 'createServer'
+    | 'startServer'
+    | 'stopServer'
+    | 'destroyServer'
+    | 'updateSettings'
+    | 'setVersion'
+    | 'listBackups'
+    | 'requestRestore'
+    | 'cancelRestore'
   >;
   now?: () => Date;
   log?: (entry: Record<string, unknown>) => void;
@@ -28,6 +39,12 @@ export function userHandler({ users, userOps, serverOps, now = () => new Date(),
   return async function handle(event: Event): Promise<Result> {
     const caller = callerFromClaims(event.requestContext.authorizer?.jwt?.claims as Claims | undefined);
     if (!caller) return json(401, { message: 'Send the ID token from signing in (Authorization: Bearer <id token>)' });
+
+    /** A changed server, as the caller sees it (their role read again: the operation checked a stronger one). */
+    const changed = async (what: string, server: ServerRecord): Promise<Result> => {
+      log({ msg: what, by: caller.userId, serverId: server.serverId });
+      return json(200, toServerView(server, await serverOps.relationTo(caller.actor, server.serverId)));
+    };
 
     /** 202 when a workflow started; 200 when the server was already there (`unchanged`). */
     const lifecycle = (what: string, result: ServerOperationResult): Result => {
@@ -67,6 +84,22 @@ export function userHandler({ users, userOps, serverOps, now = () => new Date(),
           return lifecycle('stop', await serverOps.stopServer(caller.actor, serverId(event)));
         case 'POST /v1/servers/{id}/destroy':
           return lifecycle('destroy', await serverOps.destroyServer(caller.actor, serverId(event)));
+        case 'PATCH /v1/servers/{id}':
+          return changed('settings changed', await serverOps.updateSettings(caller.actor, serverId(event), parseBody(event)));
+        case 'POST /v1/servers/{id}/version':
+          return changed('version set', await serverOps.setVersion(caller.actor, serverId(event), parseBody(event)));
+        case 'POST /v1/servers/{id}/restore':
+          return changed('restore requested', await serverOps.requestRestore(caller.actor, serverId(event), parseBody(event)));
+        case 'DELETE /v1/servers/{id}/restore':
+          return changed('restore cancelled', await serverOps.cancelRestore(caller.actor, serverId(event)));
+        case 'GET /v1/servers/{id}/backups': {
+          const { backups } = await serverOps.listBackups(caller.actor, serverId(event));
+          const body: ServerBackupsResponse = {
+            // The file name, not the storage key: what a restore takes.
+            backups: backups.map(({ key, takenAt, bytes }) => ({ id: key.slice(key.lastIndexOf('/') + 1), takenAt, bytes })),
+          };
+          return json(200, body);
+        }
         case 'GET /v1/servers/{id}': {
           const { server, relation } = await serverOps.getServer(caller.actor, event.pathParameters?.id ?? '');
           return json(200, toServerView(server, relation));

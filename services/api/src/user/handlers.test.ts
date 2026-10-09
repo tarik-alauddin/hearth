@@ -8,25 +8,15 @@ import { userHandler, type UserHandlerDeps } from './handlers.js';
 const NOW = new Date('2026-10-08T12:00:00Z');
 const SUB = 'u-1';
 
-/** Server operations for tests that don't reach them. */
-const noServers: UserHandlerDeps['serverOps'] = {
-  getServer: async () => {
-    throw new Error('not used');
+/** Server operations for tests that don't reach them: any call fails. */
+const noServers = new Proxy(
+  {},
+  {
+    get: (_, name) => async () => {
+      throw new Error(`${String(name)} not used here`);
+    },
   },
-  listMyServers: async () => [],
-  createServer: async () => {
-    throw new Error('not used');
-  },
-  startServer: async () => {
-    throw new Error('not used');
-  },
-  stopServer: async () => {
-    throw new Error('not used');
-  },
-  destroyServer: async () => {
-    throw new Error('not used');
-  },
-};
+) as UserHandlerDeps['serverOps'];
 
 function event(
   routeKey: string,
@@ -168,6 +158,26 @@ describe('user routes', () => {
         if (id === 'theirs') throw new AccessDenied(403, "As a member, you can't destroy server theirs");
         return { serverId: id, status: 'DESTROYING' };
       },
+      relationTo: async (actor) => (actor.kind === 'admin' ? 'admin' : 'owner'),
+      updateSettings: async (actor, id, body) => {
+        calls.push(`settings ${actor.kind} ${id} ${JSON.stringify(body)}`);
+        return { ...record, idleStopMinutes: (body as { idleStopMinutes: number }).idleStopMinutes };
+      },
+      setVersion: async (actor, id, body) => {
+        calls.push(`version ${actor.kind} ${id} ${JSON.stringify(body)}`);
+        return { ...record, status: 'STOPPED', version: (body as { version: string }).version };
+      },
+      listBackups: async () => ({
+        backups: [{ key: 'servers/s1/20261005T120000Z.tar.gz', takenAt: '2026-10-05T12:00:10.000Z', bytes: 2048 }],
+      }),
+      requestRestore: async (actor, id, body) => {
+        calls.push(`restore ${actor.kind} ${id} ${JSON.stringify(body)}`);
+        return { ...record, status: 'STOPPED', restoreKey: 'servers/s1/20261005T120000Z.tar.gz' };
+      },
+      cancelRestore: async (actor, id) => {
+        calls.push(`cancel restore ${actor.kind} ${id}`);
+        return { ...record, status: 'STOPPED' };
+      },
     };
     const handle = () => {
       const { store } = fakeUsers();
@@ -219,6 +229,38 @@ describe('user routes', () => {
       expect((await h(event('POST /v1/servers/{id}/stop', googleClaims, { id: 's1' }))).statusCode).toBe(202);
       expect((await h(event('POST /v1/servers/{id}/destroy', googleClaims, { id: 's1' }))).statusCode).toBe(202);
       expect(calls).toEqual(['start user s1', 'start user running', 'stop user s1', 'destroy user s1']);
+    });
+
+    it('changes settings, version and restores, answering the server as the caller sees it', async () => {
+      calls.length = 0;
+      const h = handle();
+      const settings = await h(event('PATCH /v1/servers/{id}', googleClaims, { id: 's1', body: '{"idleStopMinutes":0}' }));
+      expect(JSON.parse(settings.body!)).toMatchObject({ serverId: 's1', role: 'owner', idleStopMinutes: 0 });
+      expect(JSON.parse(settings.body!)).not.toHaveProperty('instanceId');
+
+      const version = await h(event('POST /v1/servers/{id}/version', googleClaims, { id: 's1', body: '{"version":"26.4"}' }));
+      expect(JSON.parse(version.body!)).toMatchObject({ version: '26.4', status: 'STOPPED' });
+
+      const restore = await h(event('POST /v1/servers/{id}/restore', googleClaims, { id: 's1', body: '{"key":"20261005T120000Z.tar.gz"}' }));
+      expect(JSON.parse(restore.body!)).toMatchObject({ restorePending: true });
+      expect(JSON.parse(restore.body!)).not.toHaveProperty('restoreKey');
+
+      const cancel = await h(event('DELETE /v1/servers/{id}/restore', googleClaims, { id: 's1' }));
+      expect(JSON.parse(cancel.body!)).toMatchObject({ restorePending: false });
+
+      expect(calls).toEqual([
+        'settings user s1 {"idleStopMinutes":0}',
+        'version user s1 {"version":"26.4"}',
+        'restore user s1 {"key":"20261005T120000Z.tar.gz"}',
+        'cancel restore user s1',
+      ]);
+    });
+
+    it('lists backups by id (their file name), never their storage key', async () => {
+      const res = await handle()(event('GET /v1/servers/{id}/backups', googleClaims, { id: 's1' }));
+      expect(JSON.parse(res.body!)).toEqual({
+        backups: [{ id: '20261005T120000Z.tar.gz', takenAt: '2026-10-05T12:00:10.000Z', bytes: 2048 }],
+      });
     });
 
     it("passes on the operations' refusals (a member destroying: 403)", async () => {
