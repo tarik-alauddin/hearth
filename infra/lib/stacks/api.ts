@@ -248,8 +248,8 @@ export class ApiStack extends HearthStack {
       }),
     );
     // User routes (/v1): signed-in users, through the web app and later the CLI. Who they are (the
-    // Users table), the servers they can reach (through their ServerAccess rows), and creating
-    // one; acting on servers joins it with M8 PR5e.
+    // Users table), the servers they can reach (through their ServerAccess rows), creating,
+    // starting, stopping and destroying them; settings, versions, backups and restores: M8 PR5f.
     const user = hearthFunction(this, 'User', {
       config: props.config,
       entry: 'api/src/user/lambda.ts',
@@ -261,6 +261,9 @@ export class ApiStack extends HearthStack {
         HOME_REGION: props.config.homeRegion,
         GAME_REGIONS: props.gameRegions.join(','),
         CREATE_WORKFLOW_ARN: props.workflows.create.stateMachineArn,
+        START_WORKFLOW_ARN: props.workflows.start.stateMachineArn,
+        STOP_WORKFLOW_ARN: props.workflows.stop.stateMachineArn,
+        DESTROY_WORKFLOW_ARN: props.workflows.destroy.stateMachineArn,
       },
     });
     user.addToRolePolicy(
@@ -289,7 +292,10 @@ export class ApiStack extends HearthStack {
       }),
     );
     user.addToRolePolicy(
-      new PolicyStatement({ actions: ['states:StartExecution'], resources: [props.workflows.create.stateMachineArn] }),
+      new PolicyStatement({
+        actions: ['states:StartExecution'],
+        resources: Object.values(props.workflows).map((machine) => machine.stateMachineArn),
+      }),
     );
 
     // Every route comes from the shared route list (packages/shared/src/api/routes.ts), which also

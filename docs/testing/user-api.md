@@ -106,6 +106,24 @@ This launches a real server (a few cents an hour while it runs). Clean up at the
    `403` (agent channels are for admins). With an upload (`"upload":"…"`): `400`, uploads come
    later.
 
-Clean up with the CLI (destroying through `/v1` comes next): `pnpm hearth stop <id>`, then
-`pnpm hearth destroy <id> --yes`, for each server you created. Destroyed servers stop counting
-toward the limit.
+Clean up with section 5 (stop, then destroy each server), or with the CLI: `pnpm hearth stop <id>`,
+then `pnpm hearth destroy <id> --yes`. Destroyed servers stop counting toward the limit.
+
+**Test the limit as a user outside `admin`**: admins skip it (and approval).
+
+## 5. Start, stop and destroy (`POST /v1/servers/{id}/start`, `/stop`, `/destroy`)
+
+Owners and members start and stop; only owners destroy (members arrive with invites, M8 PR6).
+Answers: `202` when a workflow started, `200` with `unchanged: true` when the server was already
+there, `409` when its state doesn't allow it.
+
+With a server you created in section 4 (`$id`), as its owner:
+
+1. `api -Method POST /v1/servers/$id/stop`: `202`, `STOPPING`; `api /v1/servers/$id` reaches
+   `STOPPED` (the stop saves and backs it up first: about a minute). Stop again: `200`, unchanged.
+2. `api -Method POST /v1/servers/$id/start`: `202`, `STARTING`, then `RUNNING` with a new
+   `address`. Start again: `200`, unchanged.
+3. `api -Method POST /v1/servers/$id/destroy` while it runs: `409` ("stop it first"). Stop it,
+   then destroy: `202`, `DESTROYING`, then `DESTROYED` (it leaves `api /v1/servers`; `?all=true`
+   still lists it). The owner's limit counts one fewer.
+4. As another user with no access to it, any of the three: `404`, as for a server that doesn't exist.

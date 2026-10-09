@@ -67,7 +67,7 @@ describe('ApiStack', () => {
       expect(authorizer?.Properties.JwtConfiguration.Audience).toHaveLength(2); // the CLI's and (on dev) the web app's clients
     });
 
-    it('runs the user routes in their own Lambda, with only what reading and creating servers need', () => {
+    it('runs the user routes in their own Lambda, with only what its routes need', () => {
       template.hasResourceProperties('AWS::Lambda::Function', {
         Environment: {
           Variables: Match.objectLike({
@@ -90,10 +90,12 @@ describe('ApiStack', () => {
       expect(on('Servers')).toEqual([['dynamodb:GetItem', 'dynamodb:PutItem', 'dynamodb:UpdateItem'], ['dynamodb:Query']]);
       expect(JSON.stringify(statements.find((s) => s.Action === 'dynamodb:Query')?.Resource)).toContain('/index/byOwner');
       expect(on('ServerAccess')).toEqual([['dynamodb:GetItem', 'dynamodb:PutItem', 'dynamodb:Query']]);
-      // Only the create workflow.
+      // The four lifecycle workflows (operations decide who may run which).
       const workflows = statements.filter((s) => s.Action === 'states:StartExecution');
       expect(workflows).toHaveLength(1);
-      expect(JSON.stringify(workflows[0]?.Resource)).toMatch(/WorkflowsCreateStateMachine/);
+      for (const name of ['Create', 'Start', 'Stop', 'Destroy']) {
+        expect(JSON.stringify(workflows[0]?.Resource)).toMatch(new RegExp(`Workflows${name}StateMachine`));
+      }
       expect(statements).toHaveLength(5);
     });
   });

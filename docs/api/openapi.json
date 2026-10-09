@@ -1694,6 +1694,270 @@
           }
         }
       }
+    },
+    "/v1/servers/{id}/destroy": {
+      "post": {
+        "operationId": "destroyServer",
+        "summary": "Destroy a stopped server's instance and data volume",
+        "description": "Owners only. Its backups are kept, and it no longer counts toward the owner's server limit.",
+        "tags": [
+          "user"
+        ],
+        "security": [
+          {
+            "cognito": []
+          }
+        ],
+        "x-hearth-permission": "destroy",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Nothing to do: the server was already there (`unchanged`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ServerOperationResult"
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "The workflow started",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ServerOperationResult"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No ID token, or an invalid or expired one: sign in again",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The caller may not do this",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such server (or none the caller can reach)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Not stopped: stop it first",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/servers/{id}/start": {
+      "post": {
+        "operationId": "startServer",
+        "summary": "Start a server",
+        "description": "Owners and members. Players can join once it is RUNNING, at its `address`.",
+        "tags": [
+          "user"
+        ],
+        "security": [
+          {
+            "cognito": []
+          }
+        ],
+        "x-hearth-permission": "start",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Nothing to do: the server was already there (`unchanged`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ServerOperationResult"
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "The workflow started",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ServerOperationResult"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No ID token, or an invalid or expired one: sign in again",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The caller may not do this",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such server (or none the caller can reach)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "It's in a state that can't be started",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/servers/{id}/stop": {
+      "post": {
+        "operationId": "stopServer",
+        "summary": "Stop a server (saving and backing it up)",
+        "description": "Owners and members.",
+        "tags": [
+          "user"
+        ],
+        "security": [
+          {
+            "cognito": []
+          }
+        ],
+        "x-hearth-permission": "stop",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Nothing to do: the server was already there (`unchanged`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ServerOperationResult"
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "The workflow started",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ServerOperationResult"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No ID token, or an invalid or expired one: sign in again",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The caller may not do this",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such server (or none the caller can reach)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "It's in a state that can't be stopped",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
