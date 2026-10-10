@@ -72,6 +72,11 @@ pnpm --filter @hearth/web dev     # http://localhost:5173
 pnpm --filter @hearth/web build   # apps/web/dist
 ```
 
+Each environment serves it from its Frontend stack: a private S3 bucket behind CloudFront, on
+CloudFront's own address until Hearth has a domain (SSM `/hearth/<env>/web-url`). The build is part
+of the cloud assembly (`pnpm synth` builds it first), so a promoted release carries the same site.
+`cdk diff` or `cdk synth` run directly need `apps/web/dist` to exist: build it first.
+
 ### The API's contract
 
 Every route and every request and response body is defined once, in `packages/shared/src/api`:

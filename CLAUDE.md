@@ -284,10 +284,18 @@ backups"), and leads with "pay only when you play"; refine it in the real UI. Or
 assets only (no Steve or Mojang art); footer says not affiliated with Mojang or Microsoft. Fun
 start/stop animations may suit the server detail page, not the landing page.
 **M10 PR1, split in three (agreed 2026-10-09; the owner let Claude merge to deploy dev overnight):**
-1a, in review: `apps/web` (Vite 8 + React 19 + TypeScript; `pnpm-workspace` gains `apps/*`, the
+1a, merged: `apps/web` (Vite 8 + React 19 + TypeScript; `pnpm-workspace` gains `apps/*`, the
 root Vitest projects too; tokens in `src/styles/tokens.css`; fonts self-hosted with `@fontsource`;
-a first page; tests render with `react-dom/server`, no DOM library; CI's checks job builds it); 1b FrontendStack (S3 + CloudFront, the build deployed by the pipeline, a
-runtime `config.json` with the API URL and Cognito settings, the web client's callback URLs); 1c
+a first page; tests render with `react-dom/server`, no DOM library; CI's checks job builds it); 1b, in review: FrontendStack: bucket `hearth-<env>-web-<account>-<region>` (private, OAC),
+CloudFront (HTTPS, HTTP/2+3, PriceClass 100; 403/404 → `/index.html` for the app's own routes),
+a strict CSP (own files, `connect-src` the API; fonts self-hosted, no `unsafe-*`), HSTS and the usual
+headers. Two BucketDeployments: `assets/` (content-hashed) cached a year, immutable, never pruned;
+everything else plus `config.json` (`{ env, apiUrl }`, read at runtime) `no-cache`, then a `/*`
+invalidation. `/hearth/<env>/web-url`. The site is a CDK asset, so the release's cloud assembly
+carries it: `pnpm synth` builds the web app first, CI's diff job too; tests use
+`infra/test/fixtures/web` (the `webDist` context). cdk-nag: CloudFront's CFR1–4 and the
+BucketDeployment helper's grants acknowledged with reasons. Cognito callback URLs for the site
+come with 1c; 1c
 sign-in (PKCE with the web client, session and refresh, `/v1/me`, a "waiting for approval" screen).
 Then the landing page port (React Three Fiber, its own lazily loaded bundle) as its own PR, then
 PR2 onward as planned.

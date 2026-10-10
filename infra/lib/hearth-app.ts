@@ -1,3 +1,4 @@
+import { fileURLToPath } from 'node:url';
 import { Validations, type App } from 'aws-cdk-lib';
 import { AwsSolutionsChecks } from 'cdk-nag';
 import type { EnvConfig } from './config.js';
@@ -49,7 +50,16 @@ export function addEnvironment(app: App, config: EnvConfig): void {
     stateChanges: orchestration.stateChanges,
   });
   new IntegrationsStack(app, { config });
-  new FrontendStack(app, { config });
+  new FrontendStack(app, { config, siteDir: webAppBuild(app), apiUrl: api.api.apiEndpoint });
+}
+
+/**
+ * Where the built web app is: `apps/web/dist` (`pnpm --filter @hearth/web build`; `pnpm synth`
+ * builds it first), or the `webDist` context value (tests point it at a small fixture).
+ */
+function webAppBuild(app: App): string {
+  const fromContext: unknown = app.node.tryGetContext('webDist');
+  return typeof fromContext === 'string' ? fromContext : fileURLToPath(new URL('../../apps/web/dist', import.meta.url));
 }
 
 /** cdk-nag AWS Solutions rules; violations fail synth. */
