@@ -313,6 +313,18 @@ distance squared; hemisphere and directional ×π against the prototype's r128),
 `setRGB` need `SRGBColorSpace`. No WebGL or reduced motion: no scene, or a still one. Checked in
 headless Chromium (Playwright in Docker, SwiftShader WebGL) at desktop and phone widths: renders, no
 console errors. Then 1c (sign-in) and PR2 onward as planned.
+Landing fidelity (owner: "in the game", night kept), all pure data tested without a browser:
+`surfaces.ts` draws only faces touching air with Minecraft-style baked light (sources' levels spread
+through air, −1 per block; smooth light and ambient occlusion per corner; fixed face shades; a cool
+moonlight floor so nothing is black; warm torchlight), the island blending from moonlit to lit as
+the torches light; `textures.ts` paints 16×16 pixel textures in code into one 256×256 atlas (edge
+margins against mipmap bleed; nearest filtering up close), blocks have kinds with top/side/bottom
+textures; `models.ts` makes crossed-plane plants (see-through, alpha-tested) and textured boxes;
+two players (original skins `ember` and `moss`), torches as stick + glowing head, chimney smoke,
+clouds, a framed window. A glow pass (UnrealBloom) on what burns: emissive colours kept near white
+(about 7× white in linear streaked the sky). The sky is `scene.background`, as the glow pass's
+target only colour-manages that. Previews for the owner: the real build with `--base ./`, published
+as an artifact (`preview.html` + `assets/`; https://claude.ai/artifact/5xzyE1v7T9pexw6S3cv1m6).
 
 **M7 plan** (create a server from a user's upload in one step; the UI will do the same):
 - PR1, merged: uploads bucket (DataStack) and `POST /admin/uploads { game }`, returning a
