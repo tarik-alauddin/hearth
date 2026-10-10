@@ -21,8 +21,8 @@ export interface EnvConfig {
   /** Run the fleet check every 15 minutes. Elsewhere it only runs when invoked by hand. */
   readonly fleetCheckScheduled: boolean;
   /**
-   * Origins the web app signs in from (callback `<origin>/auth/callback`, sign-out back to the
-   * origin). Empty = no web sign-in client yet. The deployed site's origin joins these in M10.
+   * Origins the web app signs in from besides its own site (callback `<origin>/auth/callback`,
+   * sign-out back to the origin); the API allows them too (CORS). Dev: Vite's local server.
    */
   readonly webOrigins: readonly string[];
   /**

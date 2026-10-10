@@ -6,9 +6,12 @@ import { addChecks } from '../lib/hearth-app.js';
 import { AuthStack } from '../lib/stacks/auth.js';
 import { testApp } from './test-app.js';
 
+/** The site's address (FrontendStack gives a CloudFront one). */
+const SITE = 'https://d111111abcdef8.cloudfront.net';
+
 function synth(env: EnvName) {
   const app = testApp();
-  const stack = new AuthStack(app, { config: envConfig(env) });
+  const stack = new AuthStack(app, { config: envConfig(env), siteOrigin: SITE });
   addChecks(app);
   app.synth();
   return { stack, template: Template.fromStack(stack) };
@@ -86,14 +89,20 @@ describe('AuthStack', () => {
       });
     });
 
-    it('signs the web app in from Vite on dev; stage and prod have no web client yet', () => {
+    it('signs the web app in from its own site everywhere, and from Vite on dev too', () => {
       dev.template.hasResourceProperties('AWS::Cognito::UserPoolClient', {
         ClientName: 'hearth-dev-web',
-        CallbackURLs: ['http://localhost:5173/auth/callback'],
-        LogoutURLs: ['http://localhost:5173'],
+        GenerateSecret: false,
+        AllowedOAuthFlows: ['code'],
+        CallbackURLs: [`${SITE}/auth/callback`, 'http://localhost:5173/auth/callback'],
+        LogoutURLs: [SITE, 'http://localhost:5173'],
         ExplicitAuthFlows: ['ALLOW_REFRESH_TOKEN_AUTH'],
       });
-      prod.template.resourceCountIs('AWS::Cognito::UserPoolClient', 1);
+      prod.template.hasResourceProperties('AWS::Cognito::UserPoolClient', {
+        ClientName: 'hearth-prod-web',
+        CallbackURLs: [`${SITE}/auth/callback`],
+        LogoutURLs: [SITE],
+      });
     });
 
     it('offers Google and Discord where they are on (dev), and only password sign-in elsewhere', () => {
@@ -107,7 +116,7 @@ describe('AuthStack', () => {
 
     it('gives every client a managed login style', () => {
       dev.template.resourceCountIs('AWS::Cognito::ManagedLoginBranding', 2);
-      prod.template.resourceCountIs('AWS::Cognito::ManagedLoginBranding', 1);
+      prod.template.resourceCountIs('AWS::Cognito::ManagedLoginBranding', 2);
       dev.template.allResourcesProperties('AWS::Cognito::ManagedLoginBranding', { UseCognitoProvidedValues: true });
     });
   });

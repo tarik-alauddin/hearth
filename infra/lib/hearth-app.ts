@@ -10,6 +10,7 @@ import { GameInfraStack } from './stacks/game-infra.js';
 import { IntegrationsStack } from './stacks/integrations.js';
 import { MonitoringStack } from './stacks/monitoring.js';
 import { OrchestrationStack } from './stacks/orchestration.js';
+import { WebContentStack } from './stacks/web-content.js';
 
 /** Adds every stack for one environment. */
 export function addEnvironment(app: App, config: EnvConfig): void {
@@ -17,7 +18,9 @@ export function addEnvironment(app: App, config: EnvConfig): void {
   // Game regions other than the home region will need cross-region references for the instance roles.
   const gameInfra = config.gameRegions.map((region) => new GameInfraStack(app, { config, region }));
   const orchestration = new OrchestrationStack(app, { config, serversTable: data.serversTable, gameInfra });
-  const auth = new AuthStack(app, { config });
+  // The site's bucket and CloudFront first: sign-in needs its address for the callback, the API for CORS.
+  const frontend = new FrontendStack(app, { config });
+  const auth = new AuthStack(app, { config, siteOrigin: frontend.siteUrl });
   const api = new ApiStack(app, {
     config,
     serversTable: data.serversTable,
@@ -26,6 +29,7 @@ export function addEnvironment(app: App, config: EnvConfig): void {
     invitesTable: data.invitesTable,
     userPool: auth.userPool,
     userPoolClients: auth.clients,
+    webOrigins: [frontend.siteUrl, ...config.webOrigins],
     instanceRoles: gameInfra.map((stack) => stack.instanceRole),
     workflows: {
       create: orchestration.workflows.createServer,
@@ -50,7 +54,17 @@ export function addEnvironment(app: App, config: EnvConfig): void {
     stateChanges: orchestration.stateChanges,
   });
   new IntegrationsStack(app, { config });
-  new FrontendStack(app, { config, siteDir: webAppBuild(app), apiUrl: api.api.apiEndpoint });
+  // Last: the web app's files and the config naming the API and its sign-in client.
+  new WebContentStack(app, {
+    config,
+    siteDir: webAppBuild(app),
+    distribution: frontend.distribution,
+    webConfig: {
+      env: config.env,
+      apiUrl: api.api.apiEndpoint,
+      auth: { region: config.homeRegion, domain: auth.domainUrl, clientId: auth.webClient.userPoolClientId },
+    },
+  });
 }
 
 /**
