@@ -26,6 +26,8 @@ jobs:
       - name: Release pruning test
         run: bash scripts/test/prune-agent-releases-test.sh
       - run: pnpm typecheck
+      - name: Build the web app
+        run: pnpm --filter @hearth/web build
       # Unit tests and CDK assertions; cdk-nag runs inside every synth.
       - run: pnpm test
       - name: Test summary

@@ -6,6 +6,7 @@ Game server hosting on AWS: servers stay off unless someone is playing. Architec
 ## Layout
 
 ```
+apps/web/         the web app (React + Vite + TypeScript), static, on S3 + CloudFront
 infra/            CDK app (TypeScript): one set of stacks per environment
   bin/hearth.ts   environment stacks; synthesizes dev, stage and prod (-c env=dev for one)
 services/         Lambda code (from M2)
@@ -59,6 +60,17 @@ pnpm hearth admin list | add <userId> | remove <userId>     # the Cognito admin 
 `/v1` as you; signed in as an admin, `list` shows every server and `status` the whole record.
 
 To check a server end to end and join it, follow [docs/testing/game-server.md](docs/testing/game-server.md).
+
+### The web app
+
+`apps/web`: React + Vite + TypeScript, built to static files. Its design tokens (colour, type,
+spacing) live in `apps/web/src/styles/tokens.css`; fonts are self-hosted (`@fontsource`), so the
+site loads nothing from other hosts.
+
+```sh
+pnpm --filter @hearth/web dev     # http://localhost:5173
+pnpm --filter @hearth/web build   # apps/web/dist
+```
 
 ### The API's contract
 

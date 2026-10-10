@@ -7,7 +7,7 @@ const ci = !!process.env.GITHUB_ACTIONS;
 
 export default defineConfig({
   test: {
-    projects: ['cli', 'infra', 'packages/*', 'services/*', '!**/*.md'],
+    projects: ['apps/*', 'cli', 'infra', 'packages/*', 'services/*', '!**/*.md'],
     includeTaskLocation: true,
     reporters: ci
       ? ['default', ['github-actions', { jobSummary: { enabled: false } }], ['json', { outputFile: 'test-results.json' }]]

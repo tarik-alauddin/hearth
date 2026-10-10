@@ -283,9 +283,10 @@ get, never how the platform works (no backup counts, idle minutes or provider li
 backups"), and leads with "pay only when you play"; refine it in the real UI. Original
 assets only (no Steve or Mojang art); footer says not affiliated with Mojang or Microsoft. Fun
 start/stop animations may suit the server detail page, not the landing page.
-**M10 next (proposed, agree before starting):** PR1 split in three: 1a `apps/web` skeleton (Vite +
-React + TypeScript in the workspace; design tokens from the prototype; lint, typecheck, tests in
-`pnpm` scripts and CI); 1b FrontendStack (S3 + CloudFront, the build deployed by the pipeline, a
+**M10 PR1, split in three (agreed 2026-10-09; the owner let Claude merge to deploy dev overnight):**
+1a, in review: `apps/web` (Vite 8 + React 19 + TypeScript; `pnpm-workspace` gains `apps/*`, the
+root Vitest projects too; tokens in `src/styles/tokens.css`; fonts self-hosted with `@fontsource`;
+a first page; tests render with `react-dom/server`, no DOM library; CI's checks job builds it); 1b FrontendStack (S3 + CloudFront, the build deployed by the pipeline, a
 runtime `config.json` with the API URL and Cognito settings, the web client's callback URLs); 1c
 sign-in (PKCE with the web client, session and refresh, `/v1/me`, a "waiting for approval" screen).
 Then the landing page port (React Three Fiber, its own lazily loaded bundle) as its own PR, then
