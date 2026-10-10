@@ -87,6 +87,9 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/setup
+      # The Frontend stack deploys the built web app, so the diff needs it.
+      - name: Build the web app
+        run: pnpm --filter @hearth/web build
       - uses: aws-actions/configure-aws-credentials@v6
         with:
           role-to-assume: arn:aws:iam::${{ env.AWS_ACCOUNT }}:role/github-deploy

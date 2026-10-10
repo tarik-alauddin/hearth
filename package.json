@@ -10,7 +10,7 @@
     "typecheck": "pnpm -r typecheck",
     "lint": "eslint .",
     "test": "vitest run",
-    "synth": "pnpm --filter @hearth/infra synth",
+    "synth": "pnpm --filter @hearth/web build && pnpm --filter @hearth/infra synth",
     "hearth": "tsx cli/src/main.ts",
     "api:spec": "tsx scripts/api-spec.ts",
     "api:docs": "tsx scripts/api-spec.ts && node scripts/api-docs.mjs"
