@@ -30,9 +30,14 @@ export const ADMIN_GROUP = 'admin';
 /** Discord's provider name in the pool: what `identity_provider=` takes and tokens' identities show. */
 export const DISCORD_PROVIDER = 'Discord';
 
+export interface AuthStackProps extends HearthStackProps {
+  /** The web app's own address (FrontendStack), where sign-in returns to. */
+  readonly siteOrigin: string;
+}
+
 /**
  * Who you are: the Cognito user pool, its managed login pages and the clients that sign in through
- * them (the CLI everywhere; the web app where `webOrigins` lists one). Users sign in with Google
+ * them (the CLI, and the web app: its own site plus any `webOrigins`). Users sign in with Google
  * and Discord, per env's `signInProviders`; the only password users are the ones the owner
  * creates, so there is no self sign-up. Clients find the pool through one SSM parameter,
  * `/hearth/<env>/auth`.
@@ -40,8 +45,11 @@ export const DISCORD_PROVIDER = 'Discord';
 export class AuthStack extends HearthStack {
   readonly userPool: UserPool;
   readonly clients: readonly UserPoolClient[];
+  /** The web app's client, and the managed login pages' address (the web app's config carries both). */
+  readonly webClient: UserPoolClient;
+  readonly domainUrl: string;
 
-  constructor(scope: Construct, props: HearthStackProps) {
+  constructor(scope: Construct, props: AuthStackProps) {
     const { isProd, env, account, webOrigins, signInProviders } = props.config;
     super(scope, 'Auth', { ...props, terminationProtection: isProd });
 
@@ -185,15 +193,17 @@ export class AuthStack extends HearthStack {
     };
 
     const cli = client('Cli', [CLI_CALLBACK_URL], [CLI_CALLBACK_URL], 30);
-    const web = webOrigins.length
-      ? client(
-          'Web',
-          webOrigins.map((origin) => `${origin}/auth/callback`),
-          [...webOrigins],
-          7,
-        )
-      : undefined;
-    this.clients = web ? [cli, web] : [cli];
+    // The site first; then any others (dev: Vite's local server).
+    const origins = [props.siteOrigin, ...webOrigins];
+    const web = client(
+      'Web',
+      origins.map((origin) => `${origin}/auth/callback`),
+      origins,
+      7,
+    );
+    this.clients = [cli, web];
+    this.webClient = web;
+    this.domainUrl = domain.baseUrl();
 
     new StringParameter(this, 'AuthConfig', {
       parameterName: `/hearth/${env}/auth`,
@@ -204,7 +214,7 @@ export class AuthStack extends HearthStack {
         issuer: `https://cognito-idp.${this.region}.amazonaws.com/${this.userPool.userPoolId}`,
         domain: domain.baseUrl(),
         cliClientId: cli.userPoolClientId,
-        ...(web ? { webClientId: web.userPoolClientId } : {}),
+        webClientId: web.userPoolClientId,
       }),
     });
   }

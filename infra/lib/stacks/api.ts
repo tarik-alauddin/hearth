@@ -1,7 +1,7 @@
 import { Duration, RemovalPolicy, Size, Validations } from 'aws-cdk-lib';
 import { Rule } from 'aws-cdk-lib/aws-events';
 import { LambdaFunction } from 'aws-cdk-lib/aws-events-targets';
-import { HttpApi, HttpMethod, HttpStage, LogGroupLogDestination } from 'aws-cdk-lib/aws-apigatewayv2';
+import { CorsHttpMethod, HttpApi, HttpMethod, HttpStage, LogGroupLogDestination } from 'aws-cdk-lib/aws-apigatewayv2';
 import { HttpIamAuthorizer, HttpUserPoolAuthorizer } from 'aws-cdk-lib/aws-apigatewayv2-authorizers';
 import type { IUserPool, IUserPoolClient } from 'aws-cdk-lib/aws-cognito';
 import { HttpLambdaIntegration } from 'aws-cdk-lib/aws-apigatewayv2-integrations';
@@ -36,6 +36,8 @@ export interface ApiStackProps extends HearthStackProps {
   /** AuthStack's user pool and clients: /v1 routes take ID tokens they issue. */
   readonly userPool: IUserPool;
   readonly userPoolClients: readonly IUserPoolClient[];
+  /** Where the web app runs (its site, plus any `webOrigins`): browsers there may call the API. */
+  readonly webOrigins: readonly string[];
   /** Game instance roles, one per game region; they may call the agent routes. */
   readonly instanceRoles: readonly IRole[];
   /** The lifecycle workflows the server operations start. */
@@ -63,7 +65,18 @@ export class ApiStack extends HearthStack {
     const rejected = `${uploadsArn}/rejected/*`;
     const removalPolicy = isProd ? RemovalPolicy.RETAIN : RemovalPolicy.DESTROY;
 
-    this.api = new HttpApi(this, 'Api', { apiName: `hearth-${env}`, createDefaultStage: false });
+    this.api = new HttpApi(this, 'Api', {
+      apiName: `hearth-${env}`,
+      createDefaultStage: false,
+      // The web app calls /v1 from its own site with an ID token, so browsers ask first (CORS).
+      // API Gateway answers those preflights itself, before any authorizer.
+      corsPreflight: {
+        allowOrigins: [...props.webOrigins],
+        allowHeaders: ['authorization', 'content-type'],
+        allowMethods: [CorsHttpMethod.GET, CorsHttpMethod.POST, CorsHttpMethod.PATCH, CorsHttpMethod.DELETE],
+        maxAge: Duration.hours(1),
+      },
+    });
     new HttpStage(this, 'DefaultStage', {
       httpApi: this.api,
       stageName: '$default',

@@ -301,9 +301,18 @@ everything else plus `config.json` (`{ env, apiUrl }`, read at runtime) `no-cach
 invalidation. `/hearth/<env>/web-url`. The site is a CDK asset, so the release's cloud assembly
 carries it: `pnpm synth` builds the web app first, CI's diff job too; tests use
 `infra/test/fixtures/web` (the `webDist` context). cdk-nag: CloudFront's CFR1–4 and the
-BucketDeployment helper's grants acknowledged with reasons. Cognito callback URLs for the site
-come with 1c; 1c
-sign-in (PKCE with the web client, session and refresh, `/v1/me`, a "waiting for approval" screen).
+BucketDeployment helper's grants acknowledged with reasons. 1c split in two:
+1c-1, in review (infra): a cycle broke the old order (Auth → API → Frontend, Frontend needing the
+API's URL), so FrontendStack is now bucket + CloudFront + headers only, with no dependencies, and
+first; its CSP names the API and Cognito by pattern (`https://*.execute-api.<region>.amazonaws.com`,
+`https://*.auth.<region>.amazoncognito.com`). AuthStack takes `siteOrigin`: the web client exists
+in every env, callback `<site>/auth/callback` and sign-out `<site>` (plus `webOrigins`; dev: Vite).
+ApiStack gets CORS for the site and `webOrigins` (authorization, content-type; GET, POST, PATCH,
+DELETE; preflights answered by API Gateway). New `WebContentStack`, last: the two
+BucketDeployments (site bucket by its fixed name) and `config.json` `{ env, apiUrl, auth: { region,
+domain, clientId } }`. The CloudFront address is unchanged.
+1c-2 (web): sign-in in the browser (PKCE with the web client, session and refresh, `/v1/me`, a
+"waiting for approval" screen), a small router, a local `config.json` for `pnpm dev`.
 Landing page, merged (live on dev): `apps/web/src/landing/` ports the prototype. `world.ts` is the scene as
 plain data (`buildWorld()`, deterministic; tested without a browser, the Tower of Pimps included);
 `hearthScene.ts` draws it with three.js directly (no React Three Fiber: one ambient scene doesn't
