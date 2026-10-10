@@ -286,7 +286,7 @@ start/stop animations may suit the server detail page, not the landing page.
 **M10 PR1, split in three (agreed 2026-10-09; the owner let Claude merge to deploy dev overnight):**
 1a, merged: `apps/web` (Vite 8 + React 19 + TypeScript; `pnpm-workspace` gains `apps/*`, the
 root Vitest projects too; tokens in `src/styles/tokens.css`; fonts self-hosted with `@fontsource`;
-a first page; tests render with `react-dom/server`, no DOM library; CI's checks job builds it); 1b, in review: FrontendStack: bucket `hearth-<env>-web-<account>-<region>` (private, OAC),
+a first page; tests render with `react-dom/server`, no DOM library; CI's checks job builds it); 1b, merged: FrontendStack: bucket `hearth-<env>-web-<account>-<region>` (private, OAC),
 CloudFront (HTTPS, HTTP/2+3, PriceClass 100; 403/404 → `/index.html` for the app's own routes),
 a strict CSP (own files, `connect-src` the API; fonts self-hosted, no `unsafe-*`), HSTS and the usual
 headers. Two BucketDeployments: `assets/` (content-hashed) cached a year, immutable, never pruned;
@@ -297,8 +297,15 @@ carries it: `pnpm synth` builds the web app first, CI's diff job too; tests use
 BucketDeployment helper's grants acknowledged with reasons. Cognito callback URLs for the site
 come with 1c; 1c
 sign-in (PKCE with the web client, session and refresh, `/v1/me`, a "waiting for approval" screen).
-Then the landing page port (React Three Fiber, its own lazily loaded bundle) as its own PR, then
-PR2 onward as planned.
+Landing page, in review: `apps/web/src/landing/` ports the prototype. `world.ts` is the scene as
+plain data (`buildWorld()`, deterministic; tested without a browser, the Tower of Pimps included);
+`hearthScene.ts` draws it with three.js directly (no React Three Fiber: one ambient scene doesn't
+need it), lazily loaded (`React.lazy`), so the text paints first: main bundle about 70 kB gzipped,
+the scene about 135 kB more. three.js 0.186 uses physical light units (point lights fall off with
+distance squared; hemisphere and directional ×π against the prototype's r128), and colours set by
+`setRGB` need `SRGBColorSpace`. No WebGL or reduced motion: no scene, or a still one. Checked in
+headless Chromium (Playwright in Docker, SwiftShader WebGL) at desktop and phone widths: renders, no
+console errors. Then 1c (sign-in) and PR2 onward as planned.
 
 **M7 plan** (create a server from a user's upload in one step; the UI will do the same):
 - PR1, merged: uploads bucket (DataStack) and `POST /admin/uploads { game }`, returning a

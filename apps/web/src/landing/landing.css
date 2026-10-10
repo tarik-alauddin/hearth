@@ -1,0 +1,58 @@
+/* The landing page: the playful front door. Tokens from styles/tokens.css. */
+
+/* Hero: the scene fills it; the copy sits on its left. */
+.hero { position: relative; isolation: isolate; border-bottom: 1px solid var(--line); }
+.scene { position: absolute; inset: 0; z-index: -1; background: var(--night); }
+.scene-canvas, .scene-canvas canvas { display: block; width: 100%; height: 100%; }
+.scene::after { /* keeps the copy readable over the scene */
+  content: ""; position: absolute; inset: 0; pointer-events: none;
+  background: linear-gradient(90deg, var(--night) 0%, rgb(13 16 24 / 0.82) 30%, rgb(13 16 24 / 0) 58%),
+              linear-gradient(0deg, var(--night) 0%, rgb(13 16 24 / 0) 22%);
+}
+.hero-inner { display: grid; align-content: center; min-height: clamp(520px, 72vh, 680px); padding-block: 40px; }
+.hero-copy { display: grid; gap: 18px; max-width: 34rem; }
+.hero-copy h1 { font: 700 var(--step-3) / 1.04 var(--font-display); margin: 0; }
+.hero-copy h1 em, .promise h2 em { font-style: normal; color: var(--glow); }
+.hero-copy h1 em { text-shadow: 0 0 22px rgb(255 138 61 / 0.5); }
+.hero-copy p { margin: 0; color: var(--ash); max-width: 30rem; font-size: var(--step-1); line-height: 1.5; }
+.actions { display: flex; flex-wrap: wrap; gap: 12px; }
+.note { font-size: var(--step--1) !important; min-height: 1.4em; }
+.caption { margin: 0; padding-block: 0 14px; font-size: var(--step--1); color: var(--ash); }
+.caption b { color: var(--bone); font-weight: 600; }
+
+/* Below the hero */
+.band { padding-block: 64px; border-bottom: 1px solid var(--line); }
+.band h2 { font: 700 var(--step-2) / 1.15 var(--font-display); margin: 0 0 28px; }
+.promise {
+  display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); gap: 32px; align-items: center;
+  padding: 32px; border: 1px solid rgb(255 138 61 / 0.45); border-radius: var(--radius-lg);
+  background: radial-gradient(120% 140% at 0% 0%, rgb(255 138 61 / 0.14), rgb(255 138 61 / 0) 60%), var(--night-2);
+}
+.promise h2 { margin: 0 0 12px; font-size: var(--step-3); line-height: 1.05; }
+.promise p { margin: 0; color: var(--ash); font-size: var(--step-1); line-height: 1.5; }
+.week { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 6px; align-items: end; }
+.week > div { display: grid; gap: 6px; justify-items: center; height: 144px; align-content: end; } /* the tallest bar (120px) and its day */
+.week span { width: 100%; border-radius: 3px; background: var(--line); }
+.week span.on { background: var(--ember); box-shadow: 0 0 12px rgb(255 138 61 / 0.45); }
+.week small { font-size: 0.75rem; color: var(--ash); }
+.week-legend { grid-column: 1 / -1; margin: 6px 0 0 !important; font-size: var(--step--1) !important; }
+.week-legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; background: var(--ember); margin-right: 6px; vertical-align: -0.05em; }
+
+.steps { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 20px; counter-reset: step; }
+.steps li { counter-increment: step; display: grid; gap: 8px; align-content: start; padding-top: 16px; border-top: 2px solid var(--line); }
+.steps li::before { content: counter(step); font: 700 var(--step-1) / 1 var(--font-display); color: var(--ember); }
+.steps h3, .feats h3 { margin: 0; font: 600 var(--step-1) / 1.3 var(--font-display); }
+.steps p, .feats p { margin: 0; color: var(--ash); }
+.feats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 28px 36px; }
+.feats > div { display: grid; gap: 6px; align-content: start; }
+.feats h3::before { content: ""; display: inline-block; width: 10px; height: 10px; margin-right: 10px; background: var(--ember); vertical-align: 0.05em; }
+.site-footer { padding-block: 28px 40px; font-size: var(--step--1); color: var(--ash); }
+.site-footer p { margin: 0; }
+
+@media (max-width: 760px) {
+  .scene { position: relative; inset: auto; height: 320px; z-index: 0; }
+  .scene::after { background: linear-gradient(0deg, var(--night) 0%, rgb(13 16 24 / 0) 35%); }
+  .hero-inner { min-height: 0; padding-block: 8px 28px; }
+  .promise { grid-template-columns: minmax(0, 1fr); padding: 22px; }
+  .steps, .feats { grid-template-columns: minmax(0, 1fr); }
+}
