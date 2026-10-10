@@ -15,7 +15,6 @@
 .hero-copy h1 em, .promise h2 em { font-style: normal; color: var(--glow); }
 .hero-copy h1 em { text-shadow: 0 0 22px rgb(255 138 61 / 0.5); }
 .hero-copy p { margin: 0; color: var(--ash); max-width: 30rem; font-size: var(--step-1); line-height: 1.5; }
-.actions { display: flex; flex-wrap: wrap; gap: 12px; }
 .note { font-size: var(--step--1) !important; min-height: 1.4em; }
 .caption { margin: 0; padding-block: 0 14px; font-size: var(--step--1); color: var(--ash); }
 .caption b { color: var(--bone); font-weight: 600; }

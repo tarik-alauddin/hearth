@@ -5,21 +5,8 @@ import type { IDistribution } from 'aws-cdk-lib/aws-cloudfront';
 import { Bucket } from 'aws-cdk-lib/aws-s3';
 import { BucketDeployment, CacheControl, Source } from 'aws-cdk-lib/aws-s3-deployment';
 import type { Construct } from 'constructs';
-import { webBucket } from '@hearth/shared';
+import { webBucket, type WebConfig } from '@hearth/shared';
 import { HearthStack, type HearthStackProps } from '../hearth-stack.js';
-
-/** What the web app reads at start-up (`/config.json`): where the API and sign-in are. */
-export interface WebConfig {
-  env: string;
-  apiUrl: string;
-  auth: {
-    region: string;
-    /** The managed login pages: https://hearth-<env>-<account>.auth.<region>.amazoncognito.com */
-    domain: string;
-    /** The web app's Cognito client (public: PKCE). */
-    clientId: string;
-  };
-}
 
 export interface WebContentStackProps extends HearthStackProps {
   /** The built web app (`apps/web/dist`): `pnpm --filter @hearth/web build` makes it. */

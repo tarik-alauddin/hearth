@@ -2,6 +2,7 @@
 .env*
 agent/bin/
 cdk.out/
+config.local.json
 coverage/
 dist/
 node_modules/
