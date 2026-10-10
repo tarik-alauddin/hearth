@@ -1,0 +1,38 @@
+/* Hearth's design tokens: one source for colour, type and spacing, from the landing prototype
+   (prototypes/landing-hero). Dark-first: these are the only values; a light theme can redefine
+   them later under prefers-color-scheme without touching components. */
+:root {
+  color-scheme: dark;
+
+  /* Colour */
+  --night: #0d1018;   /* the page: a blue-biased near-black */
+  --night-2: #151a26; /* raised surfaces: cards, menus */
+  --line: #262d3d;    /* hairlines and borders */
+  --ash: #9aa3b5;     /* quiet text */
+  --bone: #ece6da;    /* main text, a warm off-white */
+  --ember: #ff8a3d;   /* the accent: "alive", primary actions */
+  --glow: #ffc46b;    /* the ember's hot centre: highlights, focus */
+  --ember-press: #b65316;
+  --on-ember: #1b0f05;
+  /* Status, separate from the accent */
+  --good: #79b35c;
+  --warn: #ffc46b;
+  --bad: #ef6b5b;
+
+  /* Type: pixel type for the wordmark only; headings blocky but legible; body plain. */
+  --font-wordmark: "Pixelify Sans", "Courier New", monospace;
+  --font-display: "Chakra Petch", "Trebuchet MS", system-ui, sans-serif;
+  --font-body: "Figtree", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: ui-monospace, "SFMono-Regular", Consolas, monospace;
+  --step--1: 0.875rem;
+  --step-0: 1rem;
+  --step-1: 1.25rem;
+  --step-2: 1.75rem;
+  --step-3: clamp(2.2rem, 4.6vw, 3.6rem);
+
+  /* Shape and space */
+  --radius: 6px;
+  --radius-lg: 12px;
+  --gutter: 16px;
+  --max-width: 1120px;
+}
