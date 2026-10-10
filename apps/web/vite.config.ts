@@ -11,6 +11,9 @@ export default defineConfig({
     assetsDir: 'assets',
     // three.js, in the landing scene's own lazily loaded chunk, is about 540 kB (135 kB gzipped).
     chunkSizeWarningLimit: 600,
+    // Never inline assets as data: URLs: the site's content policy loads fonts and images from the
+    // site itself only (FrontendStack), and blocks data: fonts.
+    assetsInlineLimit: 0,
   },
   server: { port: 5173, strictPort: true }, // the dev web client's callback origin (infra config)
   test: { environment: 'node' },

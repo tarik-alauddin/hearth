@@ -27,7 +27,12 @@ jobs:
         run: bash scripts/test/prune-agent-releases-test.sh
       - run: pnpm typecheck
       - name: Build the web app
-        run: pnpm --filter @hearth/web build
+        run: |
+          pnpm --filter @hearth/web build
+          # The site's content policy blocks data: fonts and images (FrontendStack): nothing inlined.
+          if grep -l 'url(data:' apps/web/dist/assets/*.css; then
+            echo "::error::The web build inlines data: URLs, which the site's content policy blocks"; exit 1
+          fi
       # Unit tests and CDK assertions; cdk-nag runs inside every synth.
       - run: pnpm test
       - name: Test summary
