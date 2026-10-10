@@ -10,11 +10,28 @@ as part of each PR. The repo layout and commands are in [README.md](README.md).
   - **Architecture** tab: the reference; its Roadmap table tracks milestones.
   - **System map** tab: diagram and components as built; update it as milestones land.
   - **Outdated: original architecture** tab: history only, never edit.
+- **Landing page prototype:** private artifact https://claude.ai/artifact/2zkKS84ofZQoHRYwLHn8PR, source
+  `prototypes/landing-hero/index.html` (artifact-format HTML: no `<html>` wrapper; republish it from
+  that path, or pass the link as `url` from another session). Design direction under M10.
 - **Testing guides:** `docs/testing/`. The owner runs AWS checks from CloudShell or their own terminal.
   Write new guides' commands for **PowerShell** (the owner's shell; Windows PowerShell 5.1 too):
   no `jq` (use `ConvertFrom-Json` / `Invoke-RestMethod`), quote arguments with commas, pass JSON to
   `aws` through a file (5.1 strips its quotes). Multi-step checks get a script (e.g.
   `scripts/sign-in-check.ps1`) rather than copy-paste.
+
+## Switching machines
+
+Everything needed lives in this repo (this file, README, `docs/`) and the two artifact links above;
+nothing is kept only on one computer. On a new machine:
+
+- Clone, then `git fetch` and check out the branch in progress (commit and push before switching).
+- Node 24+ (`.nvmrc`), pnpm via Corepack (`corepack enable`; pinned in `package.json`), then
+  `pnpm install --frozen-lockfile`.
+- Docker: the Linux test run, Go agent checks (`golang:1.27`), shellcheck.
+- AWS CLI credentials for the account (us-west-2): `pnpm synth`, SSM reads for the CLI and scripts.
+  Then `pnpm hearth login` (sessions are per machine, in `~/.hearth/`).
+- `gh` CLI, signed in, to watch CI.
+- Windows only: the Git Bash and `pnpm.cmd` notes below. macOS/Linux need neither.
 
 ## Working agreement
 
@@ -28,13 +45,15 @@ as part of each PR. The repo layout and commands are in [README.md](README.md).
   (`allowBuilds`). After changing dependencies, check `pnpm install --frozen-lockfile` passes, as CI uses it.
 - Before handing over a change, run `pnpm lint`, `pnpm typecheck` and `pnpm test`. Use `pnpm synth` for
   infra changes, and shellcheck (`koalaman/shellcheck:latest` in Docker) for shell scripts.
-- CI runs on Linux; this machine is Windows (paths, `path.basename`, line endings differ). Also run
+- Keep the full routine above and below, even though it costs tokens: the owner chose it over trimming
+  to "CI covers it" (2026-10-09), because CI has stayed green. Filter command output to summary lines.
+- CI runs on Linux; the owner's desktop is Windows (paths, `path.basename`, line endings differ). Also run
   the tests on Linux before handing over: in a `node:24` container, copy the repo without
   `node_modules`, `corepack enable`, `pnpm install --frozen-lockfile`, `pnpm test`. A test passing
   only on Windows failed PR4's CI.
-- Windows + Git Bash: set `MSYS_NO_PATHCONV=1` for AWS CLI calls with `/hearth/...` paths. `.sh` and `.go`
+- **Windows only** (the desktop). Git Bash: set `MSYS_NO_PATHCONV=1` for AWS CLI calls with `/hearth/...` paths. `.sh` and `.go`
   files must stay LF (`.gitattributes`). Prefer the Edit tool over shell or Python rewrites of source files.
-- Local `pnpm synth` on this machine: CDK calls `pnpm.cmd`, but Volta installs `pnpm.exe`; put a
+- Windows only: local `pnpm synth`: CDK calls `pnpm.cmd`, but Volta installs `pnpm.exe`; put a
   `pnpm.cmd` shim (`@pnpm.exe %*`) on PATH for the run. Go isn't installed: run agent checks in the
   `golang:1.27` Docker image.
 - Lambdas bundle as ESM: a function bundling CommonJS packages (e.g. yauzl) needs
@@ -59,9 +78,9 @@ as part of each PR. The repo layout and commands are in [README.md](README.md).
 | M7 Move your world | Done (PR1–PR4; tested on dev with a real world) |
 | Before Phase 2 | Done: M7 docs, neutral wording, destroy (records kept as `DESTROYED`), state-sync tweak, stage and prod live with the release flow (details under Decisions) |
 | **Phase 1** | **Complete** (2026-10-07): dev, stage and prod run `v2026.10.07-3461efe`, agent `2026.10.06-de42566` |
-| M8 Accounts and access | In progress: PR1a–PR1c done (sign-in with password, Google, Discord, tested on dev); PR2–PR4 done (access data, authorization, API contract); PR5 merged (every server action on `/v1`); PR6 merged (invites, members); PR7 merged (the CLI signs in and uses `/v1` only; uploads; admin views); PR8 (remove `/admin`) in review |
-| M9 Game version catalog | Planned (Deferred's plan, V1–V4) |
-| M10 Web UI | Planned |
+| M8 Accounts and access | Done (2026-10-09, tested on dev): sign-in (password, Google, Discord), access data, authorization, API contract, every action on `/v1`, invites and members, the CLI on Cognito and `/v1`, `/admin` removed. Architecture doc updated. Stage and prod: not yet promoted (checklist: `docs/testing/promote-accounts.md`) |
+| M9 Game version catalog | Planned (Deferred's plan, V1–V4); on hold: the owner hasn't decided how it should work |
+| M10 Web UI | Next: design direction set (landing prototype); PR1's split to agree (see M10) |
 
 **Phase 2** (the UI phase): M8 → M9 → M10. Design under Decisions ("Accounts and access").
 
@@ -244,7 +263,7 @@ the CLI signs in the same way; backend only):
     `status` try the admin route and, on 403, show what the caller sees (their servers; the
     `ServerView`). The CLI no longer signs API requests with IAM (SigV4 client and its four
     dependencies removed); AWS credentials now only read SSM, run `fleet-check` and `admin`.
-- PR8, in review: `/admin` removed: its 13 routes, the Admin λ (`services/api/src/admin`) and its
+- PR8, merged: `/admin` removed: its 13 routes, the Admin λ (`services/api/src/admin`) and its
   role, the `admin` route caller and handler, `shapeServer`. IAM now authorizes agent routes only;
   admins are users in the Cognito `admin` group, on `/v1`. Servers created through `/admin` keep
   their IAM ARN as `ownerId` and have no owner row: admins reach them, nobody else.
@@ -255,6 +274,22 @@ sign-in; PR2 servers list and detail (polling, join address, start/stop); PR3 cr
 upgrade, destroy; PR4 upload (CORS on the uploads bucket); PR5 backups and restore; PR6 invites,
 `/join/{code}`, members; PR7 admin page (approve users). No domain yet: Cognito's prefix domain
 and CloudFront's default domain until there is one; callback URLs and origins come from config.
+Design direction (owner, from the prototype in `prototypes/landing-hero/`, branch
+`landing-hero-prototype`): dark-first; a playful landing page (voxel islands around a hearth: a
+Minecraft-style island with a cottage and the Tower of Pimps (1 obsidian, 4 gold), dim islands for
+games to come; no mouse-reactive motion) and tidy app pages; ember accent; pixel type for the
+wordmark only (Pixelify Sans headings were too much: its "e" reads badly). Copy says what people
+get, never how the platform works (no backup counts, idle minutes or provider lists: "frequent
+backups"), and leads with "pay only when you play"; refine it in the real UI. Original
+assets only (no Steve or Mojang art); footer says not affiliated with Mojang or Microsoft. Fun
+start/stop animations may suit the server detail page, not the landing page.
+**M10 next (proposed, agree before starting):** PR1 split in three: 1a `apps/web` skeleton (Vite +
+React + TypeScript in the workspace; design tokens from the prototype; lint, typecheck, tests in
+`pnpm` scripts and CI); 1b FrontendStack (S3 + CloudFront, the build deployed by the pipeline, a
+runtime `config.json` with the API URL and Cognito settings, the web client's callback URLs); 1c
+sign-in (PKCE with the web client, session and refresh, `/v1/me`, a "waiting for approval" screen).
+Then the landing page port (React Three Fiber, its own lazily loaded bundle) as its own PR, then
+PR2 onward as planned.
 
 **M7 plan** (create a server from a user's upload in one step; the UI will do the same):
 - PR1, merged: uploads bucket (DataStack) and `POST /admin/uploads { game }`, returning a

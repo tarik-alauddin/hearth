@@ -1,0 +1,378 @@
+<title>Hearth Landing Hero</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Pixelify+Sans:wght@700&family=Chakra+Petch:wght@600;700&family=Figtree:wght@400;500;600&display=swap">
+<style>
+  /* Layout: a night scene first (islands around a hearth) with the copy over its left side; then the
+     one promise that matters (pay only for what you play), how it works, the rest, the fine print. */
+  :root {
+    color-scheme: dark;
+    --night: #0d1018;        /* the sky: a blue-biased near-black */
+    --night-2: #151a26;      /* raised surfaces */
+    --line: #262d3d;         /* hairlines on night */
+    --ash: #9aa3b5;          /* quiet text */
+    --bone: #ece6da;         /* main text, a warm off-white */
+    --ember: #ff8a3d;        /* the accent: fire, "alive", primary actions */
+    --glow: #ffc46b;         /* the ember's hot centre */
+    --wordmark: "Pixelify Sans", "Courier New", monospace;          /* the logo only */
+    --display: "Chakra Petch", "Trebuchet MS", system-ui, sans-serif; /* blocky but legible */
+    --body: "Figtree", system-ui, -apple-system, "Segoe UI", sans-serif;
+    --step--1: 0.875rem;
+    --step-0: 1rem;
+    --step-1: 1.25rem;
+    --step-2: 1.75rem;
+    --step-3: clamp(2.2rem, 4.6vw, 3.6rem);
+  }
+  html { background: var(--night); }
+  body { background: var(--night); color: var(--bone); font: 400 var(--step-0)/1.6 var(--body); }
+  button { font: inherit; }
+  :focus-visible { outline: 2px solid var(--glow); outline-offset: 3px; border-radius: 6px; }
+
+  .wrap { max-width: 1120px; margin-inline: auto; padding-inline: 16px; }
+
+  /* Hero: the scene fills it; the copy sits on its left. */
+  .hero { position: relative; isolation: isolate; border-bottom: 1px solid var(--line); }
+  .scene { position: absolute; inset: 0; z-index: -1; }
+  .scene canvas { display: block; width: 100%; height: 100%; }
+  .scene::after { /* keeps the copy readable over the scene */
+    content: ""; position: absolute; inset: 0; pointer-events: none;
+    background: linear-gradient(90deg, var(--night) 0%, rgb(13 16 24 / 0.82) 30%, rgb(13 16 24 / 0) 58%),
+                linear-gradient(0deg, var(--night) 0%, rgb(13 16 24 / 0) 22%);
+  }
+  .hero-inner { display: grid; align-content: center; min-height: clamp(520px, 72vh, 680px); padding-block: 40px; }
+  .brand { display: flex; align-items: center; gap: 10px; font: 700 var(--step-1)/1 var(--wordmark); letter-spacing: 0.02em; }
+  .brand-mark { width: 14px; height: 14px; background: var(--ember); box-shadow: 0 0 14px var(--ember); }
+  .copy { display: grid; gap: 18px; max-width: 34rem; }
+  .copy h1 { font: 700 var(--step-3)/1.04 var(--display); margin: 0; text-wrap: balance; }
+  .copy h1 em { font-style: normal; color: var(--glow); text-shadow: 0 0 22px rgb(255 138 61 / 0.5); }
+  .copy p { margin: 0; color: var(--ash); max-width: 30rem; font-size: var(--step-1); line-height: 1.5; }
+  .actions { display: flex; flex-wrap: wrap; gap: 12px; }
+  .btn {
+    display: inline-flex; align-items: center; padding: 11px 20px; border-radius: 6px; cursor: pointer;
+    border: 1px solid var(--line); background: var(--night-2); color: var(--bone); font-weight: 600;
+  }
+  .btn:hover { border-color: var(--ash); }
+  .btn-primary { background: var(--ember); border-color: var(--ember); color: #1b0f05; box-shadow: 0 4px 0 #b65316; }
+  .btn-primary:hover { background: #ff9a55; border-color: #ff9a55; }
+  .btn-primary:active { transform: translateY(2px); box-shadow: 0 2px 0 #b65316; }
+  .note { font-size: var(--step--1); color: var(--ash); min-height: 1.4em; margin: 0; }
+  .caption { margin: 0; padding-block: 0 14px; font-size: var(--step--1); color: var(--ash); }
+  .caption b { color: var(--bone); font-weight: 600; }
+
+  /* Below the hero */
+  section.band { padding-block: 64px; border-bottom: 1px solid var(--line); }
+  .band h2 { font: 700 var(--step-2)/1.15 var(--display); margin: 0 0 28px; text-wrap: balance; }
+  .promise {
+    display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); gap: 32px; align-items: center;
+    padding: 32px; border: 1px solid rgb(255 138 61 / 0.45); border-radius: 12px;
+    background: radial-gradient(120% 140% at 0% 0%, rgb(255 138 61 / 0.14), rgb(255 138 61 / 0) 60%), var(--night-2);
+  }
+  .promise h2 { margin: 0 0 12px; font-size: var(--step-3); line-height: 1.05; }
+  .promise h2 em { font-style: normal; color: var(--glow); }
+  .promise p { margin: 0; color: var(--ash); font-size: var(--step-1); line-height: 1.5; }
+  .week { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 6px; align-items: end; height: 150px; }
+  .week div { display: grid; gap: 6px; justify-items: center; height: 100%; align-content: end; }
+  .week span { width: 100%; border-radius: 3px; background: var(--line); }
+  .week span.on { background: var(--ember); box-shadow: 0 0 12px rgb(255 138 61 / 0.45); }
+  .week small { font-size: 0.75rem; color: var(--ash); }
+  .week-legend { grid-column: 1 / -1; margin: 6px 0 0; font-size: var(--step--1); color: var(--ash); }
+  .week-legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; background: var(--ember); margin-right: 6px; vertical-align: -0.05em; }
+
+  .steps { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 20px; counter-reset: step; }
+  .steps li { counter-increment: step; display: grid; gap: 8px; align-content: start; padding-top: 16px; border-top: 2px solid var(--line); }
+  .steps li::before { content: counter(step); font: 700 var(--step-1)/1 var(--display); color: var(--ember); }
+  .steps h3, .feats h3 { margin: 0; font: 600 var(--step-1)/1.3 var(--display); }
+  .steps p, .feats p { margin: 0; color: var(--ash); }
+  .feats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 28px 36px; }
+  .feats div { display: grid; gap: 6px; align-content: start; }
+  .feats h3::before { content: ""; display: inline-block; width: 10px; height: 10px; margin-right: 10px; background: var(--ember); vertical-align: 0.05em; }
+  footer { padding-block: 28px 40px; font-size: var(--step--1); color: var(--ash); }
+  footer p { margin: 0; }
+
+  @media (max-width: 760px) {
+    .scene { position: relative; inset: auto; height: 320px; z-index: 0; }
+    .scene::after { background: linear-gradient(0deg, var(--night) 0%, rgb(13 16 24 / 0) 35%); }
+    .hero-inner { min-height: 0; padding-block: 8px 28px; }
+    .promise { grid-template-columns: minmax(0, 1fr); padding: 22px; }
+    .steps, .feats { grid-template-columns: minmax(0, 1fr); }
+  }
+</style>
+
+<header class="hero">
+  <div class="scene" id="scene" aria-hidden="true"></div>
+  <div class="wrap">
+    <div class="hero-inner">
+      <div class="copy">
+        <div class="brand"><span class="brand-mark"></span>Hearth</div>
+        <h1>Game servers for your group. <em>Pay only when you play.</em></h1>
+        <p>Bring your world, invite your friends, and only pay for the time you actually play.</p>
+        <div class="actions">
+          <button class="btn btn-primary" id="signin" type="button">Sign in</button>
+          <button class="btn" id="invite" type="button">Got an invite?</button>
+        </div>
+        <p class="note" id="note" aria-live="polite"></p>
+      </div>
+    </div>
+    <p class="caption"><b>Minecraft today.</b> More islands join the hearth as more games arrive.</p>
+  </div>
+</header>
+
+<main>
+  <section class="band">
+    <div class="wrap">
+      <div class="promise">
+        <div>
+          <h2>Pay for the evenings you <em>play.</em></h2>
+          <p>No paying all month for an empty world. With Hearth, the nights you play are the nights you pay for.</p>
+        </div>
+        <div class="week" role="img" aria-label="An example week: you pay for the three evenings your group plays, and nothing for the rest">
+          <div><span style="height:8%"></span><small>Mon</small></div>
+          <div><span class="on" style="height:46%"></span><small>Tue</small></div>
+          <div><span style="height:8%"></span><small>Wed</small></div>
+          <div><span style="height:8%"></span><small>Thu</small></div>
+          <div><span class="on" style="height:70%"></span><small>Fri</small></div>
+          <div><span class="on" style="height:90%"></span><small>Sat</small></div>
+          <div><span style="height:8%"></span><small>Sun</small></div>
+          <p class="week-legend"><i></i>The nights you play, and the only ones you pay for.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="band">
+    <div class="wrap">
+      <h2>How it works</h2>
+      <ol class="steps">
+        <li><h3>Start a server</h3><p>Begin a fresh world, or bring the one your group already plays.</p></li>
+        <li><h3>Invite your friends</h3><p>Send them an invite. They can start the server whenever they want to play.</p></li>
+        <li><h3>Play</h3><p>Jump in whenever you like, and pick up where you left off next time.</p></li>
+      </ol>
+    </div>
+  </section>
+
+  <section class="band">
+    <div class="wrap">
+      <h2>Everything else you'd want</h2>
+      <div class="feats">
+        <div><h3>Frequent backups</h3><p>Your world is backed up as you go. Roll back if something goes wrong.</p></div>
+        <div><h3>Easy upgrades</h3><p>Move to a new game version when your group is ready.</p></div>
+        <div><h3>Friends, not passwords</h3><p>Invite people to your server and choose what they can do.</p></div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <p>Prototype of the Hearth landing page. Not an official Minecraft product. Not approved by or associated with Mojang or Microsoft.</p>
+  </div>
+</footer>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+(() => {
+  const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  const note = document.getElementById('note');
+  document.getElementById('signin').addEventListener('click', () => { note.textContent = 'Sign-in arrives with the web app. This page is a prototype.'; });
+  document.getElementById('invite').addEventListener('click', () => { note.textContent = 'Invites open in the web app. This page is a prototype.'; });
+
+  /* ---------- The scene ---------- */
+  const host = document.getElementById('scene');
+  if (!window.THREE) return; // no 3D: the page still reads
+  let renderer;
+  try { renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'low-power' }); }
+  catch { return; }
+  const T = THREE;
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+  renderer.outputEncoding = T.sRGBEncoding;
+  renderer.toneMapping = T.ACESFilmicToneMapping;
+  renderer.setClearColor(0x0d1018);
+  host.appendChild(renderer.domElement);
+
+  const scene = new T.Scene();
+  scene.fog = new T.FogExp2(0x0d1018, 0.022);
+  const camera = new T.PerspectiveCamera(38, 1, 0.1, 200);
+
+  // Night light: a cool moon, a dim sky, and the fire doing the real work.
+  scene.add(new T.HemisphereLight(0x3a4a78, 0x0b0d12, 0.55));
+  const moon = new T.DirectionalLight(0x8ea4ff, 0.35); moon.position.set(-20, 30, -10); scene.add(moon);
+
+  // Deterministic randomness, so the islands look the same on every load.
+  let seed = 7;
+  const rand = () => { seed |= 0; seed = (seed + 0x6D2B79F5) | 0; let t = Math.imul(seed ^ (seed >>> 15), 1 | seed); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
+
+  // Static voxels, keyed by position: a later block replaces an earlier one (a path over grass), so
+  // no two cubes share a place and flicker. Drawn as one instanced mesh.
+  const cube = new T.BoxGeometry(1, 1, 1);
+  const voxelMap = new Map();
+  const put = (x, y, z, color) => voxelMap.set(`${x},${y},${z}`, [x, y, z, color]);
+  const shade = (hex, amt) => { const c = new T.Color(hex); c.offsetHSL(0, 0, amt); return c; };
+
+  function island(cx, cz, r, top, under, stone) {
+    for (let x = -r; x <= r; x++) for (let z = -r; z <= r; z++) {
+      const d = Math.hypot(x, z) + rand() * 0.8;
+      if (d > r) continue;
+      put(cx + x, 0, cz + z, shade(top, (rand() - 0.5) * 0.06));
+      const depth = 1 + Math.floor((r - d) * 0.9 + rand() * 1.5);
+      for (let k = 1; k <= depth; k++) put(cx + x, -k, cz + z, shade(k > 2 ? stone : under, (rand() - 0.5) * 0.05));
+    }
+  }
+
+  // The hearth: a stone island in the middle, a ring of stones, crossed logs.
+  island(0, 0, 3.6, 0x5a5e66, 0x4a4d54, 0x3d4047);
+  [[-1, -1], [0, -1.4], [1, -1], [1.4, 0], [1, 1], [0, 1.4], [-1, 1], [-1.4, 0]].forEach(([x, z]) => put(Math.round(x), 1, Math.round(z), shade(0x8a8d93, (rand() - 0.5) * 0.1)));
+
+  // The Minecraft-style island (the one game Hearth hosts today), out in front.
+  const mc = { x: 9, z: 6 };
+  island(mc.x, mc.z, 5.4, 0x5d9b47, 0x7a5233, 0x6c7076);
+  // Cottage: plank walls with a door and a window, a stepped roof, a chimney.
+  const cot = { x: mc.x - 1, z: mc.z - 1 }; // centre of a 5x5 footprint
+  for (let x = -2; x <= 2; x++) for (let z = -2; z <= 2; z++) for (let y = 1; y <= 3; y++) {
+    if (Math.abs(x) !== 2 && Math.abs(z) !== 2) continue;
+    const corner = Math.abs(x) === 2 && Math.abs(z) === 2;
+    const door = z === 2 && x === 0 && y <= 2;      // faces the camera's side (+z)
+    const window_ = x === 2 && z === 0 && y === 2;
+    if (door || window_) continue;
+    put(cot.x + x, y, cot.z + z, corner ? shade(0x5a3d24, 0) : shade(0xa8784a, (rand() - 0.5) * 0.05));
+  }
+  for (let s = 0; s <= 2; s++) for (let x = -3 + s; x <= 3 - s; x++) for (let z = -3; z <= 3; z++) {
+    if (Math.abs(z) > 3 - s && s > 0) continue;
+    put(cot.x + x, 4 + s, cot.z + z, shade(0x6b4a2e, (rand() - 0.5) * 0.06));
+  }
+  [5, 6, 7].forEach((y) => put(cot.x + 2, y, cot.z - 2, shade(0x7d8087, 0)));
+  // A tree beside it.
+  const tree = { x: mc.x + 3, z: mc.z - 2 };
+  for (let y = 1; y <= 4; y++) put(tree.x, y, tree.z, shade(0x5a3d24, 0));
+  for (let x = -2; x <= 2; x++) for (let z = -2; z <= 2; z++) for (let y = 4; y <= 6; y++) {
+    if (Math.abs(x) + Math.abs(z) + (y - 4) > 3 + (rand() < 0.3 ? 1 : 0)) continue;
+    if (x === 0 && z === 0 && y < 5) continue;
+    put(tree.x + x, y, tree.z + z, shade(0x3f7d3a, (rand() - 0.5) * 0.1));
+  }
+  // A short path from the door.
+  for (let i = 1; i <= 4; i++) put(cot.x, 0, cot.z + 2 + i, shade(0x8b7a5a, (rand() - 0.5) * 0.05));
+  // The Tower of Pimps (Achievement Hunter's): one obsidian block, four gold blocks on top.
+  const pimps = { x: mc.x + 3, z: mc.z + 2 };
+  put(pimps.x, 1, pimps.z, shade(0x1d1428, 0));
+  [2, 3, 4, 5].forEach((y) => put(pimps.x, y, pimps.z, shade(0xf0c33c, (y - 3.5) * 0.02)));
+
+  // Islands for games still to come: dim, quiet, waiting.
+  [{ x: -10, z: 2, r: 3.6, top: 0x3d4a5a }, { x: -2, z: -11, r: 3.2, top: 0x4a3f5c }].forEach((o) => {
+    island(o.x, o.z, o.r, o.top, 0x2c313c, 0x23272f);
+    for (let y = 1; y <= 3; y++) put(o.x, y, o.z, shade(0x56607a, -0.05 * y)); // a small unlit beacon
+  });
+
+  const voxels = [...voxelMap.values()];
+  const voxelMesh = new T.InstancedMesh(cube, new T.MeshLambertMaterial({ color: 0xffffff }), voxels.length);
+  const m4 = new T.Matrix4();
+  voxels.forEach(([x, y, z, c], i) => { m4.makeTranslation(x, y, z); voxelMesh.setMatrixAt(i, m4); voxelMesh.setColorAt(i, c); });
+  scene.add(voxelMesh);
+
+  // The gold catches the light: a faint warm glow just above the tower.
+  const goldGlow = new T.PointLight(0xffd36b, 0.6, 5, 2); goldGlow.position.set(pimps.x + 0.8, 4, pimps.z + 0.8); scene.add(goldGlow);
+
+  // The fire: flickering cubes and a warm light that always burns.
+  const fire = new T.Group(); scene.add(fire);
+  const logMat = new T.MeshLambertMaterial({ color: 0x5a3d24 });
+  [0, Math.PI / 2].forEach((a) => { const l = new T.Mesh(new T.BoxGeometry(1.8, 0.3, 0.3), logMat); l.position.set(0, 0.7, 0); l.rotation.y = a + 0.4; fire.add(l); });
+  const flames = [];
+  const flameColors = [0xffc46b, 0xff8a3d, 0xff5e1f];
+  for (let i = 0; i < 7; i++) {
+    const f = new T.Mesh(cube, new T.MeshBasicMaterial({ color: flameColors[i % 3] }));
+    f.userData = { base: new T.Vector3((rand() - 0.5) * 0.6, 0.95 + rand() * 0.5, (rand() - 0.5) * 0.6), s: 0.28 + rand() * 0.22, phase: rand() * 6 };
+    fire.add(f); flames.push(f);
+  }
+  const fireLight = new T.PointLight(0xff8a3d, 2.4, 22, 2); fireLight.position.set(0, 2, 0); scene.add(fireLight);
+
+  // Embers drifting up from the fire.
+  const EMBERS = 70;
+  const emberPos = new Float32Array(EMBERS * 3), emberSpeed = new Float32Array(EMBERS);
+  const resetEmber = (i, spread) => { emberPos[i * 3] = (rand() - 0.5) * 0.8; emberPos[i * 3 + 1] = 1 + (spread ? rand() * 8 : 0); emberPos[i * 3 + 2] = (rand() - 0.5) * 0.8; emberSpeed[i] = 0.6 + rand() * 0.9; };
+  for (let i = 0; i < EMBERS; i++) resetEmber(i, true);
+  const emberGeo = new T.BufferGeometry(); emberGeo.setAttribute('position', new T.BufferAttribute(emberPos, 3));
+  scene.add(new T.Points(emberGeo, new T.PointsMaterial({ color: 0xffa24a, size: 0.14, transparent: true, opacity: 0.9, blending: T.AdditiveBlending, depthWrite: false })));
+
+  // Stars.
+  const starPos = new Float32Array(420 * 3);
+  for (let i = 0; i < 420; i++) { const th = rand() * Math.PI * 2, ph = rand() * 0.45 * Math.PI, R = 90; starPos.set([R * Math.cos(th) * Math.cos(ph), 10 + R * Math.sin(ph), R * Math.sin(th) * Math.cos(ph)], i * 3); }
+  const starGeo = new T.BufferGeometry(); starGeo.setAttribute('position', new T.BufferAttribute(starPos, 3));
+  scene.add(new T.Points(starGeo, new T.PointsMaterial({ color: 0xc9d3ff, size: 0.35, transparent: true, opacity: 0.7, fog: false })));
+
+  // The island comes alive once, as the page opens: torches one by one, then the window.
+  const torches = [[cot.x - 1, cot.z + 3], [cot.x + 1, cot.z + 3], [cot.x - 3, cot.z + 1], [tree.x - 1, tree.z + 2]].map(([x, z], i) => {
+    const post = new T.Mesh(new T.BoxGeometry(0.22, 1, 0.22), logMat); post.position.set(x, 1, z); scene.add(post);
+    const tipMat = new T.MeshBasicMaterial({ color: 0x3a2a1a });
+    const tip = new T.Mesh(new T.BoxGeometry(0.28, 0.28, 0.28), tipMat); tip.position.set(x, 1.62, z); scene.add(tip);
+    const light = new T.PointLight(0xffa040, 0, 7, 2); light.position.set(x, 2, z); scene.add(light);
+    return { tipMat, light, delay: 0.6 + i * 0.4 };
+  });
+  const windowMat = new T.MeshBasicMaterial({ color: 0x1a1410 });
+  const windowPane = new T.Mesh(new T.BoxGeometry(0.15, 0.9, 0.9), windowMat); windowPane.position.set(cot.x + 2, 2, cot.z); scene.add(windowPane);
+
+  // An original blocky friend (not Steve) on the path: ember scarf, slate tunic.
+  const friend = new T.Group();
+  const part = (w, h, d, color, y) => { const p = new T.Mesh(new T.BoxGeometry(w, h, d), new T.MeshLambertMaterial({ color })); p.position.y = y; friend.add(p); return p; };
+  part(0.24, 0.7, 0.26, 0x2c3344, 0.35).position.x = -0.13;
+  part(0.24, 0.7, 0.26, 0x2c3344, 0.35).position.x = 0.13;
+  part(0.56, 0.72, 0.32, 0x4b5a78, 1.06);
+  part(0.62, 0.16, 0.38, 0xff8a3d, 1.36);
+  part(0.5, 0.5, 0.5, 0xd8a77f, 1.7);
+  part(0.54, 0.16, 0.54, 0x3b2a1e, 1.98);
+  friend.position.set(cot.x + 0.6, 0.5, cot.z + 4.4);
+  friend.rotation.y = 0.5;
+  scene.add(friend);
+
+  // Camera: a slow, steady drift around the hearth.
+  const lookAt = new T.Vector3(2.5, 0.5, 1.5);
+  function resize() {
+    const w = host.clientWidth, h = host.clientHeight;
+    if (!w || !h) return;
+    renderer.setSize(w, h, false);
+    camera.aspect = w / h;
+    camera.fov = w < 760 ? 46 : 38; // narrow screens: pull back so the islands still fit
+    camera.updateProjectionMatrix();
+  }
+  new ResizeObserver(resize).observe(host); resize();
+
+  const clamp01 = (v) => Math.min(1, Math.max(0, v));
+  const start = performance.now() / 1000;
+  let last = start, angle = 0.55;
+  function frame() {
+    const now = performance.now() / 1000, dt = Math.min(0.05, now - last); last = now;
+    const since = now - start;
+    if (!reduceMotion) angle += dt * 0.035;
+    camera.position.set(lookAt.x + 31 * Math.sin(angle), 15, lookAt.z + 31 * Math.cos(angle));
+    camera.lookAt(lookAt);
+
+    flames.forEach((f, i) => {
+      const { base, s, phase } = f.userData, k = reduceMotion ? 0 : now * 6 + phase;
+      f.scale.setScalar(s * (0.85 + 0.25 * Math.sin(k) * Math.sin(k * 0.7 + i)));
+      f.position.set(base.x, base.y + 0.12 * Math.sin(k * 0.8), base.z);
+    });
+    fireLight.intensity = 2.2 + (reduceMotion ? 0 : 0.35 * Math.sin(now * 9) * Math.sin(now * 5.3));
+
+    if (!reduceMotion) {
+      for (let i = 0; i < EMBERS; i++) {
+        emberPos[i * 3 + 1] += dt * emberSpeed[i] * 1.6;
+        emberPos[i * 3] += Math.sin(now + i) * dt * 0.25;
+        if (emberPos[i * 3 + 1] > 9) resetEmber(i, false);
+      }
+      emberGeo.attributes.position.needsUpdate = true;
+    }
+
+    torches.forEach((t) => {
+      const level = reduceMotion ? 1 : clamp01((since - t.delay) / 0.4);
+      const flick = 0.85 + (reduceMotion ? 0 : 0.15 * Math.sin(now * 11 + t.delay * 7));
+      t.light.intensity = 1.6 * level * flick;
+      t.tipMat.color.setRGB(0.23 + 0.77 * level, 0.16 + 0.6 * level, 0.1 + 0.15 * level);
+    });
+    const win = reduceMotion ? 1 : clamp01((since - 2.4) / 0.6);
+    windowMat.color.setRGB(0.1 + 0.9 * win, 0.08 + 0.62 * win, 0.06 + 0.24 * win);
+    if (!reduceMotion) friend.position.y = 0.5 + Math.abs(Math.sin(now * 2)) * 0.04;
+
+    renderer.render(scene, camera);
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+})();
+</script>
