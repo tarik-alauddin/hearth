@@ -112,6 +112,21 @@ From the repo, with your AWS credentials (the CLI reads `/hearth/<env>/auth` and
    the same way. A made-up ID: `No user … in dev's user pool`.
 5. `pnpm hearth logout`, then `whoami`: not signed in again.
 
+## 7. The web app
+
+The site's address: `aws ssm get-parameter --name /hearth/dev/web-url --query Parameter.Value --output text`.
+
+1. Open it and press **Sign in**: Cognito's page, then back at `/app`: "Welcome, …" with your
+   name and picture (Google, Discord) or initial (password). No errors in the browser console.
+2. A sign-in nobody has approved: "Waiting for approval". After `pnpm hearth approve <userId>`,
+   reload: the card is gone.
+3. Open `/app` in a new tab: no sign-in page (the session is kept). On the front page the button
+   now says **Your servers**.
+4. **Sign out**: back on the front page; opening `/app` goes to the sign-in page again.
+5. Locally: `powershell -File scripts/web-dev-config.ps1`, then `pnpm --filter @hearth/web dev`
+   and the same steps on `http://localhost:5173` (dev only: it's the only env whose web client
+   accepts localhost).
+
 ## If something goes wrong
 
 | What you see | Why, and what to do |

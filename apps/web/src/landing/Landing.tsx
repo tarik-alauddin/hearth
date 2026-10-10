@@ -1,4 +1,6 @@
 import { lazy, Suspense, useState } from 'react';
+import { useAuth } from '../auth/AuthProvider';
+import { navigate } from '../router';
 import { Wordmark } from '../Wordmark';
 import './landing.css';
 
@@ -21,8 +23,14 @@ const WEEK = [
 
 /** The front door: the hearth scene, the pay-for-play promise, how it works. */
 export function Landing() {
+  const { status, signIn } = useAuth();
   const [note, setNote] = useState('');
-  const soon = () => setNote('Sign-in opens soon.');
+  const start = () => {
+    if (status === 'signed-in') navigate('/app');
+    else if (status === 'signed-out') void signIn();
+    else setNote(status === 'loading' ? 'One moment…' : "Sign-in isn't available right now. Please try again in a moment.");
+  };
+  const invited = () => setNote("Joining by invite opens soon. Sign in now and you'll be ready.");
 
   return (
     <>
@@ -41,8 +49,8 @@ export function Landing() {
               </h1>
               <p>Bring your world, invite your friends, and only pay for the time you actually play.</p>
               <div className="actions">
-                <button className="btn btn-primary" type="button" onClick={soon}>Sign in</button>
-                <button className="btn" type="button" onClick={soon}>Got an invite?</button>
+                <button className="btn btn-primary" type="button" onClick={start}>{status === 'signed-in' ? 'Your servers' : 'Sign in'}</button>
+                <button className="btn" type="button" onClick={invited}>Got an invite?</button>
               </div>
               <p className="note" aria-live="polite">{note}</p>
             </div>

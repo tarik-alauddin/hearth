@@ -87,7 +87,7 @@ nothing is kept only on one computer. On a new machine:
 | **Phase 1** | **Complete** (2026-10-07): dev, stage and prod run `v2026.10.07-3461efe`, agent `2026.10.06-de42566` |
 | M8 Accounts and access | Done (2026-10-09, tested on dev): sign-in (password, Google, Discord), access data, authorization, API contract, every action on `/v1`, invites and members, the CLI on Cognito and `/v1`, `/admin` removed. Architecture doc updated. Stage and prod: not yet promoted (checklist: `docs/testing/promote-accounts.md`) |
 | M9 Game version catalog | Planned (Deferred's plan, V1–V4); on hold: the owner hasn't decided how it should work |
-| M10 Web UI | In progress: 1a (web app), 1b (Frontend stack) and the landing page merged and live on dev (`/hearth/dev/web-url`, 2026-10-09); 1c (sign-in) next |
+| M10 Web UI | In progress: 1a (web app), 1b (Frontend stack) and the landing page, 1c-1 (sign-in infra) merged and live on dev (`/hearth/dev/web-url`); 1c-2 (browser sign-in) in review |
 
 **Phase 2** (the UI phase): M8 → M9 → M10. Design under Decisions ("Accounts and access").
 
@@ -302,7 +302,7 @@ invalidation. `/hearth/<env>/web-url`. The site is a CDK asset, so the release's
 carries it: `pnpm synth` builds the web app first, CI's diff job too; tests use
 `infra/test/fixtures/web` (the `webDist` context). cdk-nag: CloudFront's CFR1–4 and the
 BucketDeployment helper's grants acknowledged with reasons. 1c split in two:
-1c-1, in review (infra): a cycle broke the old order (Auth → API → Frontend, Frontend needing the
+1c-1, merged (infra): a cycle broke the old order (Auth → API → Frontend, Frontend needing the
 API's URL), so FrontendStack is now bucket + CloudFront + headers only, with no dependencies, and
 first; its CSP names the API and Cognito by pattern (`https://*.execute-api.<region>.amazonaws.com`,
 `https://*.auth.<region>.amazoncognito.com`). AuthStack takes `siteOrigin`: the web client exists
@@ -311,8 +311,18 @@ ApiStack gets CORS for the site and `webOrigins` (authorization, content-type; G
 DELETE; preflights answered by API Gateway). New `WebContentStack`, last: the two
 BucketDeployments (site bucket by its fixed name) and `config.json` `{ env, apiUrl, auth: { region,
 domain, clientId } }`. The CloudFront address is unchanged.
-1c-2 (web): sign-in in the browser (PKCE with the web client, session and refresh, `/v1/me`, a
-"waiting for approval" screen), a small router, a local `config.json` for `pnpm dev`.
+1c-2, in review (web): `src/auth/session.ts` (pure, as the CLI's `auth.ts`: PKCE with Web Crypto,
+state and verifier in sessionStorage for the tab, session `{ idToken, refreshToken }` in
+localStorage `hearth.session`, refreshed within a minute of expiry, forgotten when refresh fails;
+storage blocked = signed out), `AuthProvider` (reads `/config.json`; one refresh at a time),
+`api.ts` (Bearer ID token; a 401 refreshes once, then signs out), `router.ts` (`usePath`,
+`navigate`; no library). Pages: `/` (Sign in, or "Your servers" when signed in), `/auth/callback`
+(exchanges once, even under StrictMode; `returnTo` only app paths), `/app` (signed out → login
+page; `/v1/me`; "Waiting for approval" for unapproved non-admins; servers come in PR2). CSP
+`img-src` adds avatar hosts (`*.googleusercontent.com`, `cdn.discordapp.com`); a broken picture
+shows the initial. Local: `scripts/web-dev-config.ps1` writes `apps/web/config.local.json`
+(gitignored) from SSM, which `vite` serves as `/config.json`. "Got an invite?" says invites open
+soon (PR6 makes `/join/{code}`).
 Landing page, merged (live on dev): `apps/web/src/landing/` ports the prototype. `world.ts` is the scene as
 plain data (`buildWorld()`, deterministic; tested without a browser, the Tower of Pimps included);
 `hearthScene.ts` draws it with three.js directly (no React Three Fiber: one ambient scene doesn't

@@ -68,9 +68,13 @@ spacing) live in `apps/web/src/styles/tokens.css`; fonts are self-hosted (`@font
 site loads nothing from other hosts.
 
 ```sh
+powershell -File scripts/web-dev-config.ps1   # once: config.local.json (dev's API and sign-in) from SSM
 pnpm --filter @hearth/web dev     # http://localhost:5173
 pnpm --filter @hearth/web build   # apps/web/dist
 ```
+
+People sign in on Cognito's pages and come back to `/auth/callback`; the app keeps the session in
+the browser and calls `/v1` with the ID token. Pages: `/` (the landing), `/app` (signed in).
 
 Each environment serves it from its Frontend stack: a private S3 bucket behind CloudFront, on
 CloudFront's own address until Hearth has a domain (SSM `/hearth/<env>/web-url`). The WebContent
@@ -140,8 +144,8 @@ condition. The repo was created after GitHub switched new repos to ID-based subj
 Each environment has a Cognito user pool (AuthStack) with managed login pages on its Cognito domain
 (`hearth-<env>-<account>`; a custom domain later). Clients find the pool, domain and client IDs in
 one SSM parameter, `/hearth/<env>/auth`. The CLI signs in through a loopback callback
-(`http://localhost:8976/callback`); the web client exists where the environment lists web origins
-(dev: Vite on `http://localhost:5173`). Members of the `admin` group are Hearth admins.
+(`http://localhost:8976/callback`); the web client signs in on the site (`<site>/auth/callback`)
+and, in dev, Vite on `http://localhost:5173`. Members of the `admin` group are Hearth admins.
 
 Outside providers are turned on per environment (`signInProviders` in `infra/lib/config.ts`) once
 their secret exists: **Google** ([setup](docs/setup/google.md)) and **Discord**

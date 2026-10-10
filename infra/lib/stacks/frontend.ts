@@ -49,11 +49,12 @@ export class FrontendStack extends HearthStack {
     // The app loads nothing from other hosts (fonts are self-hosted), so the content policy can be
     // strict: its own files, plus the API it calls and the sign-in pages' token endpoint. Those two
     // are named by pattern, so this stack needn't wait for theirs (their stacks need this one).
+    // Images may also come from Google's and Discord's avatar hosts (a signed-in user's picture).
     const csp = [
       "default-src 'self'",
       "script-src 'self'",
       "style-src 'self'",
-      "img-src 'self' data:",
+      "img-src 'self' data: https://*.googleusercontent.com https://cdn.discordapp.com",
       "font-src 'self'",
       `connect-src 'self' https://*.execute-api.${this.region}.amazonaws.com https://*.auth.${this.region}.amazoncognito.com`,
       "object-src 'none'",

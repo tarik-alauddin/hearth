@@ -22,6 +22,8 @@ img, canvas { max-width: 100%; }
 
 .wrap { max-width: var(--max-width); margin-inline: auto; padding-inline: var(--gutter); }
 
+.actions { display: flex; flex-wrap: wrap; gap: 12px; }
+
 .btn {
   display: inline-flex; align-items: center; justify-content: center; padding: 11px 20px;
   border-radius: var(--radius); border: 1px solid var(--line); background: var(--night-2);

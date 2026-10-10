@@ -53,6 +53,7 @@ describe('FrontendStack', () => {
     expect(csp).toContain("script-src 'self'");
     expect(csp).toContain("frame-ancestors 'none'");
     expect(csp).toContain("connect-src 'self' https://*.execute-api.us-west-2.amazonaws.com https://*.auth.us-west-2.amazoncognito.com");
+    expect(csp).toContain("img-src 'self' data: https://*.googleusercontent.com https://cdn.discordapp.com"); // avatars
     expect(csp).not.toContain('unsafe');
   });
 
