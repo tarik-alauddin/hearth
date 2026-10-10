@@ -67,6 +67,13 @@ nothing is kept only on one computer. On a new machine:
   `node.exe`, or run a script file.
 - S3 answers a missing key with 403, not 404, unless the caller (or a link's signer) has
   `s3:ListBucket` on the bucket.
+- The web app's content policy is strict (FrontendStack: `'self'` only, plus the API): nothing may
+  load from other hosts or as `data:` URLs. Vite inlined small fonts as `data:` (blocked on dev);
+  `assetsInlineLimit: 0` stops that, and PR checks fail a build whose CSS has `url(data:`.
+- To see the web app render: Playwright in Docker (`mcr.microsoft.com/playwright:v1.50.0-noble`,
+  `npm i playwright@1.50.0` inside, Chromium with `--use-gl=angle --use-angle=swiftshader
+  --enable-unsafe-swiftshader`), screenshots at 1280×800 and 390×844, console errors collected.
+  Check the deployed site too: a local server sends no content policy.
 
 ## Status (update with each PR)
 
@@ -80,7 +87,7 @@ nothing is kept only on one computer. On a new machine:
 | **Phase 1** | **Complete** (2026-10-07): dev, stage and prod run `v2026.10.07-3461efe`, agent `2026.10.06-de42566` |
 | M8 Accounts and access | Done (2026-10-09, tested on dev): sign-in (password, Google, Discord), access data, authorization, API contract, every action on `/v1`, invites and members, the CLI on Cognito and `/v1`, `/admin` removed. Architecture doc updated. Stage and prod: not yet promoted (checklist: `docs/testing/promote-accounts.md`) |
 | M9 Game version catalog | Planned (Deferred's plan, V1–V4); on hold: the owner hasn't decided how it should work |
-| M10 Web UI | Next: design direction set (landing prototype); PR1's split to agree (see M10) |
+| M10 Web UI | In progress: 1a (web app), 1b (Frontend stack) and the landing page merged and live on dev (`/hearth/dev/web-url`, 2026-10-09); 1c (sign-in) next |
 
 **Phase 2** (the UI phase): M8 → M9 → M10. Design under Decisions ("Accounts and access").
 
@@ -297,7 +304,7 @@ carries it: `pnpm synth` builds the web app first, CI's diff job too; tests use
 BucketDeployment helper's grants acknowledged with reasons. Cognito callback URLs for the site
 come with 1c; 1c
 sign-in (PKCE with the web client, session and refresh, `/v1/me`, a "waiting for approval" screen).
-Landing page, in review: `apps/web/src/landing/` ports the prototype. `world.ts` is the scene as
+Landing page, merged (live on dev): `apps/web/src/landing/` ports the prototype. `world.ts` is the scene as
 plain data (`buildWorld()`, deterministic; tested without a browser, the Tower of Pimps included);
 `hearthScene.ts` draws it with three.js directly (no React Three Fiber: one ambient scene doesn't
 need it), lazily loaded (`React.lazy`), so the text paints first: main bundle about 70 kB gzipped,
