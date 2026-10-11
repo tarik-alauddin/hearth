@@ -105,13 +105,12 @@ describe('AuthStack', () => {
       });
     });
 
-    it('offers Google and Discord where they are on (dev), and only password sign-in elsewhere', () => {
-      dev.template.allResourcesProperties('AWS::Cognito::UserPoolClient', {
-        SupportedIdentityProviders: ['COGNITO', 'Google', 'Discord'],
-      });
-      prod.template.allResourcesProperties('AWS::Cognito::UserPoolClient', {
-        SupportedIdentityProviders: ['COGNITO'],
-      });
+    it('offers passwords, Google and Discord in every env', () => {
+      for (const env of [dev, prod, synth('stage')]) {
+        env.template.allResourcesProperties('AWS::Cognito::UserPoolClient', {
+          SupportedIdentityProviders: ['COGNITO', 'Google', 'Discord'],
+        });
+      }
     });
 
     it('gives every client a managed login style', () => {
@@ -145,9 +144,16 @@ describe('AuthStack', () => {
       });
     });
 
-    it('is off until an env has its secret (stage, prod)', () => {
-      prod.template.resourceCountIs('AWS::Cognito::UserPoolIdentityProvider', 0);
-      expect(synth('stage').template.findResources('AWS::Cognito::UserPoolIdentityProvider')).toEqual({});
+    it("reads each env's own secrets (a dev secret never signs in to prod)", () => {
+      for (const [env, synthed] of [['prod', prod], ['stage', synth('stage')]] as const) {
+        for (const provider of ['google', 'discord']) {
+          synthed.template.hasResourceProperties('AWS::Cognito::UserPoolIdentityProvider', {
+            ProviderDetails: Match.objectLike({
+              client_id: Match.stringLikeRegexp(`hearth/${env}/${provider}:SecretString:clientId`),
+            }),
+          });
+        }
+      }
     });
   });
 

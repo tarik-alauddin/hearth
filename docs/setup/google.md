@@ -3,10 +3,11 @@
 Sets up "Continue with Google" for one environment: a Google OAuth client that Cognito signs users
 in through. The owner does this once per environment (dev, stage, prod), in this order:
 
-1. The environment's Auth stack is deployed (its Cognito domain exists).
+1. Know its Cognito domain: `hearth-<env>-138300868928` (fixed, so this can come before the
+   environment's first deploy).
 2. Create its Google OAuth client and save it in Secrets Manager (below).
-3. Turn Google on for that environment: add `'google'` to its `SIGN_IN_PROVIDERS` entry in
-   `infra/lib/config.ts`, in a PR. Deploying without the secret fails.
+3. Deploy (merge to `main` for dev, promote for stage and prod). Google is on for every
+   environment (`SIGN_IN_PROVIDERS` in `infra/lib/config.ts`), so a deploy without the secret fails.
 
 ## 1. The Google project (once)
 

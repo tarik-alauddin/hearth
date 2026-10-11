@@ -85,9 +85,9 @@ nothing is kept only on one computer. On a new machine:
 | M7 Move your world | Done (PR1–PR4; tested on dev with a real world) |
 | Before Phase 2 | Done: M7 docs, neutral wording, destroy (records kept as `DESTROYED`), state-sync tweak, stage and prod live with the release flow (details under Decisions) |
 | **Phase 1** | **Complete** (2026-10-07): dev, stage and prod run `v2026.10.07-3461efe`, agent `2026.10.06-de42566` |
-| M8 Accounts and access | Done (2026-10-09, tested on dev): sign-in (password, Google, Discord), access data, authorization, API contract, every action on `/v1`, invites and members, the CLI on Cognito and `/v1`, `/admin` removed. Architecture doc updated. Stage and prod: not yet promoted (checklist: `docs/testing/promote-accounts.md`) |
+| M8 Accounts and access | Done (2026-10-09, tested on dev): sign-in (password, Google, Discord), access data, authorization, API contract, every action on `/v1`, invites and members, the CLI on Cognito and `/v1`, `/admin` removed. Architecture doc updated. Stage and prod: not yet promoted; Google and Discord on for both, waiting on their secrets (checklist: `docs/testing/promote-accounts.md`) |
 | M9 Game version catalog | Planned (Deferred's plan, V1–V4); on hold: the owner hasn't decided how it should work |
-| M10 Web UI | In progress: 1a (web app), 1b (Frontend stack) and the landing page, 1c-1 (sign-in infra) merged and live on dev (`/hearth/dev/web-url`); 1c-2 (browser sign-in) in review |
+| M10 Web UI | In progress: 1a (web app), 1b (Frontend stack) and the landing page, 1c (sign-in) merged and live on dev (`/hearth/dev/web-url`, 2026-10-10); next: promote to stage and prod, then PR2 |
 
 **Phase 2** (the UI phase): M8 → M9 → M10. Design under Decisions ("Accounts and access").
 
@@ -102,7 +102,7 @@ the CLI signs in the same way; backend only):
 - PR1b Google, done (tested on dev; the owner's Google user is an admin):
   `UserPoolIdentityProviderGoogle` from `hearth/<env>/google` (`{clientId, clientSecret}`, resolved
   by CloudFormation), email, verified, name and picture mapped; clients depend on the provider. Per
-  env `signInProviders` (dev now; stage and prod once their secrets exist, or their deploy fails).
+  env `signInProviders` (all three envs since 2026-10-10; a deploy without the env's secrets fails).
   Setup guide `docs/setup/google.md`. Federated users are `<Provider>_<id>` (`Google_…`), separate
   from a password user with the same email (no linking; add to `admin` by hand).
 - PR1c Discord, done (tested on dev): Cognito's generic OIDC provider (`Discord`), no wrapper: Discord
@@ -311,7 +311,7 @@ ApiStack gets CORS for the site and `webOrigins` (authorization, content-type; G
 DELETE; preflights answered by API Gateway). New `WebContentStack`, last: the two
 BucketDeployments (site bucket by its fixed name) and `config.json` `{ env, apiUrl, auth: { region,
 domain, clientId } }`. The CloudFront address is unchanged.
-1c-2, in review (web): `src/auth/session.ts` (pure, as the CLI's `auth.ts`: PKCE with Web Crypto,
+1c-2, merged (web): `src/auth/session.ts` (pure, as the CLI's `auth.ts`: PKCE with Web Crypto,
 state and verifier in sessionStorage for the tab, session `{ idToken, refreshToken }` in
 localStorage `hearth.session`, refreshed within a minute of expiry, forgotten when refresh fails;
 storage blocked = signed out), `AuthProvider` (reads `/config.json`; one refresh at a time),

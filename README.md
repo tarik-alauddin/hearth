@@ -149,7 +149,7 @@ and, in dev, Vite on `http://localhost:5173`. Members of the `admin` group are H
 
 Outside providers are turned on per environment (`signInProviders` in `infra/lib/config.ts`) once
 their secret exists: **Google** ([setup](docs/setup/google.md)) and **Discord**
-([setup](docs/setup/discord.md)), both on in dev. Each provider's first sign-in creates a separate
+([setup](docs/setup/discord.md)), both on in every environment (each with its own secrets). Each provider's first sign-in creates a separate
 user (`Google_…`, `Discord_…`), even with the same email as a password user. Check sign-in with
 `scripts/sign-in-check.ps1` ([docs/testing/sign-in.md](docs/testing/sign-in.md)).
 
