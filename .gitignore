@@ -7,3 +7,4 @@ coverage/
 dist/
 node_modules/
 test-results.json
+scripts/web-shots/out/
