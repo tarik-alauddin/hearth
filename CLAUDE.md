@@ -70,10 +70,10 @@ nothing is kept only on one computer. On a new machine:
 - The web app's content policy is strict (FrontendStack: `'self'` only, plus the API): nothing may
   load from other hosts or as `data:` URLs. Vite inlined small fonts as `data:` (blocked on dev);
   `assetsInlineLimit: 0` stops that, and PR checks fail a build whose CSS has `url(data:`.
-- To see the web app render: Playwright in Docker (`mcr.microsoft.com/playwright:v1.50.0-noble`,
-  `npm i playwright@1.50.0` inside, Chromium with `--use-gl=angle --use-angle=swiftshader
-  --enable-unsafe-swiftshader`), screenshots at 1280×800 and 390×844, console errors collected.
-  Check the deployed site too: a local server sends no content policy.
+- To see the web app render: `scripts/web-shots/` (Playwright in Docker, SwiftShader WebGL;
+  README has the command): `MODE=landing` (1280×800 and 390×844), `app` (`/app` with the API
+  mocked), `live` (a deployed site: Sign in reaches Cognito). Console errors collected. Check the
+  deployed site too: a local server sends no content policy.
 
 ## Status (update with each PR)
 
@@ -88,6 +88,12 @@ nothing is kept only on one computer. On a new machine:
 | M8 Accounts and access | Done (2026-10-09, tested on dev): sign-in (password, Google, Discord), access data, authorization, API contract, every action on `/v1`, invites and members, the CLI on Cognito and `/v1`, `/admin` removed. Architecture doc updated. Stage and prod: not yet promoted; Google and Discord on for both, waiting on their secrets (checklist: `docs/testing/promote-accounts.md`) |
 | M9 Game version catalog | Planned (Deferred's plan, V1–V4); on hold: the owner hasn't decided how it should work |
 | M10 Web UI | In progress: 1a (web app), 1b (Frontend stack) and the landing page, 1c (sign-in) merged and live on dev (`/hearth/dev/web-url`, 2026-10-10); next: promote to stage and prod, then PR2 |
+
+**Where we left off (2026-10-10, owner moving to the laptop for a week):** everything is on
+`main`, including #68 (Google and Discord on for stage and prod). Next, the owner creates the stage
+and prod Google clients and Discord apps and their four secrets (`docs/setup/`), then promotes the
+newest release to stage and prod (`docs/testing/promote-accounts.md`; a promote before that env's
+secrets exist fails). Then M10 PR2 (servers list and detail).
 
 **Phase 2** (the UI phase): M8 → M9 → M10. Design under Decisions ("Accounts and access").
 
