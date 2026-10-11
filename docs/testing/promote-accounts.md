@@ -1,12 +1,21 @@
-# Promoting accounts (M8) to stage and prod
+# Promoting accounts (M8) and the web app to stage and prod
 
 M8 changes how you reach an environment: `/admin` is gone, so the CLI and every admin action go
 through your Cognito sign-in, and each environment has its own user pool. Running servers and their
 agents are unaffected (the deploy only adds tables, routes and the sign-in stack). Do stage first;
 prod only takes a release stage has run.
 
-**Before you start:** the release you want is on dev and tested there (the newest `v…` release on
-GitHub). Servers created before M8 belong to your old AWS identity and have no owner row: as an
+**Before you start:**
+
+- The release you want is on dev and tested there (the newest `v…` release on GitHub).
+- Google and Discord are on in every environment, so the environment's secrets must exist, or its
+  deploy fails: `hearth/<env>/google` and `hearth/<env>/discord`, from its own Google OAuth client
+  and Discord app ([google.md](../setup/google.md), [discord.md](../setup/discord.md)). Check:
+  `aws secretsmanager list-secrets --region us-west-2 --query "SecretList[].Name"`.
+- Google's project is in **Testing** until published (Audience): only listed test users can sign in,
+  in every environment. Publish it, or list your friends, before they use prod.
+
+ Servers created before M8 belong to your old AWS identity and have no owner row: as an
 admin you still reach them; nobody else does.
 
 ## 1. Promote to stage
@@ -41,20 +50,21 @@ pnpm hearth stop <serverId> --env stage      # Stopped. Game saved.
 No servers on stage? `pnpm hearth create --version <your client's version> --env stage`, then
 `stop` and `destroy` it when done.
 
-## 4. Prod
+## 4. The web app and outside sign-in on stage
 
-Promote again with env `prod`, then sections 2 and 3 with `prod` in place of `stage`. In prod, keep
+```powershell
+aws ssm get-parameter --region us-west-2 --name /hearth/stage/web-url --query Parameter.Value --output text
+```
+
+Open it, **Sign in** with your password user: "Welcome, …", no "Waiting for approval" (admins need
+none). **Sign out**, then sign in with Google and with Discord: each is a new user, "Waiting for
+approval" until `pnpm hearth approve <userId> --env stage` (the ID: the newest item in the
+`hearth-stage-Users` table, DynamoDB console). To make your Google user an admin instead:
+`pnpm hearth admin add <userId> --env stage`, then sign out and in again. Details: [sign-in.md](sign-in.md) §7.
+
+## 5. Prod
+
+Promote again with env `prod`, then sections 2–4 with `prod` in place of `stage`. In prod, keep
 the smoke test to `list` and `status` unless a start is wanted anyway (a start runs, and bills, an
 instance).
 
-## Later: Google and Discord sign-in on stage and prod
-
-Only password users can sign in there until the providers are on (friends need them). Per
-environment:
-
-1. Create the secrets `hearth/<env>/google` and `hearth/<env>/discord`
-   ([google.md](../setup/google.md), [discord.md](../setup/discord.md)).
-2. Add that environment's redirect URL, `https://hearth-<env>-138300868928.auth.us-west-2.amazoncognito.com/oauth2/idpresponse`,
-   in the Google OAuth client and the Discord app.
-3. Turn them on in `infra/lib/config.ts` (`SIGN_IN_PROVIDERS`) in a small PR; it deploys with the
-   next promote. A provider turned on before its secret exists fails that environment's deploy.

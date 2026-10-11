@@ -44,11 +44,12 @@ const QUALIFIERS: Record<EnvName, string> = {
   prod: 'hearthprd',
 };
 
-// Turned on per env once its secrets exist.
+// Each env's secrets (hearth/<env>/google, hearth/<env>/discord) must exist before a deploy turns
+// its providers on: CloudFormation reads them, and fails without them (docs/setup/).
 const SIGN_IN_PROVIDERS: Record<EnvName, readonly SignInProvider[]> = {
   dev: ['google', 'discord'],
-  stage: [],
-  prod: [],
+  stage: ['google', 'discord'],
+  prod: ['google', 'discord'],
 };
 
 export function envConfig(env: EnvName): EnvConfig {
