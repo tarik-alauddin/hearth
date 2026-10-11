@@ -89,11 +89,11 @@ nothing is kept only on one computer. On a new machine:
 | M9 Game version catalog | Planned (Deferred's plan, V1–V4); on hold: the owner hasn't decided how it should work |
 | M10 Web UI | In progress: 1a (web app), 1b (Frontend stack) and the landing page, 1c (sign-in) merged and live on dev (`/hearth/dev/web-url`, 2026-10-10); next: promote to stage and prod, then PR2 |
 
-**Where we left off (2026-10-10, owner moving to the laptop for a week):** PR #68
-(`providers-stage-prod`: Google and Discord on for stage and prod) open, CI green, safe to merge
-(dev unchanged). The owner creates the stage and prod Google clients and Discord apps and their
-four secrets (`docs/setup/`), merges #68, then promotes that release to stage and prod
-(`docs/testing/promote-accounts.md`). Then M10 PR2 (servers list and detail).
+**Where we left off (2026-10-10, owner moving to the laptop for a week):** everything is on
+`main`, including #68 (Google and Discord on for stage and prod). Next, the owner creates the stage
+and prod Google clients and Discord apps and their four secrets (`docs/setup/`), then promotes the
+newest release to stage and prod (`docs/testing/promote-accounts.md`; a promote before that env's
+secrets exist fails). Then M10 PR2 (servers list and detail).
 
 **Phase 2** (the UI phase): M8 → M9 → M10. Design under Decisions ("Accounts and access").
 
