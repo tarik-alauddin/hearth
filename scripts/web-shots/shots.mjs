@@ -4,6 +4,11 @@
 //   MODE   landing (default): / at desktop and phone width, with the 3D scene
 //          app: /app signed in, with config.json and the API mocked (waiting and approved users)
 //          live: on a deployed site, Sign in must reach Cognito with the site's callback
+/* global localStorage, history, window, Event -- in page.evaluate, which runs in the browser */
+import { Buffer } from 'node:buffer';
+import console from 'node:console';
+import process from 'node:process';
+import { URL } from 'node:url';
 import { chromium } from 'playwright';
 
 const SITE = process.env.SITE ?? 'http://localhost:8080';
